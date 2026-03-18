@@ -13,8 +13,8 @@ from src.config import Settings
 def mock_settings() -> Settings:
     """Create mock settings for tests."""
     settings = Settings()
-    settings.polygon_api_key = "test_api_key"
-    settings.polygon_base_url = "https://api.polygon.io"
+    settings.massive_api_key = "test_api_key"
+    settings.massive_base_url = "https://api.massive.com"
     settings.server_name = "options-server"
     settings.server_version = "0.1.0"
     return settings
@@ -31,7 +31,7 @@ def mock_httpx_response() -> MagicMock:
 
 @pytest.fixture
 def sample_option_chain_response() -> dict[str, Any]:
-    """Sample response from Polygon option chain snapshot."""
+    """Sample response from Massive option chain snapshot."""
     return {
         "status": "OK",
         "request_id": "test-request-id",
@@ -58,7 +58,7 @@ def sample_option_chain_response() -> dict[str, Any]:
 
 @pytest.fixture
 def sample_option_trade_response() -> dict[str, Any]:
-    """Sample response from Polygon latest option trade."""
+    """Sample response from Massive latest option trade."""
     return {
         "status": "OK",
         "request_id": "test-request-id",
@@ -75,7 +75,7 @@ def sample_option_trade_response() -> dict[str, Any]:
 
 @pytest.fixture
 def sample_option_quote_response() -> dict[str, Any]:
-    """Sample response from Polygon latest option quote."""
+    """Sample response from Massive latest option quote."""
     return {
         "status": "OK",
         "request_id": "test-request-id",
@@ -91,10 +91,10 @@ def sample_option_quote_response() -> dict[str, Any]:
 
 
 @pytest.fixture
-def mock_polygon_client(
+def mock_massive_client(
     mock_settings: Settings,
 ) -> AsyncMock:
-    """Create a mock Polygon client."""
+    """Create a mock Massive client."""
     client = AsyncMock()
     client.get_option_chain_snapshot = AsyncMock(return_value={"status": "OK", "results": []})
     client.get_option_contract_snapshot = AsyncMock(return_value={"status": "OK", "results": {}})

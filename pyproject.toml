@@ -2,9 +2,9 @@
 # Individual services have their own pyproject.toml files for packaging
 
 [project]
-name = "obai"
+name = "tezq-monorepo-dev"
 version = "1.0.3"
-description = "Development environment for OBaI monorepo"
+description = "Development environment for tezQ monorepo"
 requires-python = ">=3.12"
 dependencies = [
     "qdrant-client>=1.13.0",
@@ -14,10 +14,18 @@ dependencies = [
 # Combined dependencies for all services
 all = [
     # MCP Server dependencies
+    "aiohttp>=3.10.0",
     "asyncio-mqtt>=0.16.2",
+    "faiss-cpu>=1.11.0.post1",
     "fastmcp>=1.0.0",
+    "google-genai>=1.29.0",
+    "google-generativeai>=0.8.5",
+    "numpy>=2.0.0",
     "openai>=1.98.0",
     "pydantic-settings>=2.10.1",
+
+    # Discord Bot dependencies
+    "discord.py>=2.3.2",
     "mcp>=1.12.3",
     "pydantic>=2.10.1",
 ]
@@ -65,6 +73,7 @@ test = [
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
+    "src/clients/discord_bot/tests",
     "src/screening-server/tests",
     "src/options-server/tests",
     "src/fundamentals-server/tests",
@@ -205,8 +214,8 @@ ignore = [
 "dev/**/*" = ["T201", "S602", "S603", "S607"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["obai"]
-known-third-party = ["fastmcp", "openai", "pydantic"]
+known-first-party = ["tezq", "discord_bot"]
+known-third-party = ["fastmcp", "discord", "openai", "pydantic"]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

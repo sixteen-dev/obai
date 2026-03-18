@@ -1,4 +1,4 @@
-"""MCP server for real-time options data via Polygon.io API."""
+"""MCP server for real-time options data via Massive API."""
 
 import asyncio
 import time
@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__
-from .clients.polygon_client import PolygonClient
+from .clients.massive_client import MassiveClient
 from .config import Settings, get_settings, load_settings
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
@@ -109,9 +109,9 @@ async def health_check_ready(_request: Request) -> JSONResponse:
             status_code=503,
         )
 
-    # Check Polygon API connectivity
+    # Check Massive API connectivity
     try:
-        async with PolygonClient(s) as client:
+        async with MassiveClient(s) as client:
             api_healthy = await client.health_check()
     except Exception as e:
         logger.warning("health_check_failed", error=str(e))
@@ -121,7 +121,7 @@ async def health_check_ready(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
                 "status": "not_ready",
-                "reason": "Polygon API unreachable",
+                "reason": "Massive API unreachable",
                 "service": s.server_name,
             },
             status_code=503,
@@ -190,7 +190,7 @@ async def options_get_chain_snapshot_tool(
                 "underlying_asset": underlying_asset,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -213,7 +213,7 @@ async def options_get_contract_snapshot_tool(
 
     Args:
         underlying_asset: Stock ticker symbol (e.g., 'AAPL')
-        option_contract: Polygon option symbol (e.g., 'O:AAPL240119C00125000')
+        option_contract: Option symbol (e.g., 'O:AAPL240119C00125000')
 
     Returns:
         Complete contract snapshot with pricing and Greeks
@@ -234,7 +234,7 @@ async def options_get_contract_snapshot_tool(
                 "option_contract": option_contract,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -267,7 +267,7 @@ async def options_get_latest_trade_tool(options_ticker: str) -> dict[str, Any]:
                 "options_ticker": options_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -300,7 +300,7 @@ async def options_get_latest_quote_tool(options_ticker: str) -> dict[str, Any]:
                 "options_ticker": options_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 # =============================================================================
@@ -356,7 +356,7 @@ async def options_list_contracts_tool(
                 "underlying_ticker": underlying_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -402,7 +402,7 @@ async def options_get_trades_history_tool(
                 "options_ticker": options_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -448,7 +448,7 @@ async def options_get_quotes_history_tool(
                 "options_ticker": options_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 @mcp.tool(
@@ -500,7 +500,7 @@ async def options_get_aggregates_tool(
                 "options_ticker": options_ticker,
             },
         )
-        return format_api_error(e, "Polygon")
+        return format_api_error(e, "Massive")
 
 
 async def main() -> None:
