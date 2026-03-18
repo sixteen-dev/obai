@@ -1,0 +1,223 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    container_name: obai-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333'"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  fundamentals-server:
+    build:
+      context: ../src/fundamentals-server
+      dockerfile: Dockerfile
+    container_name: obai-fundamentals-server
+    ports:
+      - "8001:8000"
+    environment:
+      # API Keys (from host env: export FMP_API_KEY=... etc.)
+      - FMP_API_KEY=${FMP_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FMP_BASE_URL=https://financialmodelingprep.com/stable
+      # Qdrant Configuration
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=financial-fundamentals
+      - EMBEDDING_MODEL=text-embedding-3-small
+      - EMBEDDING_DIMENSION=1536
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  market-data-server:
+    build:
+      context: ../src/market-data-server
+      dockerfile: Dockerfile
+    container_name: obai-market-data-server
+    ports:
+      - "8002:8000"
+    environment:
+      # API Keys (from host env)
+      - FMP_API_KEY=${FMP_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  events-news-server:
+    build:
+      context: ../src/events-news-server
+      dockerfile: Dockerfile
+    container_name: obai-events-news-server
+    ports:
+      - "8003:8000"
+    environment:
+      # API Keys (from host env: export FMP_API_KEY=... etc.)
+      - FMP_API_KEY=${FMP_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  options-server:
+    build:
+      context: ../src/options-server
+      dockerfile: Dockerfile
+    container_name: obai-options-server
+    ports:
+      - "8004:8000"
+    environment:
+      # API Keys (from host env)
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - POLYGON_BASE_URL=https://api.polygon.io
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  screening-server:
+    build:
+      context: ../src/screening-server
+      dockerfile: Dockerfile
+    container_name: obai-screening-server
+    ports:
+      - "8005:8000"
+    environment:
+      # API Keys (from host env)
+      - FMP_API_KEY=${FMP_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  portfolio-server:
+    build:
+      context: ../src/portfolio-server
+      dockerfile: Dockerfile
+    container_name: obai-portfolio-server
+    ports:
+      - "8006:8000"
+    environment:
+      # API Keys (from host env)
+      - FMP_API_KEY=${FMP_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FMP_BASE_URL=https://financialmodelingprep.com/stable
+      # Cache TTLs (hours)
+      - ETF_HOLDINGS_CACHE_TTL_HOURS=24
+      - TREASURY_RATES_CACHE_TTL_HOURS=4
+      - ECONOMIC_INDICATORS_CACHE_TTL_HOURS=4
+      # Market Data Server (for price data)
+      - MARKET_DATA_SERVER_URL=http://market-data-server:8000
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    depends_on:
+      - market-data-server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  backtest-server:
+    build:
+      context: ../src/backtest-server
+      dockerfile: Dockerfile
+    container_name: obai-backtest-server
+    ports:
+      - "8007:8007"
+    environment:
+      # API Keys (from host env)
+      - FMP_API_KEY=${FMP_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8007
+    volumes:
+      # Persist OHLCV data and cache across restarts
+      - backtest-data:/app/data
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8007/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  qdrant-data:
+  backtest-data:
+
+networks:
+  obai-mcp-network:
+    driver: bridge

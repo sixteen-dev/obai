@@ -1,0 +1,27 @@
+# Filter configuration for screening-server (FMP API)
+# Controls which fields are kept in API responses to reduce token usage
+# Edit these lists to customize what data is returned from each tool
+
+filters:
+  # Stock screening results - keep essential company metadata and metrics
+  screen_stocks:
+    keep_fields:
+      - symbol
+      - companyName
+      - marketCap
+      - price
+      - beta
+      - volume
+      - sector
+      - industry
+      - exchangeShortName
+      - country
+
+  # Company search results - keep symbol resolution data
+  search_company:
+    keep_fields:
+      - symbol
+      - name
+      - exchange
+      - exchangeShortName
+      - currency

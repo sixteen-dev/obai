@@ -1,0 +1,68 @@
+# Filter configuration for market-data-server
+# Controls which fields are kept in API responses to reduce token usage
+# Edit these lists to customize what data is returned from each tool
+
+filters:
+  quote:
+    # Full quote data - keep price, volume, market metrics, trading range
+    keep_fields:
+      - symbol
+      - name
+      - price
+      - changesPercentage
+      - change
+      - dayLow
+      - dayHigh
+      - yearHigh
+      - yearLow
+      - marketCap
+      - priceAvg50
+      - priceAvg200
+      - volume
+      - avgVolume
+      - exchange
+      - open
+      - previousClose
+      - timestamp
+
+  quote_short:
+    # Short quote - already minimal, keep all fields
+    keep_all: true
+
+  candles:
+    # OHLCV candle data - all essential for technical analysis
+    keep_all: true
+
+  movers:
+    # Market movers - keep only symbol, name, price, and change data
+    keep_fields:
+      - symbol
+      - name
+      - change
+      - price
+      - changesPercentage
+
+  sector_performance:
+    # Sector performance - already concise, keep all
+    keep_all: true
+
+  afterhours_quote:
+    # After-hours quotes - minimal data, keep all
+    keep_all: true
+
+  market_open:
+    # Market open status - minimal data, keep all
+    keep_all: true
+
+  short_volume:
+    # Short volume data - keep essential volume metrics
+    keep_fields:
+      - symbol
+      - date
+      - shortVolume
+      - totalVolume
+      - shortExemptVolume
+
+  technical_indicators:
+    # Technical indicators - all values relevant for analysis
+    keep_all: true

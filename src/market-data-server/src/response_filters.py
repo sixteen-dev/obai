@@ -1,0 +1,115 @@
+"""Response filtering to reduce token usage by removing unnecessary fields.
+
+Filter rules are configured in filter_config.yaml at the project root.
+Edit that file to customize which fields are kept or removed.
+"""
+
+from pathlib import Path
+from typing import Any, cast
+
+import yaml
+
+
+def _load_filter_config() -> dict[str, Any]:
+    """Load filter configuration from YAML file and pre-compute sets.
+
+    Returns:
+        Filter configuration dictionary with field lists converted to sets
+
+    Raises:
+        FileNotFoundError: If filter_config.yaml doesn't exist
+        yaml.YAMLError: If config file is invalid
+    """
+    config_path = Path(__file__).parent.parent / "filter_config.yaml"
+    with open(config_path) as f:
+        config = cast(dict[str, Any], yaml.safe_load(f))
+
+    filters = cast(dict[str, Any], config["filters"])
+
+    # Pre-convert field lists to sets for O(1) lookups instead of O(n)
+    for _filter_name, filter_config in filters.items():
+        if "keep_fields" in filter_config:
+            filter_config["keep_fields"] = set(filter_config["keep_fields"])
+        if "remove_fields" in filter_config:
+            filter_config["remove_fields"] = set(filter_config["remove_fields"])
+
+    return filters
+
+
+# Load config once at module import with pre-computed sets
+_FILTERS = _load_filter_config()
+
+
+def _apply_filter(data: list[dict[str, Any]], filter_name: str) -> list[dict[str, Any]]:
+    """Apply filter based on config.
+
+    Args:
+        data: List of dictionaries to filter
+        filter_name: Name of filter in config
+
+    Returns:
+        Filtered data
+    """
+    filter_config = _FILTERS.get(filter_name, {})
+
+    # If keep_all is True, return data unchanged
+    if filter_config.get("keep_all", False):
+        return data
+
+    # If keep_fields is specified, keep only those fields (already a set)
+    if "keep_fields" in filter_config:
+        keep_fields: set[str] = filter_config["keep_fields"]
+        return [{k: v for k, v in item.items() if k in keep_fields} for item in data]
+
+    # If remove_fields is specified, remove those fields (already a set)
+    if "remove_fields" in filter_config:
+        remove_fields: set[str] = filter_config["remove_fields"]
+        return [{k: v for k, v in item.items() if k not in remove_fields} for item in data]
+
+    # No filter specified, return unchanged
+    return data
+
+
+def filter_quote(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter quote data to essential fields."""
+    return _apply_filter(data, "quote")
+
+
+def filter_quote_short(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter short quote - already minimal, keep all fields."""
+    return _apply_filter(data, "quote_short")
+
+
+def filter_candles(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter candle data - OHLCV is all essential, keep all fields."""
+    return _apply_filter(data, "candles")
+
+
+def filter_movers(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter movers to essential fields."""
+    return _apply_filter(data, "movers")
+
+
+def filter_sector_performance(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter sector performance - all fields relevant, keep all."""
+    return _apply_filter(data, "sector_performance")
+
+
+def filter_afterhours_quote(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter after-hours quotes - keep all price/volume data."""
+    return _apply_filter(data, "afterhours_quote")
+
+
+def filter_market_open(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter market open status - keep all fields."""
+    return _apply_filter(data, "market_open")
+
+
+def filter_short_volume(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter short volume data to essential fields."""
+    return _apply_filter(data, "short_volume")
+
+
+def filter_technical_indicators(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter technical indicators - keep all indicator values."""
+    return _apply_filter(data, "technical_indicators")

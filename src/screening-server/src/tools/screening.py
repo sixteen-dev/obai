@@ -1,0 +1,318 @@
+"""Screening tools for stock discovery and ticker resolution via FMP API.
+
+Tools:
+- screen_stocks: Market-wide stock screener with multiple filters
+- search_company_by_name: Resolve company names to ticker symbols
+- search_company_by_symbol: Resolve partial/typo symbols to valid tickers
+"""
+
+from datetime import datetime, timezone
+from typing import Any
+
+from ..clients.fmp_client import FMPClient
+from ..config import get_settings
+from ..logging_config import get_logger, log_error
+from ..response_filters import filter_screen_results, filter_search_results
+
+logger = get_logger(__name__)
+
+
+# =============================================================================
+# Stock Screening Tool
+# =============================================================================
+
+
+async def screen_stocks(
+    market_cap_more_than: int | None = None,
+    market_cap_lower_than: int | None = None,
+    price_more_than: float | None = None,
+    price_lower_than: float | None = None,
+    volume_more_than: int | None = None,
+    beta_more_than: float | None = None,
+    beta_lower_than: float | None = None,
+    sector: str | None = None,
+    industry: str | None = None,
+    country: str | None = None,
+    exchange: str | None = None,
+    is_etf: bool | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Screen stocks with various filters for idea generation.
+
+    Market-wide stock screening to find candidates matching specific criteria.
+    Returns a ranked list of stocks that can be passed to other agents for
+    deeper analysis.
+
+    Args:
+        market_cap_more_than: Minimum market cap
+        market_cap_lower_than: Maximum market cap
+        price_more_than: Minimum price
+        price_lower_than: Maximum price
+        volume_more_than: Minimum volume
+        beta_more_than: Minimum beta
+        beta_lower_than: Maximum beta
+        sector: Sector filter (e.g., "Technology", "Healthcare", "Financial Services")
+        industry: Industry filter
+        country: Country code (e.g., "US", "CN", "GB")
+        exchange: Exchange (e.g., "NASDAQ", "NYSE", "AMEX")
+        is_etf: Filter for ETFs only
+        limit: Maximum results (default: 25, max: 100)
+
+    Returns:
+        Screening results with metadata and filtered stock list
+
+    Raises:
+        FMPAPIError: If API request fails
+    """
+    try:
+        settings = get_settings()
+        async with FMPClient(settings) as client:
+            data = await client.screen_stocks(
+                market_cap_more_than=market_cap_more_than,
+                market_cap_lower_than=market_cap_lower_than,
+                price_more_than=price_more_than,
+                price_lower_than=price_lower_than,
+                volume_more_than=volume_more_than,
+                beta_more_than=beta_more_than,
+                beta_lower_than=beta_lower_than,
+                sector=sector,
+                industry=industry,
+                country=country,
+                exchange=exchange,
+                is_etf=is_etf,
+                limit=limit,
+            )
+
+            filtered_results = filter_screen_results(data)
+
+            # Build filters applied for response metadata
+            filters_applied: dict[str, Any] = {}
+            if market_cap_more_than is not None:
+                filters_applied["market_cap_more_than"] = market_cap_more_than
+            if market_cap_lower_than is not None:
+                filters_applied["market_cap_lower_than"] = market_cap_lower_than
+            if price_more_than is not None:
+                filters_applied["price_more_than"] = price_more_than
+            if price_lower_than is not None:
+                filters_applied["price_lower_than"] = price_lower_than
+            if volume_more_than is not None:
+                filters_applied["volume_more_than"] = volume_more_than
+            if beta_more_than is not None:
+                filters_applied["beta_more_than"] = beta_more_than
+            if beta_lower_than is not None:
+                filters_applied["beta_lower_than"] = beta_lower_than
+            if sector is not None:
+                filters_applied["sector"] = sector
+            if industry is not None:
+                filters_applied["industry"] = industry
+            if country is not None:
+                filters_applied["country"] = country
+            if exchange is not None:
+                filters_applied["exchange"] = exchange
+            if is_etf is not None:
+                filters_applied["is_etf"] = is_etf
+
+            # Warn if no filters applied (could return too many results)
+            warning = None
+            if not filters_applied:
+                warning = "No filters applied. Consider adding filters to narrow results."
+
+            return {
+                "meta": {
+                    "vendor": "FMP",
+                    "endpoint": "/stable/company-screener",
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                    "row_count": len(filtered_results),
+                    "filters_applied": filters_applied,
+                    "warning": warning,
+                },
+                "results": filtered_results,
+            }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "screen_stocks",
+                "sector": sector,
+                "country": country,
+            },
+        )
+        raise
+
+
+# =============================================================================
+# Company Search Tools
+# =============================================================================
+
+
+async def search_company_by_name(
+    query: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Search companies by name to resolve ticker symbols.
+
+    Useful when users mention company names instead of tickers.
+    Returns matching companies with their symbols and exchange info.
+
+    Args:
+        query: Company name or partial name (e.g., "Palantir", "Apple")
+        limit: Maximum results (default: 10, max: 20)
+
+    Returns:
+        Search results with matching companies
+
+    Raises:
+        FMPAPIError: If API request fails
+    """
+    try:
+        settings = get_settings()
+        async with FMPClient(settings) as client:
+            data = await client.search_by_name(
+                query=query,
+                limit=limit,
+            )
+
+            filtered_results = filter_search_results(data)
+
+            return {
+                "meta": {
+                    "vendor": "FMP",
+                    "endpoint": "/stable/search-name",
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                    "query": query,
+                    "row_count": len(filtered_results),
+                },
+                "results": filtered_results,
+            }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "search_company_by_name",
+                "query": query,
+            },
+        )
+        raise
+
+
+async def list_available_sectors() -> dict[str, Any]:
+    """List all valid sector values accepted by the stock screener.
+
+    Call this before screening with a sector filter to discover
+    the exact sector strings the API accepts.
+
+    Returns:
+        List of valid sector values with metadata.
+    """
+    try:
+        settings = get_settings()
+        async with FMPClient(settings) as client:
+            data = await client.get_available_sectors()
+
+            sectors = sorted(entry["sector"] for entry in data if "sector" in entry)
+
+            return {
+                "meta": {
+                    "vendor": "FMP",
+                    "endpoint": "/stable/available-sectors",
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                    "count": len(sectors),
+                },
+                "sectors": sectors,
+            }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={"tool": "list_available_sectors"},
+        )
+        raise
+
+
+async def list_available_industries() -> dict[str, Any]:
+    """List all valid industry values accepted by the stock screener.
+
+    Call this before screening with an industry filter to discover
+    the exact industry strings the API accepts.
+
+    Returns:
+        List of valid industry values with metadata.
+    """
+    try:
+        settings = get_settings()
+        async with FMPClient(settings) as client:
+            data = await client.get_available_industries()
+
+            industries = sorted(entry["industry"] for entry in data if "industry" in entry)
+
+            return {
+                "meta": {
+                    "vendor": "FMP",
+                    "endpoint": "/stable/available-industries",
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                    "count": len(industries),
+                },
+                "industries": industries,
+            }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={"tool": "list_available_industries"},
+        )
+        raise
+
+
+async def search_company_by_symbol(
+    query: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Search companies by symbol to resolve partial or typo tickers.
+
+    Useful when users enter:
+    - Typos (e.g., "AAPLL" instead of "AAPL")
+    - Partial symbols (e.g., "AAP")
+    - International variants
+
+    Args:
+        query: Ticker or partial ticker (e.g., "AAPL", "AAP", "TSLA")
+        limit: Maximum results (default: 10, max: 20)
+
+    Returns:
+        Search results with matching companies
+
+    Raises:
+        FMPAPIError: If API request fails
+    """
+    try:
+        settings = get_settings()
+        async with FMPClient(settings) as client:
+            data = await client.search_by_symbol(
+                query=query,
+                limit=limit,
+            )
+
+            filtered_results = filter_search_results(data)
+
+            return {
+                "meta": {
+                    "vendor": "FMP",
+                    "endpoint": "/stable/search-symbol",
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                    "query": query,
+                    "row_count": len(filtered_results),
+                },
+                "results": filtered_results,
+            }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "search_company_by_symbol",
+                "query": query,
+            },
+        )
+        raise

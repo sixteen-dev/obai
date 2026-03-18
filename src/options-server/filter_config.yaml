@@ -1,0 +1,43 @@
+# Filter configuration for options-server (Polygon.io API)
+# Controls which fields are kept in API responses to reduce token usage
+# Edit these lists to customize what data is returned from each tool
+
+filters:
+  # Option contracts reference list - keep essential contract metadata
+  option_contracts_list:
+    keep_fields:
+      - ticker
+      - underlying_ticker
+      - strike_price
+      - expiration_date
+      - contract_type
+      - exercise_style
+      - shares_per_contract
+
+  # Option chain snapshot - handled programmatically in response_filters.py
+  # The filter_option_chain_snapshot function flattens nested Polygon structures
+  option_chain_snapshot:
+    keep_all: true  # Filtering handled in code
+
+  # Option contract snapshot - uses same logic as chain snapshot
+  option_contract_snapshot:
+    use_filter: option_chain_snapshot
+
+  # Option trade - handled programmatically in filter_option_trade
+  option_trade:
+    keep_all: true  # Filtering handled in code
+
+  # Option quote - handled programmatically in filter_option_quote
+  option_quote:
+    keep_all: true  # Filtering handled in code
+
+  # Historical trades/quotes - keep all (typically small result sets)
+  option_trades_history:
+    keep_all: true
+
+  option_quotes_history:
+    keep_all: true
+
+  # Aggregates (OHLCV) - keep all bar data
+  option_aggregates:
+    keep_all: true

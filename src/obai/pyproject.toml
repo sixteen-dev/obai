@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["clients", "core_agents", "evaluation"]
+
+[tool.hatch.build.targets.wheel.force-include]
+
+[tool.hatch.build]
+exclude = [
+    "*.log",
+    ".env*",
+    "**/tests/",
+    "**/test_*.py",
+    "**/test_cases/",
+]
+
+[project]
+name = "obai"
+version = "0.1.0"
+description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=2.15.0",
+    "openai-agents>=0.6.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "fastmcp>=2.14.3",
+    "textual>=3.0.0",
+    "typer>=0.12.0",
+    "opik>=1.7.0",
+]
+
+[project.scripts]
+obai = "clients.cli.chat:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.8.0",
+    "ruff>=0.1.0",
+]
+testing = [
+    "deepeval>=2.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "ANN", # flake8-annotations
+    "S",   # flake8-bandit
+    "D",   # pydocstyle
+]
+ignore = [
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+    "S101", # Use of assert (fine in tests)
+    "ANN401", # Dynamically typed Any (needed for __aexit__ signature)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow long lines in instruction strings (agent prompts)
+"*_agent.py" = ["E501"]
+# Tests use assert statements and have different patterns
+"tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102"]
+"core_agents/tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102"]
+# Evaluation module has CLI and may use assert for validation
+"evaluation/*" = ["S101", "ANN401"]
+# CLI needs sys.path modification before local imports
+"evaluation/cli.py" = ["S101", "ANN401", "E402"]
+# CLI clients may have local imports after sys.path modification
+"clients/cli/tui.py" = ["E402"]
+"clients/cli/chat.py" = ["E402"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["core_agents/tests"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.14.11",
+    "types-pyyaml>=6.0.12.20250915",
+]

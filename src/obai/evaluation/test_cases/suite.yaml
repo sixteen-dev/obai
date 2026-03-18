@@ -1,0 +1,708 @@
+# OBaI Evaluation Test Suite
+# ==========================
+# 85 test cases across 5 active categories (A-E, F pending).
+# Category F (session/context) requires multi-turn support — listed as comments.
+#
+# Usage:
+#   python -m evaluation evaluate --suite                    # Run all
+#   python -m evaluation evaluate --suite --category A       # Single-agent only
+#   python -m evaluation evaluate --suite --file custom.yaml # Custom file
+
+test_cases:
+  # ─────────────────────────────────────────────
+  # Category A: Single-Agent Queries (Baseline)
+  # ─────────────────────────────────────────────
+
+  - id: A1
+    query: "Where is AAPL trading right now?"
+    category: A
+    query_type: price
+    expected_tools: [market_data_analysis]
+    description: Simple price query - single agent
+
+  - id: A2
+    query: "For a quick valuation check, what is Tesla trading at on a P/E basis?"
+    category: A
+    query_type: fundamentals
+    expected_tools: [fundamentals_analysis]
+    description: Simple fundamentals query - single agent
+
+  - id: A3
+    query: "Show me today's market movers"
+    category: A
+    query_type: movers
+    expected_tools: [market_data_analysis]
+    description: Market movers query - single agent
+
+  - id: A4
+    query: "What's the ticker for Palantir?"
+    category: A
+    query_type: ticker_lookup
+    expected_tools: [screener_lookup]
+    description: Ticker lookup query - single agent
+
+  - id: A5
+    query: "What are the most important TSLA catalysts from the past week?"
+    category: A
+    query_type: news
+    expected_tools: [events_news_analysis]
+    description: Simple news query - single agent
+
+  - id: A6
+    query: "Show me the front-month AAPL call chain and flag the most liquid strikes."
+    category: A
+    query_type: options
+    expected_tools: [options_analysis]
+    description: Simple options query - single agent
+
+  - id: A7
+    query: "Analyze my portfolio: AAPL 40%, QQQ 60%"
+    category: A
+    query_type: portfolio
+    expected_tools: [portfolio_analysis]
+    description: Portfolio analysis with explicit positions
+
+  - id: A8
+    query: "Check NVDA's daily RSI and MACD so I can gauge near-term momentum."
+    category: A
+    query_type: technicals
+    expected_tools: [market_data_analysis]
+    description: Technical indicators query
+
+  - id: A9
+    query: "Show MSFT 52-week high/low range"
+    category: A
+    query_type: price_range
+    expected_tools: [market_data_analysis]
+    description: 52-week range context
+
+  - id: A10
+    query: "Show me AAPL dividend history"
+    category: A
+    query_type: dividends
+    expected_tools: [events_news_analysis]
+    description: Dividend history query
+
+  - id: A11
+    query: "When is AMZN's next earnings date?"
+    category: A
+    query_type: earnings_calendar
+    expected_tools: [events_news_analysis]
+    description: Earnings calendar query
+
+  - id: A12
+    query: "Show me AAPL 10-K filings"
+    category: A
+    query_type: sec_filings
+    expected_tools: [fundamentals_analysis]
+    description: SEC filings query
+
+  - id: A13
+    query: "Break down NVDA revenue by segment"
+    category: A
+    query_type: revenue_segments
+    expected_tools: [fundamentals_analysis]
+    description: Revenue segmentation query
+
+  - id: A14
+    query: "Latest insider trades for TSLA"
+    category: A
+    query_type: insider_trades
+    expected_tools: [fundamentals_analysis]
+    description: Insider trading activity query
+
+  - id: A15
+    query: "Show me QQQ holdings"
+    category: A
+    query_type: etf_holdings
+    expected_tools: [portfolio_analysis]
+    description: ETF holdings lookup
+
+  - id: A16
+    query: "Analyze my portfolio risk: VOO 50%, QQQ 30%, BND 20%"
+    category: A
+    query_type: portfolio_risk
+    expected_tools: [portfolio_analysis]
+    description: Portfolio risk analysis without preference mutation
+
+  - id: A17
+    query: "What's the current 10-year Treasury yield?"
+    category: A
+    query_type: treasury_rates
+    expected_tools: [portfolio_analysis]
+    description: Treasury rates query
+
+  - id: A18
+    query: "Screen for U.S. large-cap healthcare names with beta below 1.0."
+    category: A
+    query_type: screening
+    expected_tools: [screener_lookup]
+    description: Screening with multiple filters
+
+  - id: A19
+    query: "Is META a valid ticker?"
+    category: A
+    query_type: ticker_validation
+    expected_tools: [screener_lookup]
+    description: Symbol validation query
+
+  - id: A20
+    query: "List TSLA option expirations"
+    category: A
+    query_type: options_expirations
+    expected_tools: [options_analysis]
+    description: Options expirations query
+
+  - id: A21
+    query: "Show AMD analyst price target consensus and rating split"
+    category: A
+    query_type: analyst_outlook
+    expected_tools: [fundamentals_analysis]
+    description: Analyst expectations and recommendations
+
+  - id: A22
+    query: "Show AMZN free cash flow trend from the latest statements"
+    category: A
+    query_type: cashflow_trend
+    expected_tools: [fundamentals_analysis]
+    description: Cash flow quality check
+
+  - id: A23
+    query: "Is the market open right now and where is SPY trading?"
+    category: A
+    query_type: market_status_and_price
+    expected_tools: [market_data_analysis]
+    description: Market status plus benchmark quote
+
+  - id: A24
+    query: "Give me high-impact news on UNH from the last 72 hours"
+    category: A
+    query_type: high_impact_news
+    expected_tools: [events_news_analysis]
+    description: Catalyst-focused news filter
+
+  - id: A25
+    query: "List AAPL options with the highest open interest for next expiration"
+    category: A
+    query_type: options_liquidity
+    expected_tools: [options_analysis]
+    description: Contract liquidity discovery
+
+  - id: A26
+    query: "What is the current 3-month Treasury yield?"
+    category: A
+    query_type: short_rate
+    expected_tools: [portfolio_analysis]
+    description: Risk-free rate lookup
+
+  # ─────────────────────────────────────────────
+  # Category B: Multi-Agent (Coordination & Sequencing)
+  # ─────────────────────────────────────────────
+
+  - id: B1
+    query: "NVDA sold off hard today. What drove the move?"
+    category: B
+    query_type: price_then_news
+    expected_tools: [market_data_analysis, events_news_analysis]
+    expected_sequence: [market_data_analysis, events_news_analysis]
+    description: Price context then news for explanation
+
+  - id: B2
+    query: "I am doing a quick single-name review on AAPL. Combine the current price setup with the latest valuation snapshot."
+    category: B
+    query_type: price_and_fundamentals
+    expected_tools: [market_data_analysis, fundamentals_analysis]
+    description: Multi-domain query - parallel OK
+
+  - id: B3
+    query: "I need AAPL calls that are closest to spot for the next expiration."
+    category: B
+    query_type: price_then_options
+    expected_tools: [market_data_analysis, options_analysis]
+    expected_sequence: [market_data_analysis, options_analysis]
+    description: Price first for ATM strike identification
+
+  - id: B4
+    query: "What is Palantir trading at right now?"
+    category: B
+    query_type: ticker_then_price
+    expected_tools: [screener_lookup, market_data_analysis]
+    expected_sequence: [screener_lookup, market_data_analysis]
+    description: Ticker lookup then price query
+
+  - id: B5
+    query: "Screen for profitable U.S. large-cap software names and show the top 3 by net margin."
+    category: B
+    query_type: screen_then_analyze
+    expected_tools: [screener_lookup, fundamentals_analysis]
+    expected_sequence: [screener_lookup, fundamentals_analysis]
+    description: Screen first, then analyze results
+
+  - id: B6
+    query: "What does Snowflake's current valuation setup look like?"
+    category: B
+    query_type: ticker_then_fundamentals
+    expected_tools: [screener_lookup, fundamentals_analysis]
+    expected_sequence: [screener_lookup, fundamentals_analysis]
+    description: Ticker lookup then fundamentals
+
+  - id: B7
+    query: "Value my AAPL/MSFT portfolio at current prices: AAPL 50%, MSFT 50%"
+    category: B
+    query_type: portfolio_with_market
+    expected_tools: [portfolio_analysis, market_data_analysis]
+    description: Portfolio positions plus current prices
+
+  - id: B8
+    query: "Give me an investment-committee style update on AAPL covering price action, valuation, and recent catalysts."
+    category: B
+    query_type: full_stock_analysis
+    expected_tools: [market_data_analysis, fundamentals_analysis, events_news_analysis]
+    description: Price + fundamentals + news in one report
+
+  - id: B9
+    query: "Compare NVDA and AMD on valuation and recent momentum"
+    category: B
+    query_type: compare_valuation_and_momentum
+    expected_tools: [fundamentals_analysis, market_data_analysis]
+    description: Cross-company comparison across fundamentals and price action
+
+  - id: B10
+    query: "Build me a shortlist of AI semiconductor names and summarize the latest catalysts for the top 3."
+    category: B
+    query_type: screen_then_news
+    expected_tools: [screener_lookup, events_news_analysis]
+    expected_sequence: [screener_lookup, events_news_analysis]
+    description: Screen first, then summarize catalysts
+
+  - id: B11
+    query: "I am looking at ServiceNow. What is it trading at, and what are the key recent catalysts?"
+    category: B
+    query_type: ticker_then_price_and_news
+    expected_tools: [screener_lookup, events_news_analysis, market_data_analysis]
+    description: Ticker resolution then price + news
+
+  - id: B12
+    query: "Earnings reaction: How did AAPL's last earnings impact the stock?"
+    category: B
+    query_type: earnings_reaction
+    expected_tools: [events_news_analysis, market_data_analysis]
+    description: Earnings + price reaction
+
+  - id: B13
+    query: "Do TSLA options positioning and recent catalysts point in the same direction?"
+    category: B
+    query_type: options_and_news
+    expected_tools: [options_analysis, events_news_analysis]
+    description: Options + news synthesis
+
+  - id: B14
+    query: "How did AAPL's last earnings surprise translate into the next 5 trading days?"
+    category: B
+    query_type: earnings_then_price_reaction
+    expected_tools: [events_news_analysis, market_data_analysis]
+    expected_sequence: [events_news_analysis, market_data_analysis]
+    description: Event timing first, then reaction window
+
+  - id: B15
+    query: "Compare MSFT and GOOGL on valuation, margins, and 6-month price trend"
+    category: B
+    query_type: compare_fundamentals_and_trend
+    expected_tools: [fundamentals_analysis, market_data_analysis]
+    description: Cross-name comparison across two domains
+
+  - id: B16
+    query: "Find profitable cybersecurity stocks, then rank top 3 by valuation and momentum"
+    category: B
+    query_type: screen_then_rank_multifactor
+    expected_tools: [screener_lookup, fundamentals_analysis, market_data_analysis]
+    expected_sequence: [screener_lookup, fundamentals_analysis]
+    description: Universe creation then multi-factor ranking
+
+  - id: B17
+    query: "Find ticker for ServiceNow and give me valuation plus recent catalysts"
+    category: B
+    query_type: ticker_then_fundamentals_and_news
+    expected_tools: [screener_lookup, fundamentals_analysis, events_news_analysis]
+    expected_sequence: [screener_lookup, fundamentals_analysis]
+    description: Ticker resolution before analysis stack
+
+  - id: B18
+    query: "I hold 30% AAPL, 30% QQQ, 20% XLK, 20% cash. Show effective exposure and concentration risk with current market context."
+    category: B
+    query_type: portfolio_risk_with_market_context
+    expected_tools: [portfolio_analysis, market_data_analysis]
+    description: Advisor-style portfolio risk with live context
+
+  - id: B19
+    query: "Did TSLA's recent major news coincide with unusual options activity?"
+    category: B
+    query_type: news_options_linkage
+    expected_tools: [events_news_analysis, options_analysis]
+    description: Event catalysts paired with derivatives positioning
+
+  - id: B20
+    query: "What drove the move in U.S. bank stocks today, and how did the group trade?"
+    category: B
+    query_type: sector_move_explain
+    expected_tools: [events_news_analysis, market_data_analysis]
+    description: Sector catalyst + price move synthesis
+
+  - id: B21
+    query: "Evaluate NVDA risk/reward using price trend, valuation, and latest catalysts"
+    category: B
+    query_type: integrated_risk_reward
+    expected_tools: [market_data_analysis, fundamentals_analysis, events_news_analysis]
+    description: Hedge-fund style integrated single-name view
+
+  # B.5 — Investment Thesis & Management Quality
+
+  - id: B22
+    query: "Give me the bull case and bear case for TSLA. What are the 3 strongest arguments on each side based on current financials, price action, and catalysts?"
+    category: B
+    query_type: bull_bear_thesis
+    expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
+    description: Bull vs bear case construction — requires valuation, trend, and catalyst synthesis
+
+  - id: B23
+    query: "Pitch me AMZN like Peter Lynch would — is this a stalwart, a fast grower, or a turnaround? Show the numbers that support the classification."
+    category: B
+    query_type: lynch_pitch
+    expected_tools: [fundamentals_analysis, market_data_analysis]
+    description: Lynch-style stock classification using earnings growth rate, P/E-to-growth, balance sheet strength
+
+  - id: B24
+    query: "Invert the NVDA thesis — what has to go wrong for this stock to lose 50% from here? What do the fundamentals and recent news say about those risks?"
+    category: B
+    query_type: munger_invert
+    expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
+    description: Munger-style inversion — identify kill scenarios from valuation, competitive, and macro angles
+
+  - id: B25
+    query: "Has AAPL management delivered on their prior guidance? Compare their last 4 quarters of guidance vs actual revenue and EPS results."
+    category: B
+    query_type: guidance_vs_reality
+    expected_tools: [fundamentals_analysis, events_news_analysis]
+    description: Management credibility check — guidance vs actuals from earnings data and filings
+
+  - id: B26
+    query: "Track META's key operating KPIs over the last 2 years — DAU/MAU growth, ARPU trend, capex as % of revenue, and operating margin trajectory. Are they improving or deteriorating?"
+    category: B
+    query_type: kpi_trend_analysis
+    expected_tools: [fundamentals_analysis, events_news_analysis]
+    description: KPI deep-dive — operating metrics trend from financials and earnings commentary
+
+  - id: B27
+    query: "Is MSFT's revenue growth decelerating? Show quarterly revenue growth rates for the last 8 quarters and overlay with analyst forward estimates and recent guidance commentary."
+    category: B
+    query_type: growth_deceleration_check
+    expected_tools: [fundamentals_analysis, events_news_analysis]
+    description: Growth trajectory vs forward expectations — financials plus analyst/management context
+
+  # ─────────────────────────────────────────────
+  # Category C: Guardrail Tests
+  # ─────────────────────────────────────────────
+
+  - id: C1
+    query: "What's the weather like?"
+    category: C
+    query_type: guardrail_reject
+    expect_rejection: true
+    description: Off-topic query should be rejected
+
+  - id: C2
+    query: "Write me a poem about stocks"
+    category: C
+    query_type: guardrail_reject
+    expect_rejection: true
+    description: Creative writing request should be rejected
+
+  - id: C3
+    query: "Who won the Super Bowl?"
+    category: C
+    query_type: guardrail_reject
+    expect_rejection: true
+    description: Sports query should be rejected
+
+  - id: C4
+    query: "Tell me about Apple"
+    category: C
+    query_type: guardrail_accept
+    expect_rejection: false
+    expected_tools: [fundamentals_analysis]
+    description: Ambiguous company query - should be accepted
+
+  - id: C5
+    query: "What's the current 10-year Treasury yield?"
+    category: C
+    query_type: guardrail_accept
+    expect_rejection: false
+    expected_tools: [portfolio_analysis]
+    description: Valid macro rates query - should be accepted
+
+  - id: C6
+    query: "Is now a good time to buy bonds based on current Treasury yields?"
+    category: C
+    query_type: guardrail_accept
+    expect_rejection: false
+    expected_tools: [portfolio_analysis]
+    description: Valid rates-driven allocation question
+
+  - id: C7
+    query: "Can you help me debug my React app?"
+    category: C
+    query_type: guardrail_reject
+    expect_rejection: true
+    description: Software debugging query should be rejected
+
+  - id: C8
+    query: "Why are semiconductor stocks weak today?"
+    category: C
+    query_type: guardrail_accept
+    expect_rejection: false
+    expected_tools: [market_data_analysis, events_news_analysis]
+    description: Valid sector-performance question
+
+  # ─────────────────────────────────────────────
+  # Category D: Error Handling
+  # ─────────────────────────────────────────────
+
+  - id: D1
+    query: "What is FAKESYM trading at?"
+    category: D
+    query_type: error_invalid_symbol_price
+    expected_tools: [market_data_analysis]
+    description: Invalid symbol - graceful error expected
+
+  - id: D2
+    query: "What's FAKESYM's P/E ratio?"
+    category: D
+    query_type: error_invalid_symbol_fundamentals
+    expected_tools: [fundamentals_analysis]
+    description: Invalid symbol in fundamentals tool
+
+  - id: D3
+    query: "Show me FAKESYM options chain"
+    category: D
+    query_type: error_invalid_symbol_options
+    expected_tools: [options_analysis]
+    description: Invalid symbol in options tool
+
+  - id: D4
+    query: "Any recent news on FAKESYM?"
+    category: D
+    query_type: error_invalid_symbol_news
+    expected_tools: [events_news_analysis]
+    description: Invalid symbol in news tool
+
+  - id: D5
+    query: "Find the ticker for NotACompanyXYZ"
+    category: D
+    query_type: error_invalid_ticker_lookup
+    expected_tools: [screener_lookup]
+    description: Ticker lookup with no valid match
+
+  - id: D6
+    query: "What is AAPLL trading at?"
+    category: D
+    query_type: error_ticker_typo_fallback
+    expected_tools: [market_data_analysis, screener_lookup]
+    expected_sequence: [market_data_analysis, screener_lookup]
+    description: Price lookup should fail then trigger typo-resolution fallback
+
+  - id: D7
+    query: "How did FAKESYM's last earnings impact the stock?"
+    category: D
+    query_type: error_multitool_missing_symbol
+    expected_tools: [events_news_analysis, market_data_analysis]
+    description: Multi-tool analysis with missing symbol should fail gracefully
+
+  - id: D8
+    query: "Screen for stocks with market cap above $5T and P/E below 1"
+    category: D
+    query_type: error_empty_screen_result
+    expected_tools: [screener_lookup]
+    description: Impossible filter combination should return empty set gracefully
+
+  # ─────────────────────────────────────────────
+  # Category E: Strategy & Backtesting
+  # ─────────────────────────────────────────────
+
+  # E.1 — Direct Backtest (Mode 1: user provides specific strategy, no pre-gathering)
+
+  - id: E1
+    query: "Backtest a long-only 50/200-day moving-average crossover on AAPL from 2015 onward."
+    category: E
+    query_type: strategy_direct_backtest
+    expected_tools: [strategy_analysis]
+    description: User-provided strategy - direct routing, no pre-gathering
+
+  - id: E2
+    query: "Backtest a daily RSI mean-reversion strategy on MSFT: buy below 30, exit above 70."
+    category: E
+    query_type: strategy_direct_rsi
+    expected_tools: [strategy_analysis]
+    description: Specific RSI strategy - direct routing
+
+  - id: E3
+    query: "Run a MACD crossover backtest on NVDA from January 2020 through December 2024."
+    category: E
+    query_type: strategy_direct_with_dates
+    expected_tools: [strategy_analysis]
+    description: Specific strategy with user-provided date range
+
+  - id: E4
+    query: "Backtest a Bollinger-band pullback strategy on GOOGL with a 5% stop loss."
+    category: E
+    query_type: strategy_direct_with_risk
+    expected_tools: [strategy_analysis]
+    description: Specific strategy with explicit risk management
+
+  # E.2 — Strategy Design (Mode 2: hub resolves only critical inputs, then routes to strategy)
+
+  - id: E5
+    query: "I want a momentum sleeve for U.S. tech. Build and backtest a long-only momentum strategy for large-cap technology stocks."
+    category: E
+    query_type: strategy_design_momentum
+    expected_tools: [screener_lookup, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: Vague universe needs screener to define a stable liquid tech universe; avoid hub-side 'best tech stocks' pre-selection that would bias the backtest
+
+  - id: E6
+    query: "Design and backtest a mean-reversion strategy for AAPL and MSFT using daily data."
+    category: E
+    query_type: strategy_design_meanrev
+    expected_tools: [strategy_analysis]
+    description: Specific tickers and clear objective should route directly to strategy analysis
+
+  - id: E7
+    query: "Design and backtest a breakout strategy for large-cap U.S. energy stocks."
+    category: E
+    query_type: strategy_design_breakout
+    expected_tools: [screener_lookup, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: Vague universe needs screener, then direct strategy routing
+
+  - id: E8
+    query: "Build and backtest a value-momentum multi-factor strategy for S&P 500 constituents."
+    category: E
+    query_type: strategy_design_multifactor
+    expected_tools: [screener_lookup, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: Universe completion first, then strategy agent handles feasible approximation and caveats
+
+  - id: E9
+    query: "Design and backtest a volatility-based trading strategy for TSLA."
+    category: E
+    query_type: strategy_design_volatility
+    expected_tools: [strategy_analysis]
+    description: Specific ticker and clear objective should route directly to strategy analysis
+
+  - id: E10
+    query: "Build a semiconductor trading strategy that can hold up across both bullish and bearish market regimes."
+    category: E
+    query_type: strategy_design_regime
+    expected_tools: [screener_lookup, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: Sector-themed request needs screener first, then direct strategy routing
+
+  - id: E10A
+    query: "Design and backtest an earnings-reaction strategy for NVDA and AMD around quarterly reports."
+    category: E
+    query_type: strategy_design_event_driven
+    expected_tools: [events_news_analysis, strategy_analysis]
+    expected_sequence: [events_news_analysis, strategy_analysis]
+    description: Event-driven strategy explicitly depends on earnings timing/surprise context before strategy design and backtesting
+
+  - id: E10B
+    query: "Build and backtest a value-quality strategy for large-cap software stocks."
+    category: E
+    query_type: strategy_design_fundamental_factor
+    expected_tools: [screener_lookup, fundamentals_analysis, strategy_analysis]
+    expected_sequence: [screener_lookup, fundamentals_analysis, strategy_analysis]
+    description: Themed universe needs screener and the factor objective explicitly depends on fundamentals before strategy design and backtesting
+
+  # E.3 — Async & Follow-up
+
+  - id: E11
+    query: "Backtest an EMA 20/50 crossover basket on AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, AMD, CRM, and NFLX from 2015 to 2025."
+    category: E
+    query_type: strategy_large_universe
+    expected_tools: [strategy_analysis]
+    description: Large universe + long date range should trigger async mode, hub relays job_id
+
+  # E.4 — Strategy with Specific Analysis Needs
+
+  - id: E12
+    query: "What indicators and operators does the backtesting engine support right now?"
+    category: E
+    query_type: strategy_indicator_lookup
+    expected_tools: [strategy_analysis]
+    description: Indicator discovery query - strategy agent lists supported indicators
+
+  - id: E13
+    query: "Compare two AAPL strategies for me: a 20/50 SMA crossover versus RSI 30/70 mean reversion."
+    category: E
+    query_type: strategy_compare
+    expected_tools: [strategy_analysis]
+    description: Strategy comparison - uses backtest_compare_strategies tool
+
+  - id: E14
+    query: "Show me the trade log for the most recent backtest run."
+    category: E
+    query_type: strategy_trade_log
+    expected_tools: [strategy_analysis]
+    description: Trade-level detail request - requires session context of prior backtest
+
+  - id: E15
+    query: "I am building a conservative equity-income sleeve for a client retiring in five years. Design and backtest a low-drawdown dividend-stock strategy."
+    category: E
+    query_type: strategy_design_constrained
+    expected_tools: [screener_lookup, market_data_analysis, fundamentals_analysis, events_news_analysis, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: User constraints (risk tolerance, holding period) should flow into research brief
+
+  - id: E16
+    query: "Backtest a dual moving average strategy on an invalid ticker FAKESYM123"
+    category: E
+    query_type: strategy_error_bad_ticker
+    expected_tools: [strategy_analysis]
+    description: Invalid ticker in backtest - graceful error expected
+
+  # ─────────────────────────────────────────────
+  # Category F: Session/Context (Multi-Turn)
+  # ─────────────────────────────────────────────
+  # NOT YET SUPPORTED — requires multi-turn runner.
+  # Tracked in test framework doc, Phase 6.
+  #
+  # - id: F1
+  #   category: F
+  #   query_type: session_context
+  #   turns:
+  #     - query: "What is AAPL trading at?"
+  #       expected_tools: [market_data_analysis]
+  #     - query: "What about its P/E ratio?"
+  #       expected_tools: [fundamentals_analysis]
+  #   description: Context retention across turns
+  #
+  # - id: F2
+  #   category: F
+  #   query_type: session_multi_symbol
+  #   turns:
+  #     - query: "Compare AAPL and MSFT"
+  #       expected_tools: [market_data_analysis, fundamentals_analysis]
+  #     - query: "Which has better margins?"
+  #       expected_tools: [fundamentals_analysis]
+  #   description: Multi-symbol context retention
+  #
+  # - id: F3
+  #   category: F
+  #   query_type: session_clear
+  #   turns:
+  #     - query: "What is AAPL trading at?"
+  #       expected_tools: [market_data_analysis]
+  #     - query: "clear"
+  #       expected_tools: []
+  #     - query: "What's the P/E ratio?"
+  #       expected_tools: []
+  #   description: Session clear works - should ask which stock

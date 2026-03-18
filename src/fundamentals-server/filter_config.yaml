@@ -1,0 +1,98 @@
+# Filter configuration for fundamentals-server
+# Controls which fields are kept in API responses to reduce token usage
+# Edit these lists to customize what data is returned from each tool
+
+filters:
+  company_profile:
+    # Company profile data - keep essential financial metrics and business context
+    keep_fields:
+      - symbol
+      - price
+      - marketCap
+      - beta
+      - lastDividend
+      - range
+      - change
+      - changePercentage
+      - volume
+      - averageVolume
+      - companyName
+      - exchange
+      - industry
+      - ceo
+      - sector
+      - country
+      - fullTimeEmployees
+      - ipoDate
+      - isEtf
+      - isActivelyTrading
+      - isAdr
+      - isFund
+
+  financial_statement:
+    # Financial statements - remove administrative metadata, keep all financial data
+    remove_fields:
+      - reportedCurrency
+      - cik
+      - fillingDate
+      - acceptedDate
+      - link
+      - finalLink
+
+  key_metrics:
+    # Key metrics - remove redundant metadata
+    remove_fields:
+      - reportedCurrency
+      - cik
+      - fillingDate
+      - acceptedDate
+
+  financial_ratios:
+    # Financial ratios - remove redundant metadata
+    remove_fields:
+      - reportedCurrency
+      - cik
+      - fillingDate
+      - acceptedDate
+
+  analyst_estimates:
+    # Analyst estimates - all fields are relevant, no filtering
+    keep_all: true
+
+  price_target:
+    # Price target summary - already concise, no filtering needed
+    keep_all: true
+
+  company_rating:
+    # Company rating - already concise, no filtering needed
+    keep_all: true
+
+  sec_filings:
+    # SEC filings - keep essential filing info, remove internal metadata
+    keep_fields:
+      - symbol
+      - cik
+      - formType
+      - filingDate
+      - acceptedDate
+      - link
+      - finalLink
+
+  insider_trades:
+    # Insider trades - keep transaction details relevant for analysis
+    keep_fields:
+      - symbol
+      - filingDate
+      - transactionDate
+      - reportingName
+      - typeOfOwner
+      - transactionType
+      - securitiesOwned
+      - securitiesTransacted
+      - price
+      - formType
+      - link
+
+  revenue_segments:
+    # Revenue segmentation - keep all data as it's product-level breakdown
+    keep_all: true

@@ -1,0 +1,39 @@
+# Filter configuration for events-news-server
+# Controls which fields are kept in API responses to reduce token usage
+# Edit these lists to customize what data is returned from each tool
+
+filters:
+  news:
+    # News articles from Tavily - keep headlines, content snippets, and metadata
+    keep_fields:
+      - symbol
+      - title
+      - publishedDate
+      - url
+      - source
+      - content
+      - score
+
+  earnings:
+    # Earnings by ticker - keep EPS estimates and revenue forecasts
+    keep_fields:
+      - symbol
+      - date
+      - epsActual
+      - epsEstimated
+      - revenueActual
+      - revenueEstimated
+      - lastUpdated
+
+  dividends:
+    # Dividends by ticker - keep dividend amounts, dates, and yield
+    keep_fields:
+      - symbol
+      - date
+      - recordDate
+      - paymentDate
+      - declarationDate
+      - adjDividend
+      - dividend
+      - yield
+      - frequency

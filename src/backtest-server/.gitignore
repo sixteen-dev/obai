@@ -1,0 +1,14 @@
+# Virtual environment
+.venv/
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+
+# Data files (downloaded OHLCV)
+data/
+
+# Backtest cache
+cache/
