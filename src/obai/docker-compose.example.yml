@@ -1,0 +1,92 @@
+# Example Docker Compose configuration for tezQ agents
+# This shows how to deploy agents with MCP servers
+# Copy to docker-compose.yml and customize for your deployment
+
+version: '3.8'
+
+services:
+  # Example: Discord Bot (future implementation)
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # OpenAI
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # MCP Server URLs (internal Docker network)
+      - MCP_FUNDAMENTALS_URL=http://fundamentals-server:8000/mcp
+      - MCP_MARKET_DATA_URL=http://market-data-server:8000/mcp
+      - MCP_EVENTS_NEWS_URL=http://events-news-server:8000/mcp
+      - MCP_OPTIONS_URL=http://options-server:8000/mcp
+
+      # MCP Client Settings
+      - MCP_TIMEOUT=30.0
+      - MCP_MAX_RETRIES=2
+
+      # Agent Models
+      - ORCHESTRATOR_MODEL=gpt-4o
+      - SPECIALIST_MODEL=gpt-4o-mini
+      # Optional per-agent overrides:
+      # - MARKET_DATA_MODEL=gpt-4o
+      # - FUNDAMENTALS_MODEL=gpt-4o-mini
+      # - EVENTS_NEWS_MODEL=gpt-4o-mini
+      # - OPTIONS_MODEL=gpt-4o-mini
+
+      # Logging
+      - LOG_LEVEL=INFO
+
+      # Discord (when implementing Discord bot)
+      # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      # - DISCORD_QUERY_CHANNEL_ID=${DISCORD_QUERY_CHANNEL_ID}
+
+      # DynamoDB Analytics (when implementing)
+      # - AWS_REGION=us-east-2
+      # - DYNAMODB_ANALYTICS_TABLE=discord_research_logs
+    depends_on:
+      - fundamentals-server
+      - market-data-server
+      - events-news-server
+      - options-server
+    networks:
+      - tezq-network
+    restart: unless-stopped
+    # Override default command for Discord bot:
+    # command: ["python", "-m", "agents.discord_bot"]
+
+  # MCP Servers (reference existing implementations)
+  fundamentals-server:
+    image: tezq/fundamentals-server:latest
+    environment:
+      - FMP_API_KEY=${FMP_API_KEY}
+    networks:
+      - tezq-network
+    restart: unless-stopped
+
+  market-data-server:
+    image: tezq/market-data-server:latest
+    environment:
+      - MASSIVE_API_KEY=${MASSIVE_API_KEY}
+    networks:
+      - tezq-network
+    restart: unless-stopped
+
+  events-news-server:
+    image: tezq/events-news-server:latest
+    environment:
+      - FMP_API_KEY=${FMP_API_KEY}
+    networks:
+      - tezq-network
+    restart: unless-stopped
+
+  options-server:
+    image: tezq/options-server:latest
+    environment:
+      - MASSIVE_API_KEY=${MASSIVE_API_KEY}
+    networks:
+      - tezq-network
+    restart: unless-stopped
+
+networks:
+  tezq-network:
+    driver: bridge

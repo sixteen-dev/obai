@@ -12,9 +12,9 @@
 #   7. Configures Opik SDK for local tracing
 #
 # Usage:
-#   ./setup.sh              # Full setup
-#   ./setup.sh --skip-opik  # Skip Opik tracing stack
-#   ./setup.sh --skip-mcp   # Skip MCP servers (start later)
+#   ./scripts/setup.sh              # Full setup
+#   ./scripts/setup.sh --skip-opik  # Skip Opik tracing stack
+#   ./scripts/setup.sh --skip-mcp   # Skip MCP servers (start later)
 #
 # Prerequisites:
 #   - Docker + Docker Compose v2 (or Rancher Desktop exposing `docker` + `docker compose`)
@@ -34,10 +34,11 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # --- Globals ---
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OBAI_DIR="$HOME/.obai"
+DEV_DIR="$REPO_ROOT/dev"
 OPIK_DIR="$REPO_ROOT/infra/opik"
-OBAI_SRC="$REPO_ROOT/src/obai"
+OBAI_SRC="$REPO_ROOT/src/OBaI"
 
 SKIP_OPIK=false
 SKIP_MCP=false
@@ -167,9 +168,10 @@ check_key() {
 }
 
 check_key "OPENAI_API_KEY"    "required" "needed for Agent SDK (all agents)"
-check_key "FMP_API_KEY"       "required" "needed for 6 of 7 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
-check_key "POLYGON_API_KEY"   "optional" "needed for options-server only"
+check_key "FMP_API_KEY"       "required" "needed for 6/7 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
+check_key "MASSIVE_API_KEY"   "optional" "needed for options-server only"
 check_key "TAVILY_API_KEY"    "optional" "needed for events-news-server AI search"
+check_key "TEZNEWZ_API_KEY"   "optional" "needed for events-news-server scored news"
 check_key "ANTHROPIC_API_KEY" "optional" "needed for LLM-judge evaluation scorers"
 
 if [ "$missing_required" -gt 0 ]; then
@@ -251,10 +253,10 @@ if [ "$SKIP_MCP" = false ]; then
     step "5/7 Building and starting MCP servers"
 
     info "Building 7 MCP server images (this may take a few minutes on first run)..."
-    docker compose -f "$REPO_ROOT/docker-compose.yml" build
+    docker compose -f "$DEV_DIR/docker-compose.yml" build
 
     info "Starting MCP servers..."
-    docker compose -f "$REPO_ROOT/docker-compose.yml" up -d
+    docker compose -f "$DEV_DIR/docker-compose.yml" up -d
 
     # Health check
     info "Waiting for servers to become healthy..."
@@ -296,6 +298,8 @@ if [ "$SKIP_MCP" = false ]; then
         warn "Qdrant collection is empty — educational search won't work until seeded."
         info "Seed from local PDFs:"
         echo "    uv run python scripts/vector_bucket/seed_qdrant.py --pdf-dir ./data/pdfs"
+        info "Or seed from S3 (requires AWS credentials):"
+        echo "    uv run python scripts/vector_bucket/seed_qdrant.py"
     else
         ok "Qdrant collection has $QDRANT_COUNT vectors"
     fi

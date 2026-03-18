@@ -49,6 +49,14 @@ testing = [
     "deepeval>=2.0.0",
     "pyyaml>=6.0.0",
 ]
+telemetry = [
+    "aioboto3>=13.0.0",
+    "boto3>=1.35.0",
+    "types-aiobotocore-dynamodb>=2.0.0",
+]
+caching = [
+    "langcache>=0.1.0",
+]
 
 [tool.ruff]
 target-version = "py312"

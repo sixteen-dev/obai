@@ -63,7 +63,7 @@ def log_api_call(
 
     Args:
         logger: Logger instance
-        service: Service name (e.g., 'fmp')
+        service: Service name (e.g., 'fmp', 'openai', 's3vectors')
         endpoint: API endpoint
         params: Request parameters (will be sanitized)
     """

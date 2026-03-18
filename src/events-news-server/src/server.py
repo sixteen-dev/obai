@@ -15,7 +15,7 @@ from .clients.fmp_client import FMPClient
 from .config import Settings, get_settings, load_settings
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
-from .tools import get_dividends, get_earnings, search_market_news
+from .tools import get_dividends, get_earnings, get_scored_news, get_sector_news, search_market_news
 
 # Server start time for uptime tracking
 _server_start_time: float = time.time()
@@ -275,6 +275,115 @@ async def events_news_get_dividends_tool(
             },
         )
         return format_api_error(e, "FMP")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get AI-Scored News",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def events_news_get_scored_news_tool(
+    symbol: str,
+    hours_back: int = 24,
+    min_abs_impact: int = 0,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Get AI-scored, curated news for a stock ticker.
+
+    Returns news articles with impact scores ranging from -100 to +100,
+    indicating predicted effect on stock price. Negative scores indicate
+    bearish news, positive scores indicate bullish news. Higher absolute
+    values mean more significant expected impact.
+
+    WHEN TO USE:
+    - Getting curated, high-quality news with sentiment analysis
+    - Understanding news impact on a specific stock
+    - Finding both bullish AND bearish news (use min_abs_impact)
+    - Researching why a stock moved (check high |impact_score| articles)
+
+    IMPACT SCORE GUIDE:
+    - -100 to -70: Strongly bearish (major negative catalyst)
+    - -70 to -30: Moderately bearish
+    - -30 to +30: Neutral/mixed sentiment
+    - +30 to +70: Moderately bullish
+    - +70 to +100: Strongly bullish (major positive catalyst)
+
+    Args:
+        symbol: Stock ticker symbol (e.g., 'AAPL', 'NVDA', 'TSLA')
+        hours_back: How far back to search in hours (1-8760, default: 24)
+        min_abs_impact: Minimum absolute impact score filter (0-100).
+            Example: 10 returns articles with score <= -50 OR >= 50.
+            Use 0 for all news, 70+ for major catalysts only.
+        limit: Maximum articles to return (1-20, default: 20)
+
+    Returns:
+        AI-scored news articles sorted by impact magnitude, with headlines,
+        summaries, scores, sources, and publication dates.
+    """
+    try:
+        result = await get_scored_news(symbol, hours_back, min_abs_impact, limit)
+        return truncate_response(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "events_news_get_scored_news_tool",
+                "symbol": symbol,
+                "hours_back": hours_back,
+                "min_abs_impact": min_abs_impact,
+            },
+        )
+        return format_api_error(e, "TezNewz")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get Sector News",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def events_news_get_sector_news_tool(
+    sector: str,
+    hours_back: int = 24,
+    min_abs_impact: int = 0,
+    limit: int = 30,
+) -> dict[str, Any]:
+    """Get AI-scored news for an entire market sector.
+
+    Returns curated news affecting multiple stocks within a sector,
+    useful for understanding sector-wide trends and rotations.
+
+    Args:
+        sector: Sector name (e.g., 'Healthcare', 'Technology', 'Financial',
+            'Energy', 'Consumer Cyclical', 'Industrials')
+        hours_back: How far back to search in hours (default: 24)
+        min_abs_impact: Minimum absolute impact score (0-100, default: 0)
+        limit: Maximum articles to return (default: 30)
+
+    Returns:
+        Sector news with tickers mentioned, impact scores, and summaries.
+    """
+    try:
+        result = await get_sector_news(sector, hours_back, min_abs_impact, limit)
+        return truncate_response(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "events_news_get_sector_news_tool",
+                "sector": sector,
+            },
+        )
+        return format_api_error(e, "TezNewz")
 
 
 async def main() -> None:

@@ -4,7 +4,7 @@ This agent acts as the central hub for a team of 7 specialist agents:
     - Fundamentals Agent: Company financials and ratios
     - Market Data Agent: Prices and technical indicators
     - Events/News Agent: News, earnings, dividends
-    - Options Agent: Options chains, Greeks, implied volatility (Polygon.io)
+    - Options Agent: Options chains, Greeks, implied volatility (Massive)
     - Screener Agent: Stock screening and ticker discovery
     - Portfolio Agent: Portfolio parsing, risk preferences, ETF holdings
     - Strategy Agent: Trading strategy design, backtesting, optimization
@@ -57,6 +57,7 @@ from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .screener_agent import ScreenerAgent
 from .strategy_agent import StrategyAgent
+from .telemetry import traced
 from .tracing import init_opik
 
 logger = logging.getLogger(__name__)
@@ -905,20 +906,23 @@ class CentralHubAgent:
 
         return wrapper.agent
 
+    @traced()
     async def run(
         self,
         query: str,
         session: Session | None = None,
     ) -> AsyncIterator[Any]:
-        """Run a query through the central hub.
+        """Run a query through the central hub with automatic telemetry.
 
         This is the recommended way to use the hub. It handles:
         - Semantic cache search (RAG-style context injection)
         - Streaming execution via Runner.run_streamed
+        - Automatic telemetry capture (traces, tool calls, timing)
         - Token usage tracking
         - Response caching for follow-up questions
+        - Error recording
 
-        Clients don't need to know about caching - handled internally.
+        Clients don't need to know about telemetry or caching - handled internally.
 
         Args:
             query: User query to process.
@@ -980,6 +984,7 @@ class CentralHubAgent:
             )
             logger.info("Strategy intent detected — injected routing hint")
 
+        # Run streamed - telemetry capture handled by @traced decorator
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
         result = Runner.run_streamed(
             starting_agent=self.agent,
@@ -1025,7 +1030,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
-    - Options Agent (Polygon.io)
+    - Options Agent (Massive)
     - Screener Agent (FMP)
     - Portfolio Agent (FMP)
     - Strategy Agent (backtest-server)

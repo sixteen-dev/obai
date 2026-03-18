@@ -101,6 +101,9 @@ def configure_logging() -> None:
         "mcp",
         "mcp.client",
         "mcp.client.streamable_http",
+        "aiobotocore",
+        "aiobotocore.tokens",
+        "botocore",
         "urllib3",
         "openai",
         "openai.agents",
@@ -113,6 +116,8 @@ def configure_logging() -> None:
         "core_agents.config",
         "core_agents.prompt_loader",
         "core_agents.guardrails",
+        "core_agents.telemetry",
+        "core_agents.session",
         "core_agents.tracing",
         "evaluation",
     ]
@@ -299,6 +304,7 @@ class OBaIApp(App[None]):
                     set_mcp_tool_callback,
                 )
                 from core_agents.config import get_config
+                from core_agents.telemetry import get_telemetry_config
                 from core_agents.tracing import init_opik, is_opik_enabled
 
                 return (
@@ -306,6 +312,7 @@ class OBaIApp(App[None]):
                     set_mcp_tool_callback,
                     get_config,
                     SQLiteSession,
+                    get_telemetry_config,
                     init_opik,
                     is_opik_enabled,
                 )
@@ -316,12 +323,14 @@ class OBaIApp(App[None]):
                 set_mcp_tool_callback,
                 get_config,
                 SQLiteSession,
+                get_telemetry_config,
                 init_opik,
                 is_opik_enabled,
             ) = imports
 
             self._set_loading_status("Loading configuration...")
             config = get_config()
+            telemetry_config = get_telemetry_config()
 
             # Initialize Opik tracing if enabled
             self._set_loading_status("Initializing tracing...")
@@ -332,6 +341,7 @@ class OBaIApp(App[None]):
             status_bar.set_config(
                 orchestrator_model=config.orchestrator_model,
                 specialist_model=config.specialist_model,
+                telemetry_enabled=telemetry_config.enabled,
                 opik_enabled=is_opik_enabled(),
             )
 
@@ -997,6 +1007,14 @@ class OBaIApp(App[None]):
                 await self.hub.close()
             except Exception as e:
                 logger.warning(f"Error closing hub: {e}")
+
+        # Shutdown telemetry
+        try:
+            from core_agents.telemetry import shutdown_telemetry
+
+            await shutdown_telemetry()
+        except Exception as e:
+            logger.warning(f"Error shutting down telemetry: {e}")
 
         self.exit()
 

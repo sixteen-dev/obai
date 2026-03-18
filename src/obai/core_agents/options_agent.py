@@ -1,7 +1,7 @@
 """Options Agent for real-time options chains, Greeks, and derivatives analysis.
 
 This agent specializes in:
-    - Real-time options chains with Greeks (via Polygon.io)
+    - Real-time options chains with Greeks (via Massive)
     - Individual contract snapshots and quotes
     - Greeks analysis (delta, gamma, theta, vega)
     - Implied volatility and open interest
@@ -14,7 +14,7 @@ from .base_agent import BaseAgent
 class OptionsAgent(BaseAgent):
     """Options and derivatives specialist agent with MCP tool integration.
 
-    This agent connects to the options-server MCP server (powered by Polygon.io)
+    This agent connects to the options-server MCP server (powered by Massive)
     and provides access to real-time options chains, Greeks, and implied volatility.
 
     Example:

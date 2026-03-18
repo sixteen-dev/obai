@@ -110,3 +110,12 @@ def mock_fmp_client() -> AsyncMock:
     return client
 
 
+@pytest.fixture
+def mock_teznewz_client() -> AsyncMock:
+    """Create a mock TezNewz API client."""
+    client = AsyncMock()
+    client.get_news_by_ticker = AsyncMock(return_value=[])
+    client.get_news_by_sector = AsyncMock(return_value=[])
+    client.health_check = AsyncMock(return_value=True)
+    client.close = AsyncMock()
+    return client

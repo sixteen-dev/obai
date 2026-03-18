@@ -89,18 +89,18 @@ def _apply_list_filter(data: list[dict[str, Any]], filter_name: str) -> list[dic
 
 
 # =============================================================================
-# Polygon Options Snapshot Filters
+# Massive Options Snapshot Filters
 # =============================================================================
 
 
 def filter_option_chain_snapshot(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter option chain snapshot data to essential fields.
 
-    Polygon returns nested structures for each contract. We flatten and filter
+    Massive returns nested structures for each contract. We flatten and filter
     to keep only the most relevant trading data.
 
     Args:
-        data: Raw Polygon option chain snapshot results
+        data: Raw Massive option chain snapshot results
 
     Returns:
         Filtered list of contract snapshots
@@ -166,7 +166,7 @@ def filter_option_contract_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     """Filter single option contract snapshot.
 
     Args:
-        data: Raw Polygon contract snapshot
+        data: Raw Massive contract snapshot
 
     Returns:
         Filtered contract snapshot
@@ -180,7 +180,7 @@ def filter_option_contract_snapshot(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # =============================================================================
-# Polygon Trade/Quote Filters
+# Massive Trade/Quote Filters
 # =============================================================================
 
 
@@ -188,7 +188,7 @@ def filter_option_trade(data: dict[str, Any]) -> dict[str, Any]:
     """Filter option trade data to essential fields.
 
     Args:
-        data: Raw Polygon trade result
+        data: Raw Massive trade result
 
     Returns:
         Filtered trade data
@@ -209,7 +209,7 @@ def filter_option_quote(data: dict[str, Any]) -> dict[str, Any]:
     """Filter option quote (NBBO) data to essential fields.
 
     Args:
-        data: Raw Polygon quote result
+        data: Raw Massive quote result
 
     Returns:
         Filtered quote data
@@ -229,7 +229,7 @@ def filter_option_quote(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # =============================================================================
-# Polygon Reference Data Filters
+# Massive Reference Data Filters
 # =============================================================================
 
 
@@ -237,7 +237,7 @@ def filter_option_contracts_list(data: list[dict[str, Any]]) -> list[dict[str, A
     """Filter option contracts reference list.
 
     Args:
-        data: Raw Polygon contracts list
+        data: Raw Massive contracts list
 
     Returns:
         Filtered list of contract references

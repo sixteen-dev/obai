@@ -1,16 +1,16 @@
 [project]
 name = "fundamentals-server"
 version = "0.1.0"
-description = "MCP server for company fundamentals"
+description = "MCP server for company fundamentals with AI-enhanced educational context"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=2.12.4",
     "httpx>=0.28.1",
+    "qdrant-client>=1.13.0",
+    "openai>=1.57.2",
     "structlog>=25.1.0",
     "pyyaml>=6.0.3",
     "cachetools>=6.2.6",
-    "qdrant-client>=1.13.0",
-    "openai>=1.57.2",
 ]
 
 [project.optional-dependencies]

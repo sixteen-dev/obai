@@ -22,7 +22,7 @@ async def main() -> None:
     )
 
     logger = logging.getLogger(__name__)
-    logger.info("OBaI Agents - Test Mode")
+    logger.info("tezQ Agents - Test Mode")
     logger.info(f"OpenAI API key configured: {bool(config.openai_api_key)}")
     logger.info(f"MCP servers: {config.mcp_market_data_url}")
 

@@ -1,1 +1,1 @@
-"""Tests for OBaI agents."""
+"""Tests for tezQ agents."""

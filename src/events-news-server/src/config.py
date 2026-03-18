@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # FMP API Configuration
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
 
+    # TezNewz API Configuration (for AI-scored news)
+    teznewz_api_url: str = Field(default="http://api.teznewz.com/api/v1")
+    teznewz_api_key: str = Field(default="")
+
     # Server Configuration
     server_name: str = "events-news-server"
     server_version: str = Field(default_factory=_read_version)

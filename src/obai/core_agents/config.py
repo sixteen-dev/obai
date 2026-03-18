@@ -1,4 +1,4 @@
-"""Configuration for OBaI agents.
+"""Configuration for tezQ agents.
 
 Uses Pydantic settings for environment variable management.
 All config classes consolidated here for single import.
@@ -37,9 +37,9 @@ class CacheConfig(BaseSettings):
     )
 
     enabled: bool = True
-    server_url: str = ""
+    server_url: str = "https://aws-us-east-1.langcache.redis.io"
     api_key: str = ""
-    cache_id: str = ""
+    cache_id: str = "836fe9d422f34661885454c498e91267"
     similarity_threshold: float = 0.85
 
     @field_validator("similarity_threshold")
@@ -73,7 +73,7 @@ def reset_cache_config() -> None:
 
 
 class AgentConfig(BaseSettings):
-    """Configuration for OBaI agents.
+    """Configuration for tezQ agents.
 
     Attributes:
         openai_api_key: OpenAI API key for agent SDK.
