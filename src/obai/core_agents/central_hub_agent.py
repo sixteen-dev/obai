@@ -4,7 +4,7 @@ This agent acts as the central hub for a team of 7 specialist agents:
     - Fundamentals Agent: Company financials and ratios
     - Market Data Agent: Prices and technical indicators
     - Events/News Agent: News, earnings, dividends
-    - Options Agent: Options chains, Greeks, implied volatility (Polygon.io)
+    - Options Agent: Options chains, Greeks, implied volatility (Massive)
     - Screener Agent: Stock screening and ticker discovery
     - Portfolio Agent: Portfolio parsing, risk preferences, ETF holdings
     - Strategy Agent: Trading strategy design, backtesting, optimization
@@ -918,8 +918,6 @@ class CentralHubAgent:
         - Token usage tracking
         - Response caching for follow-up questions
 
-        Clients don't need to know about caching - handled internally.
-
         Args:
             query: User query to process.
             session: Optional session for conversation memory.
@@ -980,6 +978,7 @@ class CentralHubAgent:
             )
             logger.info("Strategy intent detected — injected routing hint")
 
+        # Run streamed
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
         result = Runner.run_streamed(
             starting_agent=self.agent,
@@ -1025,7 +1024,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
-    - Options Agent (Polygon.io)
+    - Options Agent (Massive)
     - Screener Agent (FMP)
     - Portfolio Agent (FMP)
     - Strategy Agent (backtest-server)

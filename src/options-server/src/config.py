@@ -28,9 +28,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Polygon API Configuration
-    polygon_api_key: str = ""
-    polygon_base_url: str = "https://api.polygon.io"
+    # Massive API Configuration
+    massive_api_key: str = ""
+    massive_base_url: str = "https://api.massive.com"
 
     # Server Configuration
     server_name: str = "options-server"

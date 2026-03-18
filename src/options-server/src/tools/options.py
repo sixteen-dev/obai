@@ -1,4 +1,4 @@
-"""Options tools for real-time options data via Polygon.io API.
+"""Options tools for real-time options data via Massive API.
 
 MVP Tools (Critical):
 - get_option_chain_snapshot: Full option chain with Greeks, IV, OI
@@ -15,7 +15,7 @@ Optional Tools (Nice-to-Have):
 
 from typing import Any
 
-from ..clients.polygon_client import PolygonClient
+from ..clients.massive_client import MassiveClient
 from ..config import get_settings
 from ..logging_config import get_logger, log_error
 from ..response_filters import (
@@ -57,11 +57,11 @@ async def get_option_chain_snapshot(
         Option chain snapshot with contracts and metadata
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_option_chain_snapshot(
                 underlying_asset=underlying_asset,
                 expiration_date=expiration_date,
@@ -107,17 +107,17 @@ async def get_option_contract_snapshot(
 
     Args:
         underlying_asset: Stock ticker symbol (e.g., 'AAPL')
-        option_contract: Polygon option symbol (e.g., 'O:AAPL240119C00125000')
+        option_contract: Option symbol (e.g., 'O:AAPL240119C00125000')
 
     Returns:
         Complete contract snapshot with pricing and Greeks
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_option_contract_snapshot(
                 underlying_asset=underlying_asset,
                 option_contract=option_contract,
@@ -154,11 +154,11 @@ async def get_latest_option_trade(options_ticker: str) -> dict[str, Any]:
         Latest trade with price, size, exchange, and timestamp
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_latest_option_trade(options_ticker)
 
             results = data.get("results", {})
@@ -190,11 +190,11 @@ async def get_latest_option_quote(options_ticker: str) -> dict[str, Any]:
         Latest NBBO with bid/ask prices and sizes
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_latest_option_quote(options_ticker)
 
             results = data.get("results", {})
@@ -243,11 +243,11 @@ async def list_option_contracts(
         List of option contract references
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             results = await client.list_option_contracts(
                 underlying_ticker=underlying_ticker,
                 expiration_date=expiration_date,
@@ -298,11 +298,11 @@ async def get_option_trades_history(
         Historical trades data
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_option_trades_history(
                 options_ticker=options_ticker,
                 timestamp_from=timestamp_from,
@@ -351,11 +351,11 @@ async def get_option_quotes_history(
         Historical quotes data
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_option_quotes_history(
                 options_ticker=options_ticker,
                 timestamp_from=timestamp_from,
@@ -408,11 +408,11 @@ async def get_option_aggregates(
         OHLCV bars data
 
     Raises:
-        PolygonAPIError: If API request fails
+        MassiveAPIError: If API request fails
     """
     try:
         settings = get_settings()
-        async with PolygonClient(settings) as client:
+        async with MassiveClient(settings) as client:
             data = await client.get_option_aggregates(
                 options_ticker=options_ticker,
                 multiplier=multiplier,

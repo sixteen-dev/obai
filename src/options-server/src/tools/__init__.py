@@ -1,4 +1,4 @@
-"""Options tools for Polygon.io API."""
+"""Options tools for Massive API."""
 
 from .options import (
     get_latest_option_quote,
