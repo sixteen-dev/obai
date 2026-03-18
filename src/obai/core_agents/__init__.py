@@ -8,7 +8,7 @@ Architecture:
     - Fundamentals Agent: Company financials and ratios
     - Market Data Agent: Prices, quotes, and technical indicators
     - Events/News Agent: News, earnings, and dividend calendars
-    - Options Agent: Options chains and Greeks analysis (Polygon.io)
+    - Options Agent: Options chains and Greeks analysis (Massive)
     - Screener Agent: Stock screening and ticker discovery
 """
 

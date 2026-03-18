@@ -53,9 +53,7 @@ logging.basicConfig(level=logging.WARNING)
 # INFO too.  Setting the handler level explicitly prevents that — console
 # stays quiet unless --verbose is passed.
 for _h in logging.root.handlers:
-    if isinstance(_h, logging.StreamHandler) and not isinstance(
-        _h, logging.FileHandler
-    ):
+    if isinstance(_h, logging.StreamHandler) and not isinstance(_h, logging.FileHandler):
         _h.setLevel(logging.WARNING)
 
 with contextlib.suppress(ImportError):
@@ -94,6 +92,7 @@ from evaluation.scorers.faithfulness import (  # noqa: E402
 sys.stderr = _old_stderr
 _devnull.close()
 
+
 # Fix logging handlers that captured _devnull as their stream during the
 # stderr redirect above.  Any StreamHandler created while sys.stderr pointed
 # to /dev/null now holds a closed file — patch them to use the real stderr.
@@ -112,6 +111,7 @@ def _fix_closed_log_streams() -> None:
             if handler.stream.closed:
                 handler.stream = real_stderr
             handler.setLevel(logging.WARNING)
+
 
 _fix_closed_log_streams()
 

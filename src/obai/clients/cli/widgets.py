@@ -1225,6 +1225,7 @@ class StatusBar(Static):
         self,
         orchestrator_model: str,
         specialist_model: str,
+        telemetry_enabled: bool,
         opik_enabled: bool,
     ) -> None:
         """Set the configuration display.
@@ -1232,12 +1233,18 @@ class StatusBar(Static):
         Args:
             orchestrator_model: Model used for central hub.
             specialist_model: Model used for specialists.
+            telemetry_enabled: Whether telemetry is enabled.
             opik_enabled: Whether Opik tracing is enabled.
         """
         parts = [
             f"Hub: {orchestrator_model}",
             f"Specialists: {specialist_model}",
         ]
+
+        if telemetry_enabled:
+            parts.append("\u2713 Telemetry")
+        else:
+            parts.append("\u2717 Telemetry")
 
         if opik_enabled:
             parts.append("\u2713 Opik")

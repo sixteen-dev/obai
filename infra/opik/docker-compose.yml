@@ -1,5 +1,5 @@
 # Opik self-hosted local development stack
-# Source: https://github.com/comet-ml/opik (adapted for OBaI dev environment)
+# Source: https://github.com/comet-ml/opik (adapted for tezQ dev environment)
 #
 # First-time setup (once only):
 #   ./setup-volumes.sh
