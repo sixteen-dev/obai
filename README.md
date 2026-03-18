@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/banner.png" alt="OBaI - Multi-agent AI for stock market research" width="600" />
   <br/>
-  <strong>Multi-agent AI system for stock market research, powered by the OpenAI Agent SDK and MCP.</strong>
+  <strong>Multi-agent AI system for stock market research, powered by GPT and real-time FMP custom MCP servers.</strong>
 </div>
 
 ---
