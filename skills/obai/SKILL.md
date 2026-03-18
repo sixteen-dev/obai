@@ -1,6 +1,6 @@
 ---
 name: obai
-description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, screening, dividends, SEC filings, insider trades, backtesting strategies, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
+description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, screening, dividends, SEC filings, insider trades, backtesting strategies, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
 ---
 
 # OBaI CLI — Agent Execution Guide
@@ -9,13 +9,21 @@ OBaI is a multi-agent AI system for stock market research. When a user asks a fi
 
 ## How to Answer Financial Questions
 
-1. Run `obai query "<user's question>" --json`
-2. Parse the JSON response
-3. Present the answer to the user in a clear format
+1. **Always use `--session`** to maintain conversation context. Generate a descriptive session ID for the topic (e.g., `aapl_research`, `portfolio_review`) or a UUID for general queries.
+2. **Reuse the same session** for follow-up questions on the same topic — this gives OBaI memory of prior answers.
+3. **Create a new session** when the user switches to a completely different topic.
+4. Always use `--json` for structured output you can parse.
+5. Present the answer to the user in a clear format.
 
 ```bash
-# Always use --json for structured output you can parse
-obai query "What is AAPL trading at?" --json
+# First question — create a session
+obai query "What is AAPL trading at?" --json --session aapl_research
+
+# Follow-up — reuse the same session (OBaI remembers the context)
+obai query "How does that compare to its 52-week high?" --json --session aapl_research
+
+# Different topic — new session
+obai query "Show me top gainers today" --json --session market_scan_$(uuidgen | head -c 8)
 ```
 
 The system routes queries to the right specialist agents automatically — you don't need to pick which agent to use. Just pass the natural language question.
@@ -71,17 +79,30 @@ Key fields to use:
 echo "What are the top gainers today?" | obai query - --json
 ```
 
-## Multi-Turn Research
+## Session Management
 
-Use `--session` to maintain conversation context across queries. Same session ID = same memory.
+Sessions persist conversation memory to `~/.obai/sessions.db`. The agent must manage sessions intentionally:
+
+**Same topic → same session.** If the user asks follow-ups or related questions, reuse the session so OBaI has context from prior answers.
+
+**New topic → new session.** When the conversation shifts to an unrelated subject, create a fresh session ID to avoid polluting context.
+
+**Session ID naming:** Use descriptive names tied to the research topic. This makes it easy to resume later if the user comes back to the same subject.
 
 ```bash
-obai query "Analyze AAPL earnings trend" --json --session research1
-obai query "Now compare with MSFT" --json --session research1
-obai query "Which has better growth prospects?" --json --session research1
+# Deep-dive on a single stock — one session throughout
+obai query "Analyze AAPL earnings trend" --json --session aapl_deep_dive
+obai query "Now compare with MSFT" --json --session aapl_deep_dive
+obai query "Which has better growth prospects?" --json --session aapl_deep_dive
+
+# User switches to options analysis — new session
+obai query "Show me SPY options chain for next Friday" --json --session spy_options
+
+# One-off question with no follow-up expected — use a UUID
+obai query "Is the market open today?" --json --session q_$(date +%s)
 ```
 
-The second and third queries understand context from the first because they share the session.
+**Never omit `--session`.** Without it, each query gets a throwaway ephemeral session and loses all context. Always pass a session ID.
 
 ## Server Health Check
 
