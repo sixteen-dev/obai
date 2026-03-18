@@ -74,6 +74,10 @@ flowchart TB
     A1 & A2 & A3 & A4 & A5 & A6 & A7 --> Synth
     Synth --> Response(["📊 Synthesized Answer"])
 
+    Opik(["Opik · :5173\nTraces · Spans · Eval Scores"])
+    Router -.->|trace| Opik
+    Synth -.->|score| Opik
+
     style hub fill:#1a1a2e,stroke:#F6B93B,stroke-width:2px,color:#E6EDF3
     style agents fill:#16213e,stroke:#A8D8EA,stroke-width:1px,color:#E6EDF3
     style mcp fill:#0f3460,stroke:#53a8b6,stroke-width:1px,color:#E6EDF3
@@ -100,9 +104,10 @@ flowchart TB
 
     style User fill:#F6B93B,stroke:#1a1a2e,color:#1a1a2e,stroke-width:2px
     style Response fill:#F6B93B,stroke:#1a1a2e,color:#1a1a2e,stroke-width:2px
+    style Opik fill:#2d1a1a,stroke:#e74c3c,stroke-dasharray:5 5,color:#E6EDF3
 ```
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern). Each agent calls its MCP server over streamable-http. Results flow back to the Hub's synthesizer, which merges everything into one coherent response. Strategy Agent uses `gpt-5.1` (not `gpt-5-mini`) for stronger reasoning.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`.
 
 ---
 
@@ -258,31 +263,61 @@ uv run python -m clients.cli.tui
 
 ---
 
-## Evaluation & Trust
+## Observability & Evaluation
 
-OBaI ships with a built-in evaluation framework to measure agent quality:
+OBaI uses [Opik](https://github.com/comet-ml/opik) (self-hosted, open source) for end-to-end tracing and evaluation. Every query generates a full trace you can inspect in the Opik UI at `http://localhost:5173`.
 
-- **Opik tracing** (self-hosted) -- every query is traced end-to-end: agent routing, tool calls, latency, token usage
-- **Faithfulness scoring** -- checks that the final response is grounded in tool outputs (not hallucinated)
-- **Completeness scoring** -- verifies the response addresses all parts of the user query
-- **LLM-judge rubric** -- cross-family evaluation using Anthropic models as judges (requires `ANTHROPIC_API_KEY`)
-- **Test case suites** -- predefined queries covering market data, fundamentals, multi-domain routing, edge cases
+### What Opik Shows You
+
+Each trace captures the complete execution graph:
+
+- **Agent routing** — which specialists the Hub dispatched to and why
+- **Tool calls** — every MCP tool invoked (function name, arguments, response), nested under the agent that called it
+- **Timing** — latency breakdown per agent and per tool call, so you can spot bottlenecks
+- **Token usage** — input/output tokens per LLM call across the entire query
+- **Span hierarchy** — Hub → Agent → MCP Tool, fully nested and expandable
+
+### Custom Evaluation Metrics
+
+OBaI registers custom scorers with Opik that run on every traced query:
+
+| Scorer | What it measures | How it works |
+|--------|-----------------|--------------|
+| **Faithfulness** | Is the response grounded in tool outputs? | Extracts numbers from the final response and cross-checks against raw MCP tool data. Reports `numeric_accuracy` (0-1) and a pass/fail verdict. |
+| **Completeness** | Does the response address the full query? | Checks coverage of available data points from tool outputs that should appear in the answer. Reports `coverage_score` (0-1). |
+| **LLM Judge** | Overall quality assessment | Cross-family evaluation using Anthropic Claude as judge (requires `ANTHROPIC_API_KEY`). Scores task completion, tool correctness, hallucination, and answer relevance. |
+
+### Running Evaluations
 
 ```bash
 # From repo root
 cd src/obai
 
-# Trace a single query
+# Trace a single query (inspect in Opik UI afterward)
 uv run python -m evaluation query "What is AAPL trading at?" --verbose
 
-# Run evaluation with scoring
+# Run evaluation with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite
+# Run the full test suite (categorized: A/B/C/D)
 uv run python -m evaluation evaluate --suite
+
+# Fast mode — skip LLM judge, just faithfulness + completeness
+uv run python -m evaluation evaluate --suite --no-builtin
+
+# Export markdown report
+uv run python -m evaluation evaluate --suite --report results.md
 ```
 
-Opik UI is available at `http://localhost:5173` after setup.
+### Opik Setup
+
+Opik runs as a Docker Compose stack (ClickHouse + backend + frontend). The `setup.sh` script handles this automatically, or run it manually:
+
+```bash
+docker compose -f infra/opik/docker-compose.yml up -d
+```
+
+Dashboard: `http://localhost:5173` | Project: `obai-eval`
 
 ---
 
