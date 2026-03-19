@@ -53,7 +53,7 @@ flowchart TB
         S1[":8001\nFMP + Qdrant"]
         S2[":8002\nFMP"]
         S3[":8003\nFMP + Tavily"]
-        S4[":8004\nPolygon.io"]
+        S4[":8004\nMassive.com"]
         S5[":8005\nFMP"]
         S6[":8006\nFMP"]
         S7[":8007\nFMP + Polars"]
@@ -116,7 +116,7 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 | Provider | Cost | Coverage |
 |----------|------|----------|
 | **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 7 servers. |
-| **Polygon.io** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
+| **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 
 FMP is the backbone -- it is not free, but a single subscription powers almost the entire system.
@@ -137,7 +137,7 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 |-----|----------|------|---------|
 | `OPENAI_API_KEY` | OpenAI | Pay-per-use | All agents (Agent SDK) |
 | `FMP_API_KEY` | Financial Modeling Prep | ~$19/mo | fundamentals, market-data, events-news, screening, portfolio, backtest servers |
-| `POLYGON_API_KEY` | Polygon.io | Free tier | options-server only |
+| `MASSIVE_API_KEY` | Massive.com | Free tier | options-server only |
 | `TAVILY_API_KEY` | Tavily | Free tier | events-news-server (AI search) |
 | `ANTHROPIC_API_KEY` | Anthropic | Pay-per-use | *Optional* -- LLM-judge cross-family evaluation only |
 
@@ -152,7 +152,7 @@ cd obai
 # Set your API keys (add to ~/.bashrc or ~/.zshrc for persistence)
 export OPENAI_API_KEY=sk-proj-...
 export FMP_API_KEY=...
-export POLYGON_API_KEY=...     # optional
+export MASSIVE_API_KEY=...     # optional
 export TAVILY_API_KEY=...      # optional
 
 # One-shot setup: checks prereqs, starts Docker services, installs CLI
@@ -204,7 +204,7 @@ obai status
 | **fundamentals-server** | 8001 | FMP + Qdrant | Company financials, ratios, SEC filings, insider trades, vector search over financial education PDFs |
 | **market-data-server** | 8002 | FMP | Real-time/historical prices, technical indicators |
 | **events-news-server** | 8003 | FMP + Tavily | Earnings calendar, dividends, AI-powered news search |
-| **options-server** | 8004 | Polygon.io | Options chains, Greeks, implied volatility, open interest |
+| **options-server** | 8004 | Massive.com | Options chains, Greeks, implied volatility, open interest |
 | **screening-server** | 8005 | FMP | Stock screening with financial filters, ticker discovery |
 | **portfolio-server** | 8006 | FMP | Portfolio parsing, risk analysis, ETF holdings, treasury rates |
 | **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, train/test split |
