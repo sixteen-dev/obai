@@ -61,7 +61,7 @@ class TestReadinessProbe:
 
         with (
             patch("src.server.get_settings", return_value=mock_settings),
-            patch("src.server.PolygonClient", return_value=mock_client),
+            patch("src.server.MassiveClient", return_value=mock_client),
         ):
             response = await health_check_ready(mock_request)
 
@@ -84,14 +84,14 @@ class TestReadinessProbe:
 
         with (
             patch("src.server.get_settings", return_value=mock_settings),
-            patch("src.server.PolygonClient", return_value=mock_client),
+            patch("src.server.MassiveClient", return_value=mock_client),
         ):
             response = await health_check_ready(mock_request)
 
             assert response.status_code == 503
             data = response.body.decode()
             assert "not_ready" in data
-            assert "Polygon API unreachable" in data
+            assert "Massive API unreachable" in data
 
     @pytest.mark.asyncio
     async def test_readiness_returns_503_when_settings_not_loaded(self) -> None:

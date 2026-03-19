@@ -41,6 +41,7 @@ from evaluation.eval_runner import (  # noqa: E402
     TestCase,
     load_test_cases,
 )
+from evaluation.experiment import run_experiment  # noqa: E402
 from evaluation.trace.capture import TraceCapture  # noqa: E402
 from evaluation.trace.types import (  # noqa: E402
     AgentEvent,
@@ -1307,6 +1308,104 @@ def list_tests(
 
     console.print(table)
     console.print(f"\n[dim]{len(test_cases)} test cases[/dim]")
+
+
+@app.command(name="experiment")
+def experiment_cmd(
+    name: Annotated[
+        str | None, typer.Option("--name", "-n", help="Experiment name (auto-generated if omitted)")
+    ] = None,
+    category: Annotated[
+        str | None, typer.Option("--category", "-c", help="Filter by category (A/B/C/D)")
+    ] = None,
+    smoke: Annotated[
+        bool, typer.Option("--smoke", help="Only run smoke-test cases (marked in suite.yaml)")
+    ] = False,
+    ids: Annotated[
+        str | None, typer.Option("--ids", "-i", help="Comma-separated test IDs (e.g. A1,A3,B4)")
+    ] = None,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-l", help="Max number of test cases to run")
+    ] = None,
+    compare: Annotated[
+        str | None,
+        typer.Option(
+            "--compare",
+            help="Candidate models: MODEL or MODEL,SPECIALIST",
+        ),
+    ] = None,
+    judge_model: Annotated[
+        str, typer.Option("--judge", "-j", help="Model for LLM-based scorers")
+    ] = "anthropic/claude-sonnet-4-5-20250929",
+    no_builtin: Annotated[
+        bool, typer.Option("--no-builtin", help="Skip LLM-based scorers (faster)")
+    ] = False,
+    dataset_name: Annotated[
+        str, typer.Option("--dataset", help="Opik dataset name")
+    ] = "obai-eval-suite",
+) -> None:
+    """Run Opik experiments for model comparison.
+
+    Without --compare, runs a single experiment. With --compare, runs two
+    experiments back-to-back (baseline + candidate) against the same dataset
+    so you can compare them side-by-side in the Opik UI.
+
+    Examples:
+        # Compare current models vs gpt-5.4 (3 test cases)
+        python -m evaluation experiment --name "v54" --compare gpt-5.4 --limit 3
+
+        # Compare with both orchestrator and specialist overrides
+        python -m evaluation experiment --name "v54" --compare gpt-5.4,gpt-5.4-mini --smoke
+
+        # Single experiment (no comparison)
+        python -m evaluation experiment --name "baseline" --limit 3
+
+        # Smoke test comparison without LLM scorers (cheapest)
+        python -m evaluation experiment --name "quick" --compare gpt-5.4 --smoke --no-builtin
+    """
+    print_banner()
+    console.print()
+
+    id_list = [tid.strip() for tid in ids.split(",")] if ids else None
+
+    # Parse --compare: "gpt-5.4" or "gpt-5.4,gpt-5.4-mini"
+    compare_orchestrator: str | None = None
+    compare_specialist: str | None = None
+    if compare:
+        parts = [p.strip() for p in compare.split(",")]
+        compare_orchestrator = parts[0]
+        if len(parts) > 1:
+            compare_specialist = parts[1]
+
+    if compare_orchestrator:
+        console.print(f"[cyan]Running comparison: baseline vs {compare}[/cyan]")
+    else:
+        console.print("[cyan]Starting Opik experiment...[/cyan]")
+
+    exp_names = run_experiment(
+        query_runner=run_query_with_trace,
+        experiment_name=name,
+        category=category,
+        smoke=smoke,
+        ids=id_list,
+        limit=limit,
+        judge_model=judge_model,
+        no_builtin=no_builtin,
+        dataset_name=dataset_name,
+        compare_orchestrator=compare_orchestrator,
+        compare_specialist=compare_specialist,
+    )
+
+    console.print()
+    for exp in exp_names:
+        console.print(f"  [green bold]✓[/green bold] {exp}")
+    console.print()
+    console.print(f"[dim]Dataset:[/dim] {dataset_name}")
+    if len(exp_names) > 1:
+        console.print(
+            "[bold]Compare:[/bold] http://localhost:5173 → "
+            "[bold]Experiments[/bold] → select both → Compare"
+        )
 
 
 def main() -> None:

@@ -1,4 +1,4 @@
-# Filter configuration for options-server (Polygon.io API)
+# Filter configuration for options-server (Massive.io API)
 # Controls which fields are kept in API responses to reduce token usage
 # Edit these lists to customize what data is returned from each tool
 
@@ -15,7 +15,7 @@ filters:
       - shares_per_contract
 
   # Option chain snapshot - handled programmatically in response_filters.py
-  # The filter_option_chain_snapshot function flattens nested Polygon structures
+  # The filter_option_chain_snapshot function flattens nested Massive structures
   option_chain_snapshot:
     keep_all: true  # Filtering handled in code
 

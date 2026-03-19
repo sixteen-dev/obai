@@ -14,8 +14,8 @@ def mock_settings() -> Settings:
     """Create mock settings for tests."""
     settings = Settings()
     settings.fmp_api_key = "test_api_key"
-    settings.openai_api_key = "test_openai_key"
     settings.fmp_base_url = "https://financialmodelingprep.com/stable"
+    settings.openai_api_key = "test_openai_key"
     settings.server_name = "fundamentals-server"
     settings.server_version = "0.1.0"
     return settings
