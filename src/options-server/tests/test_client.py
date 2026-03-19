@@ -1,4 +1,4 @@
-"""Tests for Polygon client with retry logic."""
+"""Tests for Massive client with retry logic."""
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.clients.polygon_client import PolygonAPIError, PolygonClient
+from src.clients.massive_client import MassiveAPIError, MassiveClient
 from src.config import Settings
 
 
-class TestPolygonClientRetry:
-    """Tests for Polygon client exponential backoff retry logic."""
+class TestMassiveClientRetry:
+    """Tests for Massive client exponential backoff retry logic."""
 
     @pytest.mark.asyncio
     async def test_successful_request_no_retry(
@@ -26,7 +26,7 @@ class TestPolygonClientRetry:
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_response
 
-            async with PolygonClient(mock_settings) as client:
+            async with MassiveClient(mock_settings) as client:
                 result = await client.get_option_chain_snapshot(underlying_asset="AAPL", limit=10)
 
             assert result == sample_option_chain_response
@@ -47,7 +47,7 @@ class TestPolygonClientRetry:
             ]
 
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                async with PolygonClient(mock_settings) as client:
+                async with MassiveClient(mock_settings) as client:
                     result = await client.get_option_chain_snapshot(
                         underlying_asset="AAPL", limit=5
                     )
@@ -74,7 +74,7 @@ class TestPolygonClientRetry:
             mock_get.side_effect = [error, success_response]
 
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                async with PolygonClient(mock_settings) as client:
+                async with MassiveClient(mock_settings) as client:
                     result = await client.get_option_chain_snapshot(
                         underlying_asset="AAPL", limit=5
                     )
@@ -95,8 +95,8 @@ class TestPolygonClientRetry:
             )
             mock_get.side_effect = error
 
-            async with PolygonClient(mock_settings) as client:
-                with pytest.raises(PolygonAPIError) as exc_info:
+            async with MassiveClient(mock_settings) as client:
+                with pytest.raises(MassiveAPIError) as exc_info:
                     await client.get_option_chain_snapshot(underlying_asset="AAPL", limit=5)
 
             assert "Bad request" in str(exc_info.value)
@@ -121,7 +121,7 @@ class TestPolygonClientRetry:
             mock_get.side_effect = [error, success_response]
 
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                async with PolygonClient(mock_settings) as client:
+                async with MassiveClient(mock_settings) as client:
                     result = await client.get_option_chain_snapshot(
                         underlying_asset="AAPL", limit=5
                     )
@@ -143,7 +143,7 @@ class TestPolygonClientRetry:
             mock_get.side_effect = error
 
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                async with PolygonClient(mock_settings) as client:
+                async with MassiveClient(mock_settings) as client:
                     with pytest.raises(httpx.HTTPStatusError):
                         await client.get_option_chain_snapshot(underlying_asset="AAPL", limit=5)
 
@@ -165,7 +165,7 @@ class TestPolygonClientRetry:
             ]
 
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                async with PolygonClient(mock_settings) as client:
+                async with MassiveClient(mock_settings) as client:
                     result = await client.get_option_chain_snapshot(
                         underlying_asset="AAPL", limit=5
                     )
@@ -174,8 +174,8 @@ class TestPolygonClientRetry:
             assert mock_get.call_count == 2
 
 
-class TestPolygonClientHealthCheck:
-    """Tests for Polygon client health check method."""
+class TestMassiveClientHealthCheck:
+    """Tests for Massive client health check method."""
 
     @pytest.mark.asyncio
     async def test_health_check_returns_true_on_success(self, mock_settings: Settings) -> None:
@@ -187,7 +187,7 @@ class TestPolygonClientHealthCheck:
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_response
 
-            async with PolygonClient(mock_settings) as client:
+            async with MassiveClient(mock_settings) as client:
                 result = await client.health_check()
 
             assert result is True
@@ -198,7 +198,7 @@ class TestPolygonClientHealthCheck:
         with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
             mock_get.side_effect = httpx.TimeoutException("Timeout")
 
-            async with PolygonClient(mock_settings) as client:
+            async with MassiveClient(mock_settings) as client:
                 result = await client.health_check()
 
             assert result is False
@@ -213,7 +213,7 @@ class TestPolygonClientHealthCheck:
             error = httpx.HTTPStatusError("Error", request=MagicMock(), response=error_response)
             mock_get.side_effect = error
 
-            async with PolygonClient(mock_settings) as client:
+            async with MassiveClient(mock_settings) as client:
                 result = await client.health_check()
 
             assert result is False

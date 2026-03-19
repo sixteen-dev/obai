@@ -31,7 +31,7 @@ def format_api_error(error: Exception, api_name: str = "API") -> dict[str, Any]:
 
     Args:
         error: The exception that occurred.
-        api_name: Name of the API for error messages (e.g., "FMP", "Polygon").
+        api_name: Name of the API for error messages (e.g., "FMP", "Massive").
 
     Returns:
         Error dict with user-friendly message.

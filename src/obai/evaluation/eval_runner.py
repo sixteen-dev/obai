@@ -55,6 +55,7 @@ class TestCase:
         id: Unique test case identifier (e.g. A1, B3).
         category: Test category letter (A-E).
         expect_rejection: Whether the guardrail should reject this query.
+        smoke: Whether this test case is part of the smoke test subset.
     """
 
     query: str
@@ -65,11 +66,16 @@ class TestCase:
     id: str = ""
     category: str = ""
     expect_rejection: bool = False
+    smoke: bool = False
 
     def to_dataset_row(self) -> dict[str, Any]:
-        """Convert to dataset row format."""
+        """Convert to dataset row format.
+
+        Note: Opik reserves ``id`` for its own UUID. Our test case ID
+        is stored as ``test_id`` to avoid collisions.
+        """
         return {
-            "id": self.id,
+            "test_id": self.id,
             "query": self.query,
             "category": self.category,
             "expected_tools": self.expected_tools,
@@ -136,6 +142,7 @@ def load_test_cases(
             expected_sequence=entry.get("expected_sequence"),
             description=entry.get("description", ""),
             expect_rejection=entry.get("expect_rejection", False),
+            smoke=entry.get("smoke", False),
         )
 
         if category and tc.category.upper() != category.upper():

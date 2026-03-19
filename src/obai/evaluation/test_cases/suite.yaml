@@ -19,6 +19,7 @@ test_cases:
     query_type: price
     expected_tools: [market_data_analysis]
     description: Simple price query - single agent
+    smoke: true
 
   - id: A2
     query: "For a quick valuation check, what is Tesla trading at on a P/E basis?"
@@ -26,6 +27,7 @@ test_cases:
     query_type: fundamentals
     expected_tools: [fundamentals_analysis]
     description: Simple fundamentals query - single agent
+    smoke: true
 
   - id: A3
     query: "Show me today's market movers"
@@ -47,6 +49,7 @@ test_cases:
     query_type: news
     expected_tools: [events_news_analysis]
     description: Simple news query - single agent
+    smoke: true
 
   - id: A6
     query: "Show me the front-month AAPL call chain and flag the most liquid strikes."
@@ -54,6 +57,7 @@ test_cases:
     query_type: options
     expected_tools: [options_analysis]
     description: Simple options query - single agent
+    smoke: true
 
   - id: A7
     query: "Analyze my portfolio: AAPL 40%, QQQ 60%"
@@ -117,6 +121,7 @@ test_cases:
     query_type: etf_holdings
     expected_tools: [portfolio_analysis]
     description: ETF holdings lookup
+    smoke: true
 
   - id: A16
     query: "Analyze my portfolio risk: VOO 50%, QQQ 30%, BND 20%"
@@ -229,6 +234,7 @@ test_cases:
     expected_tools: [screener_lookup, market_data_analysis]
     expected_sequence: [screener_lookup, market_data_analysis]
     description: Ticker lookup then price query
+    smoke: true
 
   - id: B5
     query: "Screen for profitable U.S. large-cap software names and show the top 3 by net margin."
@@ -259,6 +265,7 @@ test_cases:
     query_type: full_stock_analysis
     expected_tools: [market_data_analysis, fundamentals_analysis, events_news_analysis]
     description: Price + fundamentals + news in one report
+    smoke: true
 
   - id: B9
     query: "Compare NVDA and AMD on valuation and recent momentum"
@@ -409,6 +416,7 @@ test_cases:
     query_type: guardrail_reject
     expect_rejection: true
     description: Off-topic query should be rejected
+    smoke: true
 
   - id: C2
     query: "Write me a poem about stocks"
@@ -473,6 +481,7 @@ test_cases:
     query_type: error_invalid_symbol_price
     expected_tools: [market_data_analysis]
     description: Invalid symbol - graceful error expected
+    smoke: true
 
   - id: D2
     query: "What's FAKESYM's P/E ratio?"
@@ -536,6 +545,7 @@ test_cases:
     query_type: strategy_direct_backtest
     expected_tools: [strategy_analysis]
     description: User-provided strategy - direct routing, no pre-gathering
+    smoke: true
 
   - id: E2
     query: "Backtest a daily RSI mean-reversion strategy on MSFT: buy below 30, exit above 70."
