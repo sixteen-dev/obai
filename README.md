@@ -404,11 +404,31 @@ uv run pytest
 
 ## Roadmap
 
+### Done
+
+- [x] FastMCP servers with pure MCP protocol (streamable-http)
+- [x] Real-time market data integration (FMP API)
+- [x] Multi-agent orchestration with OpenAI Agent SDK (agents-as-tools)
+- [x] Self-hosted local infrastructure (Docker Compose, no cloud dependency)
+- [x] CLI client (`obai query`, `obai chat`, `obai status`)
+- [x] Textual TUI with streaming markdown and agent activity
+- [x] Tavily-powered AI news search
+- [x] Options server (Massive.com — chains, Greeks, IV, open interest)
+- [x] Backtest engine (Polars + polars-talib, train/test split)
+- [x] Strategy Agent with autonomous iteration loop
+- [x] Opik tracing and custom evaluation scorers
+- [x] Input guardrails for non-financial query filtering
+- [x] Qdrant vector search over financial education PDFs
+
+### Next
+
+- [ ] Options strategy analysis and backtesting
+- [ ] Polymarket prediction market analysis
+- [ ] Crypto market analysis
+- [ ] Auto-trading integration
 - [ ] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine
-- [ ] Download validation and retry with backoff
 - [ ] Semantic caching via LangCache (Redis)
 - [ ] Web client
-- [ ] More data providers
 
 ---
 
