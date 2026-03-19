@@ -402,6 +402,16 @@ uv run pytest
 
 ---
 
+## Claude Code Skill
+
+OBaI ships with a [Claude Code skill](skills/obai/SKILL.md) that lets AI agents autonomously query financial data. When installed, the agent runs `obai query` commands directly — no manual CLI usage needed. Ask a financial question and the agent executes the query, manages sessions, parses the JSON response, and presents the answer.
+
+```
+skills/obai/SKILL.md
+```
+
+---
+
 ## Roadmap
 
 ### Done
