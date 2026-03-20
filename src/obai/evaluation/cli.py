@@ -41,7 +41,7 @@ from evaluation.eval_runner import (  # noqa: E402
     TestCase,
     load_test_cases,
 )
-from evaluation.experiment import run_experiment  # noqa: E402
+from evaluation.experiment import run_evaluate_as_experiment, run_experiment  # noqa: E402
 from evaluation.trace.capture import TraceCapture  # noqa: E402
 from evaluation.trace.types import (  # noqa: E402
     AgentEvent,
@@ -1130,30 +1130,38 @@ def evaluate_cmd(
         console.print("[red]Provide a query or use --suite[/red]")
         raise typer.Exit(1)
 
-    async def _run_evaluation() -> tuple[list[dict[str, Any]], list[TestCase]]:
-        evaluator = OBaIEvaluator(
-            use_builtin_scorers=not no_builtin,
+    if suite:
+        # Suite mode: run through Opik experiment pipeline so every
+        # eval run is tracked as an experiment (not just traces).
+        try:
+            run_test_cases = load_test_cases(path=file, category=category)
+        except FileNotFoundError:
+            console.print("[yellow]YAML suite not found, using built-in test cases[/yellow]")
+            run_test_cases = STANDARD_TEST_CASES
+
+        if category and not run_test_cases:
+            console.print(f"[red]No test cases found for category '{category}'[/red]")
+            raise typer.Exit(1)
+
+        cat_msg = f" (category {category.upper()})" if category else ""
+        n = len(run_test_cases)
+        console.print(f"[cyan]Running {n} test cases{cat_msg} as experiment...[/cyan]\n")
+
+        exp_name, results = run_evaluate_as_experiment(
+            query_runner=run_query_with_trace,
+            test_cases=run_test_cases,
             judge_model=judge_model,
+            no_builtin=no_builtin,
         )
+        console.print(f"\n[dim]Experiment:[/dim] {exp_name}")
 
-        all_results: list[dict[str, Any]] = []
-
-        if suite:
-            # Load test cases from YAML (fall back to STANDARD_TEST_CASES)
-            try:
-                test_cases = load_test_cases(path=file, category=category)
-            except FileNotFoundError:
-                console.print("[yellow]YAML suite not found, using built-in test cases[/yellow]")
-                test_cases = STANDARD_TEST_CASES
-
-            if category and not test_cases:
-                console.print(f"[red]No test cases found for category '{category}'[/red]")
-                raise typer.Exit(1)
-
-            cat_msg = f" (category {category.upper()})" if category else ""
-            console.print(f"[cyan]Running {len(test_cases)} test cases{cat_msg}...[/cyan]\n")
-        else:
-            # Single query - create test case
+    else:
+        # Single query mode: run directly (no experiment needed).
+        async def _run_single() -> tuple[list[dict[str, Any]], list[TestCase]]:
+            evaluator = OBaIEvaluator(
+                use_builtin_scorers=not no_builtin,
+                judge_model=judge_model,
+            )
             test_cases = [
                 TestCase(
                     query=query_text or "",
@@ -1162,83 +1170,18 @@ def evaluate_cmd(
                     description="Ad-hoc query evaluation",
                 )
             ]
+            trace = await run_query_with_trace(
+                query=test_cases[0].query,
+                model=model or "gpt-4o",
+                verbose=verbose,
+            )
+            result = await evaluator.evaluate_trace(trace, test_cases[0])
+            result["test_id"] = ""
+            result["category"] = ""
+            print_eval_results(result, verbose)
+            return [result], test_cases
 
-        for i, test_case in enumerate(test_cases, 1):
-            tc_label = f"{test_case.id}: " if test_case.id else ""
-            query_preview = f"{tc_label}{test_case.query[:50]}"
-            console.print(f"[bold][{i}/{len(test_cases)}][/bold] {query_preview}...")
-
-            try:
-                # Guardrail rejection test: expect InputGuardrailTripwireTriggered
-                if test_case.expect_rejection:
-                    try:
-                        trace = await run_query_with_trace(
-                            query=test_case.query,
-                            model=model or "gpt-4o",
-                            verbose=False,
-                        )
-                        # If we get here, guardrail did NOT reject — that's a failure
-                        console.print("  [red]FAIL[/red] — guardrail should have rejected")
-                        all_results.append(
-                            {
-                                "query": test_case.query,
-                                "test_id": test_case.id,
-                                "category": test_case.category,
-                                "guardrail_rejected": False,
-                                "scores": {
-                                    "GuardrailRejection": {
-                                        "expected_rejection": True,
-                                        "actual_rejection": False,
-                                        "correct_tools": False,
-                                    },
-                                },
-                            }
-                        )
-                    except Exception as guard_err:
-                        err_name = type(guard_err).__name__
-                        if "InputGuardrailTripwireTriggered" in err_name:
-                            console.print("  [green]PASS[/green] — correctly rejected by guardrail")
-                            all_results.append(
-                                {
-                                    "query": test_case.query,
-                                    "test_id": test_case.id,
-                                    "category": test_case.category,
-                                    "guardrail_rejected": True,
-                                    "scores": {},
-                                }
-                            )
-                        else:
-                            raise
-                    continue
-
-                # Normal test: run query and score
-                trace = await run_query_with_trace(
-                    query=test_case.query,
-                    model=model or "gpt-4o",
-                    verbose=False,
-                )
-
-                results = await evaluator.evaluate_trace(trace, test_case)
-                results["test_id"] = test_case.id
-                results["category"] = test_case.category
-                all_results.append(results)
-
-                print_eval_results(results, verbose)
-
-            except Exception as e:
-                console.print(f"[red]  Error: {e}[/red]")
-                all_results.append(
-                    {
-                        "query": test_case.query,
-                        "test_id": test_case.id,
-                        "category": test_case.category,
-                        "error": str(e),
-                    }
-                )
-
-        return all_results, test_cases
-
-    results, run_test_cases = asyncio.run(_run_evaluation())
+        results, run_test_cases = asyncio.run(_run_single())
 
     # Aggregate summary for suite runs
     if suite and len(results) > 1:
