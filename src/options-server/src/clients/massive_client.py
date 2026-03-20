@@ -1,4 +1,4 @@
-"""Polygon.io API client for options data with exponential backoff retry logic."""
+"""Massive.io API client for options data with exponential backoff retry logic."""
 
 import asyncio
 from typing import Any
@@ -15,11 +15,11 @@ MAX_RETRIES = 3
 RETRY_DELAYS = [0.5, 1.0, 2.0]  # Exponential backoff in seconds
 
 
-class PolygonAPIError(Exception):
-    """Exception for Polygon API errors."""
+class MassiveAPIError(Exception):
+    """Exception for Massive API errors."""
 
     def __init__(self, message: str, status_code: int | None = None) -> None:
-        """Initialize Polygon API error.
+        """Initialize Massive API error.
 
         Args:
             message: Error message
@@ -29,28 +29,28 @@ class PolygonAPIError(Exception):
         self.status_code = status_code
 
 
-class PolygonClient:
-    """Client for Polygon.io Options API.
+class MassiveClient:
+    """Client for Massive.io Options API.
 
     Provides access to real-time options snapshots, trades, quotes, and historical data.
     Uses header-based authentication and supports cursor-based pagination.
     """
 
     def __init__(self, settings: Settings) -> None:
-        """Initialize Polygon client.
+        """Initialize Massive client.
 
         Args:
-            settings: Application settings with Polygon API key
+            settings: Application settings with Massive API key
         """
         self.settings = settings
-        self.base_url = settings.polygon_base_url.rstrip("/")
-        self.api_key = settings.polygon_api_key
+        self.base_url = settings.massive_base_url.rstrip("/")
+        self.api_key = settings.massive_api_key
         self.client = httpx.AsyncClient(
             timeout=30.0,
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
 
-    async def __aenter__(self) -> "PolygonClient":
+    async def __aenter__(self) -> "MassiveClient":
         """Async context manager entry."""
         return self
 
@@ -85,7 +85,7 @@ class PolygonClient:
         endpoint: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Make GET request to Polygon API with exponential backoff retry logic.
+        """Make GET request to Massive API with exponential backoff retry logic.
 
         Args:
             endpoint: API endpoint path (with leading slash)
@@ -95,13 +95,13 @@ class PolygonClient:
             JSON response data
 
         Raises:
-            PolygonAPIError: On API request failure after all retries
+            MassiveAPIError: On API request failure after all retries
             httpx.HTTPError: On network errors after all retries
         """
         url = f"{self.base_url}{endpoint}"
         query_params = {k: v for k, v in (params or {}).items() if v is not None}
 
-        log_api_call(logger, "polygon", endpoint, query_params)
+        log_api_call(logger, "massive", endpoint, query_params)
 
         last_error: Exception | None = None
 
@@ -111,10 +111,10 @@ class PolygonClient:
                 response.raise_for_status()
                 data: dict[str, Any] = response.json()
 
-                # Check for Polygon-specific error responses
+                # Check for Massive-specific error responses
                 if data.get("status") == "ERROR":
-                    error_msg = data.get("error", "Unknown Polygon API error")
-                    raise PolygonAPIError(error_msg, response.status_code)
+                    error_msg = data.get("error", "Unknown Massive API error")
+                    raise MassiveAPIError(error_msg, response.status_code)
 
                 return data
 
@@ -126,7 +126,7 @@ class PolygonClient:
                     error_body = e.response.json()
                     if error_body.get("status") == "ERROR":
                         error_msg = error_body.get("error", str(e))
-                        raise PolygonAPIError(error_msg, e.response.status_code) from e
+                        raise MassiveAPIError(error_msg, e.response.status_code) from e
                 except (ValueError, KeyError):
                     pass
 
@@ -203,7 +203,7 @@ class PolygonClient:
                 break
 
             # Extract cursor from next_url
-            # Polygon returns full URL, we need to extract the cursor parameter
+            # Massive returns full URL, we need to extract the cursor parameter
             if "cursor=" in next_url:
                 cursor = next_url.split("cursor=")[-1].split("&")[0]
                 current_params["cursor"] = cursor
@@ -259,7 +259,7 @@ class PolygonClient:
 
         Args:
             underlying_asset: Stock ticker symbol (e.g., 'AAPL')
-            option_contract: Polygon option symbol (e.g., 'O:AAPL240119C00125000')
+            option_contract: Option symbol (e.g., 'O:AAPL240119C00125000')
 
         Returns:
             Complete snapshot with pricing, Greeks, IV, and OI

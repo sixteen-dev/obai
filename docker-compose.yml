@@ -21,7 +21,7 @@ services:
 
   fundamentals-server:
     build:
-      context: ../src/fundamentals-server
+      context: ./src/fundamentals-server
       dockerfile: Dockerfile
     container_name: obai-fundamentals-server
     ports:
@@ -55,7 +55,7 @@ services:
 
   market-data-server:
     build:
-      context: ../src/market-data-server
+      context: ./src/market-data-server
       dockerfile: Dockerfile
     container_name: obai-market-data-server
     ports:
@@ -80,7 +80,7 @@ services:
 
   events-news-server:
     build:
-      context: ../src/events-news-server
+      context: ./src/events-news-server
       dockerfile: Dockerfile
     container_name: obai-events-news-server
     ports:
@@ -106,19 +106,19 @@ services:
 
   options-server:
     build:
-      context: ../src/options-server
+      context: ./src/options-server
       dockerfile: Dockerfile
     container_name: obai-options-server
     ports:
       - "8004:8000"
     environment:
       # API Keys (from host env)
-      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - MASSIVE_API_KEY=${MASSIVE_API_KEY}
       # Server Configuration
       - TRANSPORT=streamable-http
       - HOST=0.0.0.0
       - PORT=8000
-      - POLYGON_BASE_URL=https://api.polygon.io
+      - MASSIVE_BASE_URL=https://api.massive.com
     networks:
       - obai-mcp-network
     restart: unless-stopped
@@ -131,7 +131,7 @@ services:
 
   screening-server:
     build:
-      context: ../src/screening-server
+      context: ./src/screening-server
       dockerfile: Dockerfile
     container_name: obai-screening-server
     ports:
@@ -156,7 +156,7 @@ services:
 
   portfolio-server:
     build:
-      context: ../src/portfolio-server
+      context: ./src/portfolio-server
       dockerfile: Dockerfile
     container_name: obai-portfolio-server
     ports:
@@ -189,7 +189,7 @@ services:
 
   backtest-server:
     build:
-      context: ../src/backtest-server
+      context: ./src/backtest-server
       dockerfile: Dockerfile
     container_name: obai-backtest-server
     ports:
@@ -204,6 +204,7 @@ services:
     volumes:
       # Persist OHLCV data and cache across restarts
       - backtest-data:/app/data
+    mem_limit: 2g
     networks:
       - obai-mcp-network
     restart: unless-stopped

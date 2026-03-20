@@ -1,5 +1,5 @@
-"""Polygon.io API clients for options data."""
+"""Massive API clients for options data."""
 
-from .polygon_client import PolygonAPIError, PolygonClient
+from .massive_client import MassiveAPIError, MassiveClient
 
-__all__ = ["PolygonClient", "PolygonAPIError"]
+__all__ = ["MassiveClient", "MassiveAPIError"]

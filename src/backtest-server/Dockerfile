@@ -1,7 +1,6 @@
 # Backtest MCP Server Docker Image
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install uv
@@ -11,18 +10,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml .
 COPY VERSION .
 
-# Install dependencies (cached unless pyproject.toml changes)
+# Install dependencies (uses native platform wheel — aarch64 on Apple Silicon, x86_64 on Intel)
 RUN uv sync --no-dev
 
-# Copy source AFTER deps install — this layer busts on any code change
+# Copy source
 COPY src/ ./src/
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Expose port
 EXPOSE 8007
 
-# Run the MCP server
 CMD ["uv", "run", "python", "-m", "src.server"]

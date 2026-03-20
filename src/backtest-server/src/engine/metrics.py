@@ -92,12 +92,12 @@ def _build_result(  # noqa: PLR0913
     bench: _BenchmarkStats,
 ) -> BacktestResult:
     """Build BacktestResult from computed components."""
-    total_return = float(equity[-1] / equity[0] - 1) * 100
+    total_return = float(equity[-1] / equity[0] - 1) * 100 if len(equity) >= 2 else 0.0
     sharpe = _compute_sharpe(returns)
     sortino = _compute_sortino(returns)
     calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
     volatility = _annualized_volatility(returns)
-    var_95 = float(np.percentile(returns, 5)) * 100
+    var_95 = float(np.percentile(returns, 5)) * 100 if len(returns) > 0 else 0.0
     downside = _compute_downside_deviation(returns)
 
     return BacktestResult(
@@ -184,6 +184,8 @@ def _annualized_volatility(
     returns: np.ndarray[Any, np.dtype[np.float64]],
 ) -> float:
     """Compute annualized volatility (percentage)."""
+    if len(returns) < MIN_DATA_POINTS:
+        return 0.0
     std = float(np.std(returns, ddof=1))
     return float(std * np.sqrt(TRADING_DAYS_PER_YEAR) * 100)
 

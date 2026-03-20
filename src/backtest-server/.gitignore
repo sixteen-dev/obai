@@ -7,8 +7,8 @@
 .ruff_cache/
 __pycache__/
 
-# Data files (downloaded OHLCV)
-data/
+# Data files (downloaded OHLCV) — root-level only, not src/data/
+/data/
 
 # Backtest cache
-cache/
+/cache/

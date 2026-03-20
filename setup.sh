@@ -108,19 +108,27 @@ else
     errors=$((errors + 1))
 fi
 
-# Python 3.12+
+# Python 3.12+ (check system python3, then uv-managed)
+_py_found=false
 if check_cmd python3; then
     py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     py_major=$(echo "$py_version" | cut -d. -f1)
     py_minor=$(echo "$py_version" | cut -d. -f2)
     if [ "$py_major" -ge 3 ] && [ "$py_minor" -ge 12 ]; then
         ok "Python $py_version (>= 3.12)"
-    else
-        fail "Python $py_version found, but 3.12+ required"
-        errors=$((errors + 1))
+        _py_found=true
     fi
-else
-    echo "  Install: https://www.python.org/downloads/"
+fi
+if [ "$_py_found" = false ] && check_cmd uv; then
+    # System python3 is too old or missing — check if uv manages 3.12+
+    uv_py=$(uv python list --only-installed 2>/dev/null | grep -oP 'cpython-3\.\K(1[2-9]|[2-9][0-9])' | head -1)
+    if [ -n "$uv_py" ]; then
+        ok "Python 3.$uv_py (uv-managed, >= 3.12)"
+        _py_found=true
+    fi
+fi
+if [ "$_py_found" = false ]; then
+    fail "Python 3.12+ required. Install via: uv python install 3.12"
     errors=$((errors + 1))
 fi
 
@@ -168,7 +176,7 @@ check_key() {
 
 check_key "OPENAI_API_KEY"    "required" "needed for Agent SDK (all agents)"
 check_key "FMP_API_KEY"       "required" "needed for 6 of 7 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
-check_key "POLYGON_API_KEY"   "optional" "needed for options-server only"
+check_key "MASSIVE_API_KEY"   "optional" "needed for options-server only"
 check_key "TAVILY_API_KEY"    "optional" "needed for events-news-server AI search"
 check_key "ANTHROPIC_API_KEY" "optional" "needed for LLM-judge evaluation scorers"
 
