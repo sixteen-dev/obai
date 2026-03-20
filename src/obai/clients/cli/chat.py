@@ -415,7 +415,7 @@ async def _run_query(  # noqa: PLR0912
     faithfulness: dict[str, Any] | None = None
     completeness: dict[str, Any] | None = None
     if not get_config().enable_inline_scoring:
-        return _build_result(
+        result = _build_result(
             query=query,
             response=response_text,
             agents_called=agents_called,
@@ -423,6 +423,9 @@ async def _run_query(  # noqa: PLR0912
             elapsed_ms=elapsed_ms,
             session_id=session_id,
         )
+        if json_mode:
+            _emit_json(result)
+        return result
     inner_outputs = get_inner_tool_outputs()
     if inner_outputs and response_text:
         scorer_input = build_scorer_input(response_text, inner_outputs)
