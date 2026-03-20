@@ -1,6 +1,5 @@
 """MCP tools for fundamentals analysis."""
 
-from .vector_search import search_fundamentals
 from .fundamentals import (
     get_analyst_estimates,
     get_analyst_outlook,
@@ -15,6 +14,7 @@ from .fundamentals import (
     get_sec_filings,
     get_valuation_metrics,
 )
+from .vector_search import search_fundamentals
 
 __all__ = [
     "get_fundamentals",
@@ -27,8 +27,8 @@ __all__ = [
     "get_sec_filings",
     "get_insider_trades",
     "get_revenue_segments",
+    "search_fundamentals",
     # Consolidated tools
     "get_valuation_metrics",
     "get_analyst_outlook",
-    "search_fundamentals",
 ]

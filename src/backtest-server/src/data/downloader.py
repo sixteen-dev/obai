@@ -98,16 +98,20 @@ class DataDownloader:
             cached_start, cached_end = existing_range
             # Backfill: need earlier data
             if req_start < cached_start:
-                fetches.append((
-                    start_date,
-                    str(cached_start - timedelta(days=1)),
-                ))
+                fetches.append(
+                    (
+                        start_date,
+                        str(cached_start - timedelta(days=1)),
+                    )
+                )
             # Forward-fill: need later data
             if req_end > cached_end:
-                fetches.append((
-                    str(cached_end + timedelta(days=1)),
-                    end_date,
-                ))
+                fetches.append(
+                    (
+                        str(cached_end + timedelta(days=1)),
+                        end_date,
+                    )
+                )
         else:
             fetches.append((start_date, end_date))
 

@@ -92,7 +92,9 @@ def _build_result(  # noqa: PLR0913
     bench: _BenchmarkStats,
 ) -> BacktestResult:
     """Build BacktestResult from computed components."""
-    total_return = float(equity[-1] / equity[0] - 1) * 100 if len(equity) >= 2 else 0.0
+    total_return = (
+        float(equity[-1] / equity[0] - 1) * 100 if len(equity) >= MIN_DATA_POINTS else 0.0
+    )
     sharpe = _compute_sharpe(returns)
     sortino = _compute_sortino(returns)
     calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
