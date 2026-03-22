@@ -49,7 +49,9 @@ class StrategyAgent(BaseAgent):
         """Description for orchestrator handoff decisions."""
         return (
             "Specialist for designing trading strategies, backtesting them against "
-            "historical data, and iteratively refining based on performance metrics. "
+            "historical data (daily and intraday: 5min, 15min, 1hour), and iteratively "
+            "refining based on performance metrics. Supports day trading strategies with "
+            "session-aware rules (close_eod, no_entry_after, time-of-day filters). "
             "Acts as a quantitative analyst — uses market context provided by the hub "
             "to make informed strategy decisions. Use for strategy building, "
             "backtesting, or trading system questions."

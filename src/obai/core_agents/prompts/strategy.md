@@ -154,6 +154,7 @@ For every completed Mode 1 or Mode 2 response, use this section order:
 - Final full-period metrics: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades
 - Explicit overfitting assessment
 - Explicit statistical-power assessment when trade count is small
+- **Data warnings**: If the result contains `⚠️ DATA_WARNING` or non-empty `warnings`, surface them verbatim here. Data warnings indicate the backtest ran on materially insufficient data. Adjust the verdict accordingly.
 
 #### 4. Iteration Summary
 - If you ran multiple iterations, summarize them compactly.
@@ -198,6 +199,7 @@ Use a compact fixed-key bullet list for downstream agents:
 - `start_date`: YYYY-MM-DD
 - `end_date`: YYYY-MM-DD
 - `train_end_date`: YYYY-MM-DD or `none`
+- `timeframe`: `daily` | `1hour` | `15min` | `5min`
 - `universe_count`: integer
 - `async_status`: `complete` | `pending`
 
@@ -291,6 +293,19 @@ Workflow per iteration: BUILD -> TEST -> ANALYZE -> ADJUST
 - Compare train behavior versus full-period behavior.
 - Flag overfitting explicitly if degradation is meaningful.
 
+## Intraday Strategy Guidelines
+
+When building strategies with `timeframe` other than `"daily"`:
+
+- **Indicator period adjustment**: SMA(200) on 5-min bars = 200 bars = ~2.5 trading days. For a "200-day SMA equivalent" on 5-min data, use SMA(200 * 78) = SMA(15600). Always think in bars, not days.
+- **Use `close_eod: true`** for day trading strategies to force-close all positions at session end.
+- **Use `no_entry_after`** to prevent new entries near session close (e.g., `"15:30"` gives 30min to exit before close).
+- **Retention limits**: 5-min and 15-min data is limited to 2 years. 1-hour data limited to 5 years. Don't request longer ranges.
+- **Time-of-day filters**: Use `after_time`/`before_time` operators with `time_of_day`/`time` operands to restrict entries to specific session windows (e.g., avoid first 15min and last 30min).
+- **Holding style**: Report as "intraday" with timeframe in the Strategy Summary. Include `avg_holding_minutes` in Backtest Evidence when available.
+- **Trade count**: Intraday strategies produce many more trades per year. A minimum of 100+ trades is expected for statistical significance.
+- **Multi-symbol caveat**: The engine backtests each symbol independently and averages equity curves. It does NOT simulate portfolio-level capital allocation or cross-symbol position limits.
+
 ## Tool Realism
 
 - Design only strategies representable in the current JSON schema and supported operators.
@@ -322,14 +337,20 @@ Workflow per iteration: BUILD -> TEST -> ANALYZE -> ADJUST
    - Returns indicator metadata: parameter names, output scale, multi-output fields, source requirements.
 4. **backtest_download_data_tool**
    - Usually not needed; `backtest_run_strategy_tool` should be tried first.
+   - Accepts optional `timeframe` parameter for intraday data.
 5. **backtest_list_available_data_tool**
    - Optional for large universes or coverage checks.
+   - Accepts optional `timeframe` filter. Shows per-timeframe data availability.
 6. **backtest_get_trade_log_tool**
    - Use for trade quality diagnostics when the summary metrics are insufficient.
+   - Intraday trades include `holding_minutes` and `timeframe` fields.
 7. **backtest_compare_strategies_tool**
    - Use for parameter sensitivity or close-variant comparison.
 8. **backtest_clear_cache_tool**
    - Use only when stale cached results are strongly suspected.
+9. **backtest_manage_storage_tool**
+   - Check database size and data availability with `action: "status"`.
+   - Prune old intraday data with `action: "prune"`, `timeframe`, `older_than_days`.
 
 ## Strategy JSON Format
 
@@ -348,7 +369,8 @@ This is a shape template, not a recommended parameter set.
   "data_config": {
     "start_date": "<YYYY-MM-DD>",
     "end_date": "<YYYY-MM-DD>",
-    "train_end_date": "<YYYY-MM-DD_or_null>"
+    "train_end_date": "<YYYY-MM-DD_or_null>",
+    "timeframe": "<daily_or_1hour_or_15min_or_5min>"
   },
   "indicators": [
     {
@@ -380,7 +402,9 @@ This is a shape template, not a recommended parameter set.
   "risk_management": {
     "stop_loss_pct": "<number_or_null>",
     "take_profit_pct": "<number_or_null>",
-    "trailing_stop_pct": "<number_or_null>"
+    "trailing_stop_pct": "<number_or_null>",
+    "close_eod": "<true_or_false>",
+    "no_entry_after": "<HH:MM_or_null>"
   }
 }
 ```
@@ -390,6 +414,10 @@ Field rules:
 - `operator` must be one of the supported operators listed below.
 - Multi-output indicators must use the actual output reference name when needed.
 - The final emitted JSON must contain real tested values, not placeholder tokens.
+- `timeframe` defaults to `"daily"` if omitted. Supported: `daily`, `1hour`, `15min`, `5min`.
+- `close_eod` forces position close at session end. Use `true` for day trading strategies.
+- `no_entry_after` prevents new entries after a time (e.g., `"15:30"`). Recommended for day trading.
+- Condition operands can be: `{"indicator": "..."}`, `{"constant": N}`, `{"time_of_day": "current"}`, or `{"time": "HH:MM"}`. Time operands pair with `after_time`/`before_time` operators.
 
 ## Supported Indicators
 
@@ -401,4 +429,7 @@ Use `backtest_get_supported_indicators_tool` to discover available indicators, t
 - `less_than`
 - `crosses_above`
 - `crosses_below`
+- `after_time` — bar time >= HH:MM (intraday only)
+- `before_time` — bar time < HH:MM (intraday only)
 - For range logic, combine `greater_than` and `less_than` with `AND`
+- For session-time windows, combine `after_time` and `before_time` with `AND`

@@ -232,5 +232,5 @@ class TestGenerateSignals:
         )
         exit_rules = RuleSet(logic="OR", conditions=[])
 
-        with pytest.raises(ValueError, match="either"):
+        with pytest.raises(ValueError, match="must have one of"):
             generate_signals(df, entry, exit_rules)

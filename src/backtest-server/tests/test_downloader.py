@@ -57,6 +57,7 @@ def mock_store() -> MagicMock:
     store.read_ohlcv.return_value = None
     store.get_date_range.return_value = None
     store.get_last_modified.return_value = None
+    store.write_ohlcv_async = AsyncMock()
     return store
 
 

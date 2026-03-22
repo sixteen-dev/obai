@@ -12,6 +12,8 @@ dependencies = [
     "numpy>=2.0.0",
     "polars>=1.0.0",
     "polars-talib>=0.1.5",
+    "duckdb>=1.0.0,<2.0.0",
+    "pyarrow>=14.0.0",
 ]
 
 [project.optional-dependencies]
@@ -65,7 +67,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "D103", "ANN201", "PLR2004"]
+"tests/*" = ["S101", "D102", "D103", "ANN201", "PLR2004"]
+"scripts/*" = ["S101", "D103", "T201", "INP001"]
 
 [tool.mypy]
 strict = true

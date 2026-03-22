@@ -115,6 +115,11 @@ def filter_insider_trades(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _apply_filter(data, "insider_trades")
 
 
+def filter_insider_trading_statistics(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter insider trading statistics to remove internal identifiers."""
+    return _apply_filter(data, "insider_trading_statistics")
+
+
 def filter_revenue_segments(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter revenue segments - keep all as product-level data is all relevant."""
     return _apply_filter(data, "revenue_segments")

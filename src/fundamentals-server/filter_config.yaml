@@ -96,3 +96,8 @@ filters:
   revenue_segments:
     # Revenue segmentation - keep all data as it's product-level breakdown
     keep_all: true
+
+  insider_trading_statistics:
+    # Insider trading stats - quarterly aggregates, remove internal identifiers
+    remove_fields:
+      - cik

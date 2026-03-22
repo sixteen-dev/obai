@@ -8,6 +8,7 @@ from .fundamentals import (
     get_financial_ratios,
     get_fundamentals,
     get_insider_trades,
+    get_insider_trading_statistics,
     get_key_metrics,
     get_price_target_summary,
     get_revenue_segments,
@@ -26,6 +27,7 @@ __all__ = [
     "get_company_rating",
     "get_sec_filings",
     "get_insider_trades",
+    "get_insider_trading_statistics",
     "get_revenue_segments",
     "search_fundamentals",
     # Consolidated tools

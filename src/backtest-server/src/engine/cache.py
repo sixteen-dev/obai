@@ -123,15 +123,20 @@ def build_data_fingerprint(
     symbols: list[str],
     start_date: str,
     end_date: str,
-    parquet_mtimes: dict[str, float],
+    data_mtimes: dict[str, float],
+    timeframe: str = "daily",
 ) -> str:
     """Build a data fingerprint string for cache key generation.
+
+    Design doc: Phase 1.6 — renamed from parquet_mtimes to data_mtimes,
+    added timeframe to prevent daily/intraday cache collisions.
 
     Args:
         symbols: Sorted list of symbols.
         start_date: Start date string.
         end_date: End date string.
-        parquet_mtimes: Dict of symbol → last modified timestamp.
+        data_mtimes: Dict of symbol → last refreshed timestamp.
+        timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
 
     Returns:
         Deterministic fingerprint string.
@@ -139,12 +144,13 @@ def build_data_fingerprint(
     """
     sorted_symbols = sorted(symbols)
     parts: list[str] = [
+        f"timeframe={timeframe}",
         f"symbols={','.join(sorted_symbols)}",
         f"start={start_date}",
         f"end={end_date}",
     ]
     for sym in sorted_symbols:
-        mtime = parquet_mtimes.get(sym, 0.0)
+        mtime = data_mtimes.get(sym, 0.0)
         parts.append(f"{sym}={mtime:.0f}")
     return "|".join(parts)
 

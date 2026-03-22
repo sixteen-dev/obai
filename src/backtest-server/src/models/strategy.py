@@ -35,9 +35,29 @@ SUPPORTED_OPERATORS: set[str] = {
     "less_than",
     "crosses_above",
     "crosses_below",
+    "after_time",
+    "before_time",
 }
 
 SUPPORTED_SIZING_METHODS: set[str] = {"equal_weight", "fixed_pct"}
+
+# Design doc: Phase 2.2 — timeframe constants
+SUPPORTED_TIMEFRAMES: set[str] = {"daily", "1hour", "15min", "5min"}
+
+TIMEFRAME_MAX_YEARS: dict[str, int] = {
+    "daily": 30,
+    "1hour": 5,
+    "15min": 2,
+    "5min": 2,
+}
+
+# Bars per trading day — validate 1hour against actual FMP data
+BARS_PER_DAY: dict[str, int] = {
+    "daily": 1,
+    "1hour": 7,
+    "15min": 26,
+    "5min": 78,
+}
 
 # Multi-output indicators produce columns named {id}_{suffix}.
 # Rules can reference either the bare id or the suffixed name.
@@ -75,17 +95,29 @@ class IndicatorConfig:
 
 @dataclass
 class Operand:
-    """Left or right side of a condition — indicator ref or constant."""
+    """Left or right side of a condition — indicator ref, constant, or time.
+
+    Phase 4.1: Extended with time_of_day and time fields for session-aware rules.
+    """
 
     indicator: str | None = None
     constant: float | None = None
+    time_of_day: str | None = None  # "current" — resolves to bar's HH:MM as numeric
+    time: str | None = None  # "10:00" — explicit HH:MM string
 
     def validate(self) -> list[str]:
         """Validate operand has exactly one value set."""
-        if self.indicator is None and self.constant is None:
-            return ["Operand must have either 'indicator' or 'constant'"]
-        if self.indicator is not None and self.constant is not None:
-            return ["Operand cannot have both 'indicator' and 'constant'"]
+        set_count = sum(
+            v is not None for v in [self.indicator, self.constant, self.time_of_day, self.time]
+        )
+        if set_count == 0:
+            return ["Operand must have one of: indicator, constant, time_of_day, time"]
+        if set_count > 1:
+            return ["Operand must have exactly one field set"]
+        if self.time is not None:
+            parts = self.time.split(":")
+            if len(parts) != 2:  # noqa: PLR2004
+                return [f"Invalid time format '{self.time}', expected HH:MM"]
         return []
 
 
@@ -150,6 +182,8 @@ class RiskManagement:
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = None
+    close_eod: bool = False  # Phase 3.4: force close at session end
+    no_entry_after: str | None = None  # Phase 3.4: "15:30" — no new entries after
 
 
 _MIN_BACKTEST_DAYS = 30
@@ -157,11 +191,12 @@ _MIN_BACKTEST_DAYS = 30
 
 @dataclass
 class DataConfig:
-    """Date range and train/test split configuration."""
+    """Date range, train/test split, and timeframe configuration."""
 
     start_date: str
     end_date: str
     train_end_date: str | None = None
+    timeframe: str = "daily"
 
     def get_train_end(self) -> date:
         """Get train end date, defaulting to 75% of the range."""
@@ -173,8 +208,16 @@ class DataConfig:
         return start + timedelta(days=split_days)
 
     def validate(self) -> list[str]:
-        """Validate date configuration."""
+        """Validate date configuration and timeframe."""
         errors: list[str] = []
+
+        # Timeframe validation (Phase 2.2)
+        if self.timeframe not in SUPPORTED_TIMEFRAMES:
+            errors.append(
+                f"Unsupported timeframe '{self.timeframe}'. "
+                f"Supported: {sorted(SUPPORTED_TIMEFRAMES)}"
+            )
+
         try:
             start = date.fromisoformat(self.start_date)
         except ValueError:
@@ -189,6 +232,17 @@ class DataConfig:
             errors.append(f"start_date ({start}) must be before end_date ({end})")
         elif (end - start).days < _MIN_BACKTEST_DAYS:
             errors.append(f"Date range must be at least {_MIN_BACKTEST_DAYS} days")
+
+        # Retention limit enforcement (Phase 2.2)
+        if start < end:
+            years_span = (end - start).days / 365.25
+            max_years = TIMEFRAME_MAX_YEARS.get(self.timeframe, 30)
+            if years_span > max_years:
+                errors.append(
+                    f"Timeframe '{self.timeframe}' limited to {max_years} years, "
+                    f"requested {years_span:.1f}"
+                )
+
         if self.train_end_date:
             try:
                 train_end = date.fromisoformat(self.train_end_date)
@@ -262,6 +316,7 @@ class StrategyDefinition:
                 "start_date": self.data_config.start_date,
                 "end_date": self.data_config.end_date,
                 "train_end_date": self.data_config.train_end_date,
+                "timeframe": self.data_config.timeframe,
             },
             "indicators": [
                 {
@@ -283,6 +338,8 @@ class StrategyDefinition:
                 "stop_loss_pct": self.risk_management.stop_loss_pct,
                 "take_profit_pct": self.risk_management.take_profit_pct,
                 "trailing_stop_pct": self.risk_management.trailing_stop_pct,
+                "close_eod": self.risk_management.close_eod,
+                "no_entry_after": self.risk_management.no_entry_after,
             },
         }
 
@@ -318,6 +375,7 @@ class StrategyDefinition:
                 start_date=data_config_data.get("start_date", ""),
                 end_date=data_config_data.get("end_date", ""),
                 train_end_date=data_config_data.get("train_end_date"),
+                timeframe=data_config_data.get("timeframe", "daily"),
             ),
             indicators=indicators,
             entry_rules=entry_rules,
@@ -331,6 +389,8 @@ class StrategyDefinition:
                 stop_loss_pct=risk_data.get("stop_loss_pct"),
                 take_profit_pct=risk_data.get("take_profit_pct"),
                 trailing_stop_pct=risk_data.get("trailing_stop_pct"),
+                close_eod=risk_data.get("close_eod", False),
+                no_entry_after=risk_data.get("no_entry_after"),
             ),
         )
 
@@ -361,6 +421,10 @@ def _operand_to_dict(operand: Operand) -> dict[str, Any]:
     """Serialize an Operand to dict."""
     if operand.indicator is not None:
         return {"indicator": operand.indicator}
+    if operand.time_of_day is not None:
+        return {"time_of_day": operand.time_of_day}
+    if operand.time is not None:
+        return {"time": operand.time}
     return {"constant": operand.constant}
 
 
@@ -382,6 +446,8 @@ def _operand_from_dict(data: dict[str, Any]) -> Operand:
     return Operand(
         indicator=data.get("indicator"),
         constant=data.get("constant"),
+        time_of_day=data.get("time_of_day"),
+        time=data.get("time"),
     )
 
 

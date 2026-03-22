@@ -254,6 +254,7 @@ def get_rejection_message(validation: FinancialQueryValidation) -> str:
         f"• Earnings reports, news, and dividends\n"
         f"• Options chains and Greeks\n"
         f"• Technical analysis and market trends\n"
+        f"• Trading strategy design and backtesting\n"
         f"• Market movers and sector performance\n\n"
         f"Please ask a finance-related question!"
     )

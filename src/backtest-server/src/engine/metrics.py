@@ -16,6 +16,22 @@ TRADING_DAYS_PER_YEAR = 252
 RISK_FREE_RATE = 0.0  # Can be parameterized later
 MIN_DATA_POINTS = 2  # Minimum data points for statistical calculations
 
+# Phase 3.6: timeframe-dependent annualization factors
+BARS_PER_YEAR: dict[str, int] = {
+    "daily": 252,
+    "1hour": 252 * 7,  # ~1,764 — validate against actual FMP bar count
+    "15min": 252 * 26,  # ~6,552
+    "5min": 252 * 78,  # ~19,656
+}
+
+# Bars per trading day — for data quality expected row calculation
+BARS_PER_DAY: dict[str, int] = {
+    "daily": 1,
+    "1hour": 7,
+    "15min": 26,
+    "5min": 78,
+}
+
 
 @dataclass
 class _DrawdownInfo:
@@ -35,6 +51,7 @@ def compute_metrics(  # noqa: PLR0913
     symbol_dfs: dict[str, pl.DataFrame] | None = None,
     requested_start: str = "",
     requested_end: str = "",
+    timeframe: str = "daily",
 ) -> BacktestResult:
     """Compute all performance and risk metrics from backtest results.
 
@@ -47,19 +64,22 @@ def compute_metrics(  # noqa: PLR0913
         symbol_dfs: Raw OHLCV DataFrames per symbol (for data quality).
         requested_start: Requested start date (YYYY-MM-DD).
         requested_end: Requested end date (YYYY-MM-DD).
+        timeframe: Bar timeframe for annualization (Phase 3.6).
 
     Returns:
         BacktestResult with all metrics computed.
 
     """
+    bars_per_year = BARS_PER_YEAR.get(timeframe, TRADING_DAYS_PER_YEAR)
+
     equity = equity_df["equity"].to_numpy().astype(np.float64)
     dates = equity_df["date"].to_list()
     returns = _compute_daily_returns(equity)
 
     dd = _compute_drawdown(equity, dates)
     cagr = _compute_cagr(equity, dates)
-    trading = _compute_trading_stats(trades)
-    bench = _compute_bench_metrics(returns, dates, benchmark_df)
+    trading = _compute_trading_stats(trades, timeframe=timeframe)
+    bench = _compute_bench_metrics(returns, dates, benchmark_df, bars_per_year)
 
     result = _build_result(
         strategy_name,
@@ -71,11 +91,14 @@ def compute_metrics(  # noqa: PLR0913
         dd,
         trading,
         bench,
+        bars_per_year,
+        timeframe,
     )
     result.data_quality = _compute_data_quality(
         symbol_dfs or {},
         requested_start,
         requested_end,
+        timeframe,
     )
     return result
 
@@ -90,17 +113,19 @@ def _build_result(  # noqa: PLR0913
     dd: _DrawdownInfo,
     trading: _TradingStats,
     bench: _BenchmarkStats,
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    timeframe: str = "daily",
 ) -> BacktestResult:
     """Build BacktestResult from computed components."""
     total_return = (
         float(equity[-1] / equity[0] - 1) * 100 if len(equity) >= MIN_DATA_POINTS else 0.0
     )
-    sharpe = _compute_sharpe(returns)
-    sortino = _compute_sortino(returns)
+    sharpe = _compute_sharpe(returns, bars_per_year)
+    sortino = _compute_sortino(returns, bars_per_year)
     calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
-    volatility = _annualized_volatility(returns)
+    volatility = _annualized_volatility(returns, bars_per_year)
     var_95 = float(np.percentile(returns, 5)) * 100 if len(returns) > 0 else 0.0
-    downside = _compute_downside_deviation(returns)
+    downside = _compute_downside_deviation(returns, bars_per_year)
 
     return BacktestResult(
         strategy_name=strategy_name,
@@ -122,7 +147,9 @@ def _build_result(  # noqa: PLR0913
         profit_factor=trading.profit_factor,
         avg_trade_return_pct=trading.avg_trade_return_pct,
         avg_holding_days=trading.avg_holding_days,
+        avg_holding_minutes=trading.avg_holding_minutes,
         max_consecutive_losses=trading.max_consecutive_losses,
+        timeframe=timeframe,
         benchmark_symbol=bench.symbol,
         benchmark_return_pct=bench.return_pct,
         benchmark_cagr_pct=bench.cagr_pct,
@@ -146,6 +173,7 @@ class _TradingStats:
     avg_trade_return_pct: float
     avg_holding_days: float
     max_consecutive_losses: int
+    avg_holding_minutes: float = 0.0
 
 
 @dataclass
@@ -184,15 +212,19 @@ def _to_iso(val: Any) -> str:
 
 def _annualized_volatility(
     returns: np.ndarray[Any, np.dtype[np.float64]],
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute annualized volatility (percentage)."""
     if len(returns) < MIN_DATA_POINTS:
         return 0.0
     std = float(np.std(returns, ddof=1))
-    return float(std * np.sqrt(TRADING_DAYS_PER_YEAR) * 100)
+    return float(std * np.sqrt(bars_per_year) * 100)
 
 
-def _compute_trading_stats(trades: list[Trade]) -> _TradingStats:
+def _compute_trading_stats(
+    trades: list[Trade],
+    timeframe: str = "daily",
+) -> _TradingStats:
     """Compute trading statistics from trade list."""
     if not trades:
         return _TradingStats(0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -208,6 +240,11 @@ def _compute_trading_stats(trades: list[Trade]) -> _TradingStats:
     avg_ret = sum(t.return_pct for t in trades) / len(trades)
     avg_hold = sum(t.holding_days for t in trades) / len(trades)
 
+    # Phase 3.6: compute avg holding minutes for intraday
+    avg_hold_min = 0.0
+    if timeframe != "daily":
+        avg_hold_min = sum(getattr(t, "holding_minutes", 0) for t in trades) / len(trades)
+
     return _TradingStats(
         total_trades=len(trades),
         win_rate_pct=round(win_rate, 2),
@@ -215,6 +252,7 @@ def _compute_trading_stats(trades: list[Trade]) -> _TradingStats:
         avg_trade_return_pct=round(avg_ret, 4),
         avg_holding_days=round(avg_hold, 1),
         max_consecutive_losses=_max_consecutive_losses(trades),
+        avg_holding_minutes=round(avg_hold_min, 1),
     )
 
 
@@ -222,6 +260,7 @@ def _compute_bench_metrics(
     strategy_returns: np.ndarray[Any, np.dtype[np.float64]],
     dates: list[Any],
     benchmark_df: pl.DataFrame | None,
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> _BenchmarkStats:
     """Compute benchmark-relative metrics."""
     empty = _BenchmarkStats("", 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -238,8 +277,8 @@ def _compute_bench_metrics(
     total = float(bench_eq[-1] / bench_eq[0] - 1) * 100
     cagr = _compute_cagr(bench_eq, dates)
     beta = _compute_beta(strat_r, bench_r)
-    alpha = _compute_alpha(strat_r, bench_r, beta)
-    ir = _compute_information_ratio(strat_r, bench_r)
+    alpha = _compute_alpha(strat_r, bench_r, beta, bars_per_year)
+    ir = _compute_information_ratio(strat_r, bench_r, bars_per_year)
 
     symbol = ""
     if "symbol" in benchmark_df.columns:
@@ -312,6 +351,7 @@ def _compute_years(dates: list[Any]) -> float:
 
 def _compute_sharpe(
     returns: np.ndarray[Any, np.dtype[np.float64]],
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute annualized Sharpe ratio."""
     if len(returns) < MIN_DATA_POINTS:
@@ -319,34 +359,43 @@ def _compute_sharpe(
     std = float(np.std(returns, ddof=1))
     if std == 0:
         return 0.0
-    daily_rf = RISK_FREE_RATE / TRADING_DAYS_PER_YEAR
-    excess = float(np.mean(returns)) - daily_rf
-    return float(excess / std * np.sqrt(TRADING_DAYS_PER_YEAR))
+    bar_rf = RISK_FREE_RATE / bars_per_year
+    excess = float(np.mean(returns)) - bar_rf
+    return float(excess / std * np.sqrt(bars_per_year))
 
 
 def _compute_sortino(
     returns: np.ndarray[Any, np.dtype[np.float64]],
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
-    """Compute annualized Sortino ratio."""
+    """Compute annualized Sortino ratio.
+
+    Uses per-bar downside std (not annualized) to avoid double-annualization.
+    Formula: (mean_excess / per_bar_downside_std) * sqrt(bars_per_year).
+    """
     if len(returns) < MIN_DATA_POINTS:
         return 0.0
-    downside = _compute_downside_deviation(returns) / 100
-    if downside == 0:
+    negative = returns[returns < 0]
+    if len(negative) == 0:
         return 0.0
-    daily_rf = RISK_FREE_RATE / TRADING_DAYS_PER_YEAR
-    excess = float(np.mean(returns)) - daily_rf
-    return float(excess / downside * np.sqrt(TRADING_DAYS_PER_YEAR))
+    downside_std = float(np.std(negative, ddof=1))
+    if downside_std == 0:
+        return 0.0
+    bar_rf = RISK_FREE_RATE / bars_per_year
+    excess = float(np.mean(returns)) - bar_rf
+    return float(excess / downside_std * np.sqrt(bars_per_year))
 
 
 def _compute_downside_deviation(
     returns: np.ndarray[Any, np.dtype[np.float64]],
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute annualized downside deviation (percentage)."""
     negative = returns[returns < 0]
     if len(negative) == 0:
         return 0.0
     dd = float(np.std(negative, ddof=1))
-    return float(dd * np.sqrt(TRADING_DAYS_PER_YEAR) * 100)
+    return float(dd * np.sqrt(bars_per_year) * 100)
 
 
 def _compute_drawdown(
@@ -389,18 +438,20 @@ def _compute_alpha(
     strategy: np.ndarray[Any, np.dtype[np.float64]],
     benchmark: np.ndarray[Any, np.dtype[np.float64]],
     beta: float,
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute Jensen's alpha (annualized, percentage)."""
     strat_mean = float(np.mean(strategy))
     bench_mean = float(np.mean(benchmark))
-    daily_rf = RISK_FREE_RATE / TRADING_DAYS_PER_YEAR
-    daily_alpha = strat_mean - (daily_rf + beta * (bench_mean - daily_rf))
-    return float(daily_alpha * TRADING_DAYS_PER_YEAR * 100)
+    bar_rf = RISK_FREE_RATE / bars_per_year
+    bar_alpha = strat_mean - (bar_rf + beta * (bench_mean - bar_rf))
+    return float(bar_alpha * bars_per_year * 100)
 
 
 def _compute_information_ratio(
     strategy: np.ndarray[Any, np.dtype[np.float64]],
     benchmark: np.ndarray[Any, np.dtype[np.float64]],
+    bars_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute information ratio (active return / tracking error)."""
     active = strategy - benchmark
@@ -408,7 +459,7 @@ def _compute_information_ratio(
     if tracking_error == 0:
         return 0.0
     mean_active = float(np.mean(active))
-    return float(mean_active / tracking_error * np.sqrt(TRADING_DAYS_PER_YEAR))
+    return float(mean_active / tracking_error * np.sqrt(bars_per_year))
 
 
 def _max_consecutive_losses(trades: list[Trade]) -> int:
@@ -428,6 +479,7 @@ def _compute_data_quality(
     symbol_dfs: dict[str, pl.DataFrame],
     requested_start: str,
     requested_end: str,
+    timeframe: str = "daily",
 ) -> dict[str, Any]:
     """Compute data quality metadata from in-memory DataFrames.
 
@@ -437,6 +489,7 @@ def _compute_data_quality(
         symbol_dfs: Raw OHLCV DataFrames per symbol.
         requested_start: Requested start date (YYYY-MM-DD).
         requested_end: Requested end date (YYYY-MM-DD).
+        timeframe: Bar timeframe for expected row calculation.
 
     Returns:
         Dict with per-symbol and aggregate quality stats.
@@ -454,8 +507,8 @@ def _compute_data_quality(
         rows = len(df)
         total_rows += rows
 
-        # Expected trading days (~252/year)
-        expected = _expected_trading_days(requested_start, requested_end)
+        # Expected bars (trading days * bars per day)
+        expected = _expected_trading_days(requested_start, requested_end, timeframe)
         total_expected += expected
 
         coverage = round(rows / expected * 100, 1) if expected > 0 else 0.0
@@ -501,15 +554,20 @@ def _compute_data_quality(
     }
 
 
-def _expected_trading_days(start_str: str, end_str: str) -> int:
-    """Estimate expected trading days for a date range.
+def _expected_trading_days(
+    start_str: str,
+    end_str: str,
+    timeframe: str = "daily",
+) -> int:
+    """Estimate expected data points for a date range and timeframe.
 
     Args:
         start_str: Start date (YYYY-MM-DD).
         end_str: End date (YYYY-MM-DD).
+        timeframe: Bar timeframe (Phase 3.6: multiplied by bars per day).
 
     Returns:
-        Estimated trading days (calendar days × 252/365).
+        Estimated data points (trading days × bars per day).
 
     """
     if not start_str or not end_str:
@@ -520,4 +578,6 @@ def _expected_trading_days(start_str: str, end_str: str) -> int:
     except ValueError:
         return 0
     calendar_days = (end - start).days
-    return max(0, int(calendar_days * TRADING_DAYS_PER_YEAR / 365.25))
+    trading_days = max(0, int(calendar_days * TRADING_DAYS_PER_YEAR / 365.25))
+    bpd = BARS_PER_DAY.get(timeframe, 1)
+    return trading_days * bpd

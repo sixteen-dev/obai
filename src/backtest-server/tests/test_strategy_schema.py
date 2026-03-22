@@ -60,18 +60,18 @@ class TestOperand:
         assert op.validate() == []
 
     def test_empty_operand(self) -> None:
-        """Operand with neither value should error."""
+        """Operand with no value should error."""
         op = Operand()
         errors = op.validate()
         assert len(errors) == 1
-        assert "either" in errors[0]
+        assert "must have one of" in errors[0]
 
     def test_both_operand(self) -> None:
-        """Operand with both values should error."""
+        """Operand with multiple values should error."""
         op = Operand(indicator="sma", constant=50.0)
         errors = op.validate()
         assert len(errors) == 1
-        assert "both" in errors[0]
+        assert "exactly one" in errors[0]
 
 
 class TestCondition:
