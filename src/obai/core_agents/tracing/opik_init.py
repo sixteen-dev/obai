@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import urllib.error
+import urllib.request
 
 from agents import set_trace_processors
 
@@ -77,6 +79,19 @@ def init_opik() -> bool:
     opik_url = config.opik_url.rstrip("/")
     api_url = f"{opik_url}/api"
     os.environ.setdefault("OPIK_URL_OVERRIDE", api_url)
+
+    # Fast health check (2s timeout) before calling opik.configure(),
+    # which has a ~16s internal timeout when the server is unreachable.
+    try:
+        req = urllib.request.Request(f"{opik_url}/health", method="GET")  # noqa: S310
+        urllib.request.urlopen(req, timeout=2)  # noqa: S310
+    except (urllib.error.URLError, TimeoutError, OSError):
+        logger.warning(
+            "Opik server unreachable at %s — tracing disabled. "
+            "Start with: docker compose -f infra/opik/docker-compose.yml up -d",
+            opik_url,
+        )
+        return False
 
     # Suppress Opik's direct prints ("OPIK: Configuration completed...",
     # "OPIK: Started logging traces...") and its own logger noise.

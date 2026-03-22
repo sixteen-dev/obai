@@ -19,16 +19,23 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients.fmp_client import FMPClient
 from .config import Settings, load_settings
+from .data.db import DuckDBManager
 from .data.downloader import DataDownloader
 from .data.store import DataStore
 from .engine.backtester import BacktestConfig, run_backtest, run_multi_symbol_backtest
 from .engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
 from .engine.indicators import INDICATOR_REGISTRY, compute_indicators, get_supported_indicators
 from .engine.metrics import compute_metrics
+from .engine.session import session_end as _session_end
 from .engine.signals import generate_signals
 from .jobs import JobStatus, JobStore
 from .logging_config import configure_logging, get_logger
-from .models.strategy import IndicatorConfig, StrategyDefinition
+from .models.strategy import (
+    BARS_PER_DAY,
+    SUPPORTED_TIMEFRAMES,
+    IndicatorConfig,
+    StrategyDefinition,
+)
 from .response_utils import format_api_error
 
 logger = get_logger(__name__)
@@ -37,6 +44,7 @@ mcp = FastMCP("backtest-server", version=__version__)
 
 # Global state
 _fmp_client: FMPClient | None = None
+_db_manager: DuckDBManager | None = None
 _data_store: DataStore | None = None
 _downloader: DataDownloader | None = None
 _cache: BacktestCache | None = None
@@ -245,18 +253,23 @@ async def backtest_download_data_tool(
     symbols: list[str],
     start_date: str,
     end_date: str,
+    timeframe: str = "daily",
 ) -> dict[str, Any]:
-    """Download OHLCV data from FMP and store as Parquet.
+    """Download OHLCV data from FMP and store in DuckDB.
 
     Args:
         symbols: List of stock ticker symbols.
         start_date: Start date in YYYY-MM-DD format.
         end_date: End date in YYYY-MM-DD format.
+        timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
 
     Returns:
         Summary of downloaded data per symbol.
 
     """
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        return {"isError": True, "error": f"Unsupported timeframe '{timeframe}'"}
+
     downloader = _get_downloader()
     results: dict[str, Any] = {}
 
@@ -266,9 +279,11 @@ async def backtest_download_data_tool(
                 symbol,
                 start_date,
                 end_date,
+                timeframe=timeframe,
             )
             results[symbol] = {
                 "rows": len(df),
+                "timeframe": timeframe,
                 "status": "downloaded",
             }
         except Exception as exc:
@@ -295,32 +310,160 @@ async def backtest_download_data_tool(
 )
 async def backtest_list_available_data_tool(
     symbols: list[str] | None = None,
+    timeframe: str | None = None,
 ) -> dict[str, Any]:
     """Check what OHLCV data is stored locally.
 
+    Design doc: Phase 2.4 — updated for per-timeframe data.
+
     Args:
         symbols: Optional filter list. If None, lists all.
+        timeframe: Optional timeframe filter. If None, shows all timeframes.
 
     Returns:
-        Available data per symbol with date ranges.
+        Available data per symbol with date ranges, grouped by timeframe.
 
     """
     store = _get_data_store()
-    available = store.list_available_symbols()
-
-    if symbols is not None:
-        available = [s for s in available if s in symbols]
+    timeframes = [timeframe] if timeframe else sorted(SUPPORTED_TIMEFRAMES)
 
     result: dict[str, Any] = {}
-    for sym in available:
-        date_range = store.get_date_range(sym)
-        if date_range:
-            result[sym] = {
-                "start_date": date_range[0].isoformat(),
-                "end_date": date_range[1].isoformat(),
-            }
+    for tf in timeframes:
+        available = store.list_available_symbols(timeframe=tf)
+        if symbols is not None:
+            available = [s for s in available if s in symbols]
+
+        for sym in available:
+            date_range = store.get_date_range(sym, timeframe=tf)
+            if date_range:
+                if sym not in result:
+                    result[sym] = {}
+                result[sym][tf] = {
+                    "start_date": date_range[0].isoformat(),
+                    "end_date": date_range[1].isoformat(),
+                }
 
     return {"symbols": result, "total": len(result)}
+
+
+# --- Tool 9: Manage Storage ---
+
+
+@mcp.tool(
+    annotations={
+        "title": "Manage Data Storage",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def backtest_manage_storage_tool(  # noqa: PLR0911
+    action: str,
+    timeframe: str | None = None,
+    older_than_days: int | None = None,
+) -> dict[str, Any]:
+    """Manage DuckDB data storage — check status or prune old data.
+
+    Design doc: Phase 2.4.
+
+    Args:
+        action: "status" to report DB stats, "prune" to delete old data.
+        timeframe: Timeframe to prune (required for prune action).
+        older_than_days: Delete data older than this many days (required for prune).
+
+    Returns:
+        Storage status or prune results.
+
+    """
+    store = _get_data_store()
+
+    if action == "status":
+        db_size = store.db.db_size_bytes()
+        max_size = _settings.max_db_size_gb * 1_073_741_824 if _settings else 5 * 1_073_741_824
+        utilization = db_size / max_size if max_size > 0 else 0.0
+
+        timeframe_stats: dict[str, Any] = {}
+        for tf in sorted(SUPPORTED_TIMEFRAMES):
+            syms = store.list_available_symbols(timeframe=tf)
+            if syms:
+                timeframe_stats[tf] = {
+                    "symbols": len(syms),
+                }
+
+        return {
+            "db_size_mb": round(db_size / 1_048_576, 2),
+            "max_size_gb": _settings.max_db_size_gb if _settings else 5.0,
+            "utilization_pct": round(utilization * 100, 1),
+            "timeframes": timeframe_stats,
+        }
+
+    if action == "prune":
+        if not timeframe:
+            return {"isError": True, "error": "timeframe required for prune action"}
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            return {"isError": True, "error": f"Unsupported timeframe '{timeframe}'"}
+        if not older_than_days or older_than_days <= 0:
+            return {"isError": True, "error": "older_than_days must be positive"}
+
+        cutoff = datetime.now() - timedelta(days=older_than_days)
+
+        try:
+            # Count rows to delete
+            count_result = store.db.conn.execute(
+                "SELECT COUNT(*) FROM ohlcv WHERE timeframe = $1 AND timestamp < $2",
+                [timeframe, cutoff],
+            ).fetchone()
+            count = count_result[0] if count_result else 0
+
+            # Delete old data + fix _meta — all under write lock in one transaction
+            await store.db.execute_write_many(
+                [
+                    (
+                        "DELETE FROM ohlcv WHERE timeframe = $1 AND timestamp < $2",
+                        [timeframe, cutoff],
+                    ),
+                    # Remove _meta for symbols with no remaining rows
+                    (
+                        """DELETE FROM _meta
+                        WHERE timeframe = $1
+                          AND symbol NOT IN (
+                              SELECT DISTINCT symbol FROM ohlcv WHERE timeframe = $1
+                          )""",
+                        [timeframe],
+                    ),
+                    # Update _meta for symbols that still have rows
+                    (
+                        """UPDATE _meta SET
+                            first_timestamp = sub.min_ts,
+                            last_timestamp = sub.max_ts,
+                            row_count = sub.cnt,
+                            last_refreshed = NOW()
+                        FROM (
+                            SELECT symbol,
+                                   MIN(timestamp) as min_ts,
+                                   MAX(timestamp) as max_ts,
+                                   COUNT(*) as cnt
+                            FROM ohlcv WHERE timeframe = $1
+                            GROUP BY symbol
+                        ) sub
+                        WHERE _meta.symbol = sub.symbol AND _meta.timeframe = $1""",
+                        [timeframe],
+                    ),
+                ]
+            )
+        except Exception as exc:
+            logger.exception("prune_failed", timeframe=timeframe)
+            return {"isError": True, "error": f"Prune failed: {format_api_error(exc)}"}
+
+        return {
+            "action": "prune",
+            "timeframe": timeframe,
+            "cutoff_date": cutoff.isoformat(),
+            "rows_deleted": count,
+        }
+
+    return {"isError": True, "error": f"Unknown action: {action}. Use 'status' or 'prune'."}
 
 
 # --- Tool 6: Get Trade Log ---
@@ -480,9 +623,10 @@ def _build_cache_key(strategy: StrategyDefinition) -> str:
     """Build cache key from strategy + data fingerprint."""
     store = _get_data_store()
     symbols = strategy.universe.symbols
+    timeframe = strategy.data_config.timeframe
     mtimes: dict[str, float] = {}
     for sym in symbols:
-        mtime = store.get_last_modified(sym)
+        mtime = store.get_last_modified(sym, timeframe=timeframe)
         if mtime is not None:
             mtimes[sym] = mtime
 
@@ -490,7 +634,8 @@ def _build_cache_key(strategy: StrategyDefinition) -> str:
         symbols=symbols,
         start_date=strategy.data_config.start_date,
         end_date=strategy.data_config.end_date,
-        parquet_mtimes=mtimes,
+        data_mtimes=mtimes,
+        timeframe=timeframe,
     )
     return make_cache_key(strategy.cache_key(), fingerprint)
 
@@ -518,6 +663,7 @@ async def _run_sync_backtest(
         symbol_dfs=exec_result.symbol_dfs,
         requested_start=strategy.data_config.start_date,
         requested_end=strategy.data_config.end_date,
+        timeframe=strategy.data_config.timeframe,
     )
     result.warnings = exec_result.warnings
 
@@ -545,6 +691,12 @@ async def _run_sync_backtest(
     output["cache_hit"] = False
     if train_test is not None:
         output["train_test_split"] = train_test
+
+    # Surface critical warnings at top level so the agent can't miss them
+    critical = [w for w in result.warnings if w.startswith(("CRITICAL", "DATA GAP"))]
+    if critical:
+        output["⚠️ DATA_WARNING"] = critical[0]
+
     return output
 
 
@@ -553,18 +705,36 @@ def _compute_train_test_split(
     trades: list[Any],
     strategy: StrategyDefinition,
 ) -> dict[str, Any] | None:
-    """Compute separate train/test metrics if train_end_date is set."""
+    """Compute separate train/test metrics if train_end_date is set.
+
+    Phase 3.8: datetime-aware boundary for intraday. For intraday data,
+    the split boundary is end-of-session on the train_end date. Trade
+    bucketing uses parsed datetime comparison, not lexical strings.
+    """
     train_end = strategy.data_config.get_train_end()
     if equity_df is None or not isinstance(equity_df, pl.DataFrame):
         return None
 
-    train_eq = equity_df.filter(pl.col("date") <= train_end)
-    test_eq = equity_df.filter(pl.col("date") > train_end)
+    timeframe = strategy.data_config.timeframe
+
+    # For intraday, convert split boundary to session close datetime
+    # so all bars on the split date are included in the train set
+    if timeframe != "daily":
+        train_end_dt = _session_end(train_end).replace(tzinfo=None)
+        train_eq = equity_df.filter(pl.col("date") <= train_end_dt)
+        test_eq = equity_df.filter(pl.col("date") > train_end_dt)
+    else:
+        train_eq = equity_df.filter(pl.col("date") <= train_end)
+        test_eq = equity_df.filter(pl.col("date") > train_end)
 
     if train_eq.is_empty() or test_eq.is_empty():
         return None
 
-    train_end_str = train_end.isoformat()
+    # Trade bucketing: for intraday, use the session-end datetime string
+    # so trades on the split date are correctly included in train set.
+    # ISO datetime strings ("2024-06-15T16:00:00") sort after date strings
+    # ("2024-06-15"), so we must use the same format as Trade.exit_date.
+    train_end_str = train_end_dt.isoformat() if timeframe != "daily" else train_end.isoformat()
     train_trades = [t for t in trades if t.exit_date <= train_end_str]
     test_trades = [t for t in trades if t.exit_date > train_end_str]
 
@@ -573,12 +743,14 @@ def _compute_train_test_split(
         train_trades,
         f"{strategy.name} (train)",
         strategy.universe.symbols,
+        timeframe=timeframe,
     )
     test_result = compute_metrics(
         test_eq,
         test_trades,
         f"{strategy.name} (test)",
         strategy.universe.symbols,
+        timeframe=timeframe,
     )
 
     return {
@@ -586,6 +758,81 @@ def _compute_train_test_split(
         "train": train_result.to_dict(),
         "test": test_result.to_dict(),
     }
+
+
+_LOW_COVERAGE_THRESHOLD = 0.5  # 50%
+_CRITICAL_COVERAGE_THRESHOLD = 0.1  # 10%
+
+
+def _check_data_coverage(
+    symbol_dfs: dict[str, Any],
+    requested_start: str,
+    requested_end: str,
+    timeframe: str,
+) -> list[str]:
+    """Check if downloaded data covers the requested range.
+
+    Returns prominent warnings when FMP returned significantly less data
+    than requested — e.g., FMP plan limits on intraday history.
+
+    Args:
+        symbol_dfs: Downloaded DataFrames per symbol.
+        requested_start: Requested start date.
+        requested_end: Requested end date.
+        timeframe: Bar timeframe.
+
+    Returns:
+        List of warning strings (empty if coverage is adequate).
+
+    """
+    warnings: list[str] = []
+    req_start = date.fromisoformat(requested_start)
+    req_end = date.fromisoformat(requested_end)
+    req_days = (req_end - req_start).days
+
+    if req_days <= 0:
+        return warnings
+
+    for symbol, df in symbol_dfs.items():
+        if df.is_empty() or "date" not in df.columns:
+            warnings.append(
+                f"DATA GAP: {symbol} — no {timeframe} data returned by FMP. "
+                f"Check your FMP plan's intraday history limits."
+            )
+            continue
+
+        actual_first = df["date"].min()
+        actual_last = df["date"].max()
+
+        # Extract dates for comparison
+        if isinstance(actual_first, datetime):
+            first_date = actual_first.date()
+            last_date = actual_last.date()
+        elif isinstance(actual_first, date):
+            first_date = actual_first
+            last_date = actual_last
+        else:
+            continue
+
+        actual_days = (last_date - first_date).days
+        coverage = actual_days / req_days if req_days > 0 else 1.0
+
+        if coverage < _CRITICAL_COVERAGE_THRESHOLD:
+            warnings.append(
+                f"CRITICAL DATA GAP: {symbol} {timeframe} — requested {req_days} days "
+                f"({requested_start} to {requested_end}) but FMP only returned "
+                f"{actual_days} days ({first_date} to {last_date}), {len(df)} bars. "
+                f"Coverage: {coverage:.0%}. Your FMP plan likely limits intraday history. "
+                f"Results are NOT statistically meaningful."
+            )
+        elif coverage < _LOW_COVERAGE_THRESHOLD:
+            warnings.append(
+                f"LOW DATA COVERAGE: {symbol} {timeframe} — requested {req_days} days "
+                f"but FMP returned {actual_days} days ({len(df)} bars). "
+                f"Coverage: {coverage:.0%}. Consider shortening the date range."
+            )
+
+    return warnings
 
 
 @dataclass
@@ -604,15 +851,25 @@ async def _execute_strategy(
 ) -> _ExecutionResult:
     """Execute a full strategy: download → indicators → signals → backtest."""
     downloader = _get_downloader()
+    timeframe = strategy.data_config.timeframe
     symbol_dfs = await downloader.ensure_data(
         symbols=strategy.universe.symbols,
         start_date=strategy.data_config.start_date,
         end_date=strategy.data_config.end_date,
+        timeframe=timeframe,
     )
 
     if not symbol_dfs:
         msg = "No data available for any symbol"
         raise ValueError(msg)
+
+    # Check data coverage — warn prominently if FMP returned far less than requested
+    data_warnings = _check_data_coverage(
+        symbol_dfs,
+        strategy.data_config.start_date,
+        strategy.data_config.end_date,
+        timeframe,
+    )
 
     # Load benchmark data if configured
     benchmark_df = None
@@ -622,6 +879,7 @@ async def _execute_strategy(
             symbols=[benchmark_sym],
             start_date=strategy.data_config.start_date,
             end_date=strategy.data_config.end_date,
+            timeframe=timeframe,
         )
         if benchmark_sym in bench_dfs:
             benchmark_df = bench_dfs[benchmark_sym]
@@ -629,9 +887,10 @@ async def _execute_strategy(
     config = BacktestConfig(
         slippage_pct=0.1,
         commission_pct=0.1,
+        timeframe=timeframe,
     )
 
-    all_warnings: list[str] = []
+    all_warnings: list[str] = list(data_warnings)
 
     if len(symbol_dfs) == 1:
         symbol = next(iter(symbol_dfs))
@@ -750,14 +1009,19 @@ def _estimate_runtime(strategy: StrategyDefinition) -> float:
     end = date.fromisoformat(strategy.data_config.end_date)
     year_span = (end - start).days / 365.25
 
-    base = symbol_count * year_span * _settings.estimate_symbol_year_weight
+    # Phase 4.2: multiply by bars-per-day for intraday
+    bar_multiplier = BARS_PER_DAY.get(strategy.data_config.timeframe, 1)
+    base = symbol_count * year_span * bar_multiplier * _settings.estimate_symbol_year_weight
 
     indicator_cost = (
         sum(_indicator_weight(ind) for ind in strategy.indicators)
         * _settings.estimate_indicator_weight
     )
 
-    stale_count = _get_downloader().count_stale(strategy.universe.symbols)
+    stale_count = _get_downloader().count_stale(
+        strategy.universe.symbols,
+        timeframe=strategy.data_config.timeframe,
+    )
     download_penalty = stale_count * _settings.estimate_download_penalty
 
     return base + indicator_cost + download_penalty
@@ -809,8 +1073,11 @@ async def health_check(_request: Request) -> JSONResponse:
 
 
 def bootstrap() -> Settings:
-    """Initialize all server components (sync)."""
-    global _fmp_client, _data_store, _downloader, _cache, _job_store, _settings  # noqa: PLW0603
+    """Initialize all server components (sync).
+
+    Design doc: Phase 1.5 — DuckDBManager replaces direct Parquet DataStore.
+    """
+    global _fmp_client, _db_manager, _data_store, _downloader, _cache, _job_store, _settings  # noqa: PLW0603
 
     logger.info("bootstrap_started", server="backtest-server")
     settings = load_settings()
@@ -818,7 +1085,15 @@ def bootstrap() -> Settings:
 
     _settings = settings
     _fmp_client = FMPClient(settings=settings)
-    _data_store = DataStore(data_dir=settings.backtest_data_dir)
+
+    # DuckDB-backed data store (Phase 1.2 + 1.3)
+    _db_manager = DuckDBManager(
+        db_path=settings.duckdb_path,
+        memory_limit=settings.duckdb_memory_limit,
+    )
+    _db_manager.connect()
+    _data_store = DataStore(db=_db_manager)
+
     _downloader = DataDownloader(
         fmp_client=_fmp_client,
         data_store=_data_store,
@@ -832,7 +1107,7 @@ def bootstrap() -> Settings:
 
     logger.info(
         "bootstrap_complete",
-        data_dir=settings.backtest_data_dir,
+        duckdb_path=settings.duckdb_path,
         cache_dir=settings.backtest_cache_dir,
     )
     return settings
@@ -851,14 +1126,19 @@ async def main() -> None:
         ),
     ]
 
-    await mcp.run_async(
-        transport=settings.transport,
-        host=settings.host,
-        port=settings.port,
-        path="/mcp",
-        stateless_http=True,
-        middleware=cors_middleware,
-    )
+    try:
+        await mcp.run_async(
+            transport=settings.transport,
+            host=settings.host,
+            port=settings.port,
+            path="/mcp",
+            stateless_http=True,
+            middleware=cors_middleware,
+        )
+    finally:
+        # Graceful shutdown: checkpoint and close DuckDB (Phase 1.2)
+        if _db_manager is not None:
+            _db_manager.close()
 
 
 if __name__ == "__main__":

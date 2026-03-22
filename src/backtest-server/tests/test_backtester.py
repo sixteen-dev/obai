@@ -14,6 +14,8 @@ def _make_signal_df(
     prices: list[float],
     entries: list[bool],
     exits: list[bool],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
 ) -> pl.DataFrame:
     """Create a DataFrame with signals for testing."""
     n = len(prices)
@@ -22,6 +24,8 @@ def _make_signal_df(
         {
             "date": dates,
             "open": prices,
+            "high": highs if highs else [p + 1.0 for p in prices],
+            "low": lows if lows else [p - 1.0 for p in prices],
             "close": prices,
             "entry_signal": entries,
             "exit_signal": exits,

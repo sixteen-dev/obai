@@ -1,4 +1,7 @@
-"""Signal generation engine — converts rules into entry/exit signals."""
+"""Signal generation engine — converts rules into entry/exit signals.
+
+Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phase 4.1.
+"""
 
 from __future__ import annotations
 
@@ -63,6 +66,9 @@ def _build_ruleset_expr(ruleset: RuleSet) -> pl.Expr:
 def _build_condition_expr(condition: Condition) -> pl.Expr:
     """Build a Polars expression from a single Condition.
 
+    Phase 4.1: Handles after_time/before_time operators for
+    session-aware intraday rules.
+
     Args:
         condition: Comparison condition with left, operator, right.
 
@@ -84,6 +90,10 @@ def _build_condition_expr(condition: Condition) -> pl.Expr:
         return (left.shift(1) < right.shift(1)) & (left > right)
     if condition.operator == "crosses_below":
         return (left.shift(1) > right.shift(1)) & (left < right)
+    if condition.operator == "after_time":
+        return left >= right
+    if condition.operator == "before_time":
+        return left < right
     msg = f"Unsupported operator: {condition.operator}"
     raise ValueError(msg)
 
@@ -91,11 +101,15 @@ def _build_condition_expr(condition: Condition) -> pl.Expr:
 def _resolve_operand(operand: Operand) -> pl.Expr:
     """Resolve an operand to a Polars expression.
 
+    Phase 4.1: Handles time_of_day and time operands for intraday.
+    time_of_day="current" extracts hour + minute/60 from the date column.
+    time="HH:MM" converts to a numeric literal for comparison.
+
     Args:
-        operand: Either an indicator reference or a constant value.
+        operand: Indicator reference, constant, or time operand.
 
     Returns:
-        Polars expression (column reference or literal).
+        Polars expression (column reference, literal, or time extraction).
 
     Raises:
         ValueError: If operand has no value set.
@@ -105,5 +119,32 @@ def _resolve_operand(operand: Operand) -> pl.Expr:
         return pl.col(operand.indicator)
     if operand.constant is not None:
         return pl.lit(operand.constant)
-    msg = "Operand must have either 'indicator' or 'constant'"
+    if operand.time_of_day is not None:
+        # Extract hour + fractional minute from the date/datetime column
+        # e.g., 10:30 → 10.5, 15:45 → 15.75
+        return pl.col("date").dt.hour() + pl.col("date").dt.minute() / 60.0
+    if operand.time is not None:
+        # Parse "HH:MM" to numeric for comparison with time_of_day
+        return pl.lit(_time_str_to_numeric(operand.time))
+    msg = "Operand must have one of: indicator, constant, time_of_day, time"
     raise ValueError(msg)
+
+
+def _time_str_to_numeric(time_str: str) -> float:
+    """Convert "HH:MM" string to numeric hours (e.g., "10:30" → 10.5).
+
+    Args:
+        time_str: Time string in HH:MM format.
+
+    Returns:
+        Numeric hour value.
+
+    Raises:
+        ValueError: If format is invalid.
+
+    """
+    parts = time_str.split(":")
+    if len(parts) != 2:  # noqa: PLR2004
+        msg = f"Invalid time format '{time_str}', expected HH:MM"
+        raise ValueError(msg)
+    return int(parts[0]) + int(parts[1]) / 60.0

@@ -1,15 +1,19 @@
-"""Core backtest loop — vectorized with numpy for stop-loss/take-profit."""
+"""Core backtest loop — vectorized with numpy, intrabar stop/TP, EOD close.
+
+Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phases 3.2-3.5.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import numpy as np
 import polars as pl
 
 from ..models.strategy import PositionSizing, RiskManagement
+from .session import is_after_time, is_last_bar_of_session, parse_time_str
 
 
 @dataclass
@@ -23,11 +27,16 @@ class Trade:
     exit_price: float
     return_pct: float
     holding_days: int
-    exit_reason: str  # "signal", "stop_loss", "take_profit"
+    exit_reason: str  # "signal", "stop_loss", "take_profit", "eod_close"
+    holding_minutes: int = 0  # Phase 3.2: intraday precision
+    timeframe: str = "daily"  # Phase 3.2: record timeframe
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict."""
-        return {
+        """Serialize to dict.
+
+        Conditionally includes intraday fields so daily output is unchanged.
+        """
+        d: dict[str, Any] = {
             "symbol": self.symbol,
             "entry_date": self.entry_date,
             "entry_price": round(self.entry_price, 2),
@@ -37,6 +46,10 @@ class Trade:
             "holding_days": self.holding_days,
             "exit_reason": self.exit_reason,
         }
+        if self.timeframe != "daily":
+            d["holding_minutes"] = self.holding_minutes
+            d["timeframe"] = self.timeframe
+        return d
 
 
 @dataclass
@@ -46,6 +59,7 @@ class BacktestConfig:
     symbol: str = ""
     slippage_pct: float = 0.1
     commission_pct: float = 0.1
+    timeframe: str = "daily"  # Phase 3: threaded through
 
 
 def run_backtest(
@@ -59,7 +73,7 @@ def run_backtest(
     Signals on close[t], trades execute on open[t+1] (no look-ahead bias).
 
     Args:
-        df: DataFrame with date, open, close, entry_signal, exit_signal columns.
+        df: DataFrame with date, open, high, low, close, entry_signal, exit_signal.
         position_sizing: Position sizing configuration.
         risk_management: Risk management parameters.
         config: Optional backtest config (symbol, slippage, commission).
@@ -82,6 +96,8 @@ def _execute_backtest(
     market = _MarketData(
         dates=df["date"].to_list(),
         opens=df["open"].to_numpy().astype(np.float64),
+        highs=df["high"].to_numpy().astype(np.float64),
+        lows=df["low"].to_numpy().astype(np.float64),
         closes=df["close"].to_numpy().astype(np.float64),
         entries=df["entry_signal"].to_numpy(),
         exits=df["exit_signal"].to_numpy(),
@@ -91,16 +107,22 @@ def _execute_backtest(
     equity = np.ones(n, dtype=np.float64) * 100_000.0
     trades: list[Trade] = []
 
+    # Parse no_entry_after cutoff time if configured
+    no_entry_cutoff = None
+    if risk_management.no_entry_after:
+        no_entry_cutoff = parse_time_str(risk_management.no_entry_after)
+
     state = _BacktestState(
         stop_loss=risk_management.stop_loss_pct,
         take_profit=risk_management.take_profit_pct,
         position_size=position_sizing.max_position_pct / 100.0,
+        close_eod=risk_management.close_eod,
     )
 
     for i in range(1, n):
         equity[i] = equity[i - 1]
         if not state.in_position:
-            _check_entry(state, market, equity, i, cfg.slippage_pct)
+            _check_entry(state, market, equity, i, cfg, no_entry_cutoff)
         else:
             _check_exit(state, market, equity, trades, i, cfg)
 
@@ -119,6 +141,8 @@ class _MarketData:
 
     dates: list[Any]
     opens: np.ndarray[Any, np.dtype[np.float64]]
+    highs: np.ndarray[Any, np.dtype[np.float64]]
+    lows: np.ndarray[Any, np.dtype[np.float64]]
     closes: np.ndarray[Any, np.dtype[np.float64]]
     entries: np.ndarray[Any, np.dtype[Any]]
     exits: np.ndarray[Any, np.dtype[Any]]
@@ -131,29 +155,39 @@ class _BacktestState:
     stop_loss: float | None
     take_profit: float | None
     position_size: float
+    close_eod: bool = False
     in_position: bool = False
     entry_price: float = 0.0
     entry_idx: int = 0
     last_price: float = 0.0
 
 
-def _check_entry(
+def _check_entry(  # noqa: PLR0913
     state: _BacktestState,
     market: _MarketData,
     equity: np.ndarray[Any, np.dtype[np.float64]],
     idx: int,
-    slippage_pct: float,
+    cfg: BacktestConfig,
+    no_entry_cutoff: Any | None,
 ) -> None:
     """Check and execute entry signal from previous bar."""
-    if market.entries[idx - 1]:
-        state.entry_price = float(market.opens[idx]) * (1 + slippage_pct / 100)
-        state.entry_idx = idx
-        state.in_position = True
-        state.last_price = state.entry_price
-        # Entry-day PnL: entry_price → close[entry_day]
-        day_pnl = (market.closes[idx] - state.entry_price) / state.entry_price
-        equity[idx] += equity[idx - 1] * state.position_size * day_pnl
-        state.last_price = float(market.closes[idx])
+    if not market.entries[idx - 1]:
+        return
+
+    # Phase 3.4: no_entry_after time filter
+    if no_entry_cutoff is not None:
+        bar_time = market.dates[idx]
+        if isinstance(bar_time, datetime) and is_after_time(bar_time, no_entry_cutoff):
+            return
+
+    state.entry_price = float(market.opens[idx]) * (1 + cfg.slippage_pct / 100)
+    state.entry_idx = idx
+    state.in_position = True
+    state.last_price = state.entry_price
+    # Entry-day PnL: entry_price → close[entry_day]
+    day_pnl = (market.closes[idx] - state.entry_price) / state.entry_price
+    equity[idx] += equity[idx - 1] * state.position_size * day_pnl
+    state.last_price = float(market.closes[idx])
 
 
 def _check_exit(  # noqa: PLR0913
@@ -165,8 +199,7 @@ def _check_exit(  # noqa: PLR0913
     cfg: BacktestConfig,
 ) -> None:
     """Check exit conditions and update equity."""
-    ret = (market.closes[idx] - state.entry_price) / state.entry_price
-    exit_reason = _get_exit_reason(state, ret, market.exits, idx)
+    exit_reason = _get_exit_reason(state, market, idx)
 
     if exit_reason:
         _record_trade(state, market, equity, trades, idx, exit_reason, cfg)
@@ -178,17 +211,36 @@ def _check_exit(  # noqa: PLR0913
 
 def _get_exit_reason(
     state: _BacktestState,
-    current_return: Any,
-    exits: np.ndarray[Any, np.dtype[Any]],
+    market: _MarketData,
     idx: int,
 ) -> str:
-    """Determine exit reason from stop/take-profit/signal."""
-    if state.stop_loss and current_return <= -(state.stop_loss / 100):
-        return "stop_loss"
-    if state.take_profit and current_return >= (state.take_profit / 100):
-        return "take_profit"
-    if exits[idx - 1]:
+    """Determine exit reason from stop/take-profit/signal/EOD.
+
+    Phase 3.3: Uses high/low for intrabar stop/TP detection (long-only).
+    Stop checked first — conservative assumption (adverse scenario wins).
+    """
+    # Intrabar stop-loss check using low (worst case for longs)
+    if state.stop_loss:
+        worst_price = float(market.lows[idx])
+        worst_return = (worst_price - state.entry_price) / state.entry_price
+        if worst_return <= -(state.stop_loss / 100):
+            return "stop_loss"
+
+    # Intrabar take-profit check using high (best case for longs)
+    if state.take_profit:
+        best_price = float(market.highs[idx])
+        best_return = (best_price - state.entry_price) / state.entry_price
+        if best_return >= (state.take_profit / 100):
+            return "take_profit"
+
+    # Signal-based exit
+    if market.exits[idx - 1]:
         return "signal"
+
+    # Phase 3.4: forced EOD close
+    if state.close_eod and is_last_bar_of_session(idx, market.dates):
+        return "eod_close"
+
     return ""
 
 
@@ -201,11 +253,15 @@ def _record_trade(  # noqa: PLR0913
     exit_reason: str,
     cfg: BacktestConfig,
 ) -> None:
-    """Record a completed trade and update equity."""
-    if exit_reason == "signal":
-        exit_price = float(market.opens[idx]) * (1 - cfg.slippage_pct / 100)
-    else:
-        exit_price = float(market.closes[idx])
+    """Record a completed trade with proper fill model.
+
+    Phase 3.3 fill model:
+    - signal: open[idx] with slippage (unchanged)
+    - stop_loss: stop level, or open[idx] if gap-through (worse fill)
+    - take_profit: target level, or open[idx] if gap-through (better fill)
+    - eod_close: close[idx] (session close price)
+    """
+    exit_price = _compute_exit_price(state, market, idx, exit_reason, cfg)
 
     # Full trade return (for Trade record only)
     trade_return = (exit_price - state.entry_price) / state.entry_price
@@ -215,7 +271,13 @@ def _record_trade(  # noqa: PLR0913
     exit_day_pnl = (exit_price - state.last_price) / state.last_price
     exit_day_pnl -= cfg.commission_pct / 100 * 2
     equity[idx] += equity[idx - 1] * state.position_size * exit_day_pnl
-    holding = _compute_holding_days(market.dates, state.entry_idx, idx)
+
+    holding_days, holding_minutes = _compute_holding_period(
+        market.dates,
+        state.entry_idx,
+        idx,
+        cfg.timeframe,
+    )
 
     trades.append(
         Trade(
@@ -225,24 +287,90 @@ def _record_trade(  # noqa: PLR0913
             exit_date=_date_to_str(market.dates[idx]),
             exit_price=exit_price,
             return_pct=trade_return * 100,
-            holding_days=holding,
+            holding_days=holding_days,
             exit_reason=exit_reason,
+            holding_minutes=holding_minutes,
+            timeframe=cfg.timeframe,
         )
     )
     state.in_position = False
 
 
-def _compute_holding_days(
+def _compute_exit_price(  # noqa: PLR0913
+    state: _BacktestState,
+    market: _MarketData,
+    idx: int,
+    exit_reason: str,
+    cfg: BacktestConfig,
+) -> float:
+    """Compute fill price based on exit reason.
+
+    Design doc Phase 3.3 fill model table.
+
+    Args:
+        state: Current backtest state.
+        market: Market data arrays.
+        idx: Current bar index.
+        exit_reason: Why we're exiting.
+        cfg: Backtest configuration.
+
+    Returns:
+        Fill price for the exit.
+
+    """
+    if exit_reason == "signal":
+        return float(market.opens[idx]) * (1 - cfg.slippage_pct / 100)
+
+    if exit_reason == "stop_loss" and state.stop_loss:
+        stop_level = state.entry_price * (1 - state.stop_loss / 100)
+        # Gap-through: if open gaps below stop, fill at open (worse)
+        return min(stop_level, float(market.opens[idx]))
+
+    if exit_reason == "take_profit" and state.take_profit:
+        tp_level = state.entry_price * (1 + state.take_profit / 100)
+        # Gap-through: if open gaps above target, fill at open (better)
+        return max(tp_level, float(market.opens[idx]))
+
+    # eod_close and fallback: fill at session close price
+    return float(market.closes[idx])
+
+
+def _compute_holding_period(
     dates: list[Any],
     entry_idx: int,
     exit_idx: int,
-) -> int:
-    """Compute holding period in calendar days."""
-    entry_date = dates[entry_idx]
-    exit_date = dates[exit_idx]
-    if isinstance(exit_date, date) and isinstance(entry_date, date):
-        return (exit_date - entry_date).days
-    return exit_idx - entry_idx
+    timeframe: str = "daily",
+) -> tuple[int, int]:
+    """Compute holding period as (days, minutes).
+
+    Phase 3.5: timeframe-aware, not type-based. DuckDB stores daily bars
+    as TIMESTAMP (midnight), so isinstance(x, datetime) is True for both.
+
+    Args:
+        dates: List of date/datetime values.
+        entry_idx: Index of entry bar.
+        exit_idx: Index of exit bar.
+        timeframe: Bar timeframe.
+
+    Returns:
+        Tuple of (holding_days, holding_minutes).
+
+    """
+    entry_dt = dates[entry_idx]
+    exit_dt = dates[exit_idx]
+
+    # Intraday: compute both days and minutes
+    if timeframe != "daily" and isinstance(exit_dt, datetime) and isinstance(entry_dt, datetime):
+        delta = exit_dt - entry_dt
+        return delta.days, int(delta.total_seconds() / 60)
+
+    # Daily: only compute days
+    if isinstance(exit_dt, (date, datetime)) and isinstance(entry_dt, (date, datetime)):
+        exit_d = exit_dt.date() if isinstance(exit_dt, datetime) else exit_dt
+        entry_d = entry_dt.date() if isinstance(entry_dt, datetime) else entry_dt
+        return (exit_d - entry_d).days, 0
+
+    return exit_idx - entry_idx, 0
 
 
 def run_multi_symbol_backtest(
@@ -272,6 +400,7 @@ def run_multi_symbol_backtest(
             symbol=symbol,
             slippage_pct=cfg.slippage_pct,
             commission_pct=cfg.commission_pct,
+            timeframe=cfg.timeframe,
         )
         eq_curve, trades = run_backtest(
             df=sym_df,
@@ -297,7 +426,7 @@ def _combine_equity_curves(
     """Combine per-symbol equity curves into a single averaged curve."""
     combined = curves[0]
     for ec in curves[1:]:
-        combined = combined.join(ec, on="date", how="outer_coalesce")  # type: ignore[arg-type]  # polars stubs lag behind
+        combined = combined.join(ec, on="date", how="full", coalesce=True)
 
     equity_cols = [c for c in combined.columns if c.startswith("equity_")]
     return combined.with_columns(
@@ -309,6 +438,8 @@ def _combine_equity_curves(
 
 def _date_to_str(val: Any) -> str:
     """Convert a date value to ISO string."""
+    if isinstance(val, datetime):
+        return val.isoformat()
     if isinstance(val, date):
         return val.isoformat()
     return str(val)

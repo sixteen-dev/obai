@@ -20,6 +20,7 @@ from .tools import (
     get_company_profile,
     get_fundamentals,
     get_insider_trades,
+    get_insider_trading_statistics,
     get_revenue_segments,
     get_sec_filings,
     get_valuation_metrics,
@@ -398,18 +399,16 @@ async def fundamentals_get_insider_trades_tool(
     symbol: str,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Get insider trading activity for a company.
+    """Get individual insider transactions (who bought/sold, how many shares, at what price).
 
-    Retrieves transactions by corporate insiders (executives, directors, 10%+ shareholders).
-    Useful for sentiment analysis - insider buying often signals confidence,
-    while heavy selling may indicate concerns.
+    Use when you need to know WHICH insiders traded and the details of each transaction.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
-        limit: Number of trades to return (default: 20)
+        limit: Number of trades to return (default: 10)
 
     Returns:
-        Insider trade data including transaction type, shares, price, and insider role
+        Individual trades with insider name, role, transaction type, shares, and price
     """
     try:
         result = await get_insider_trades(symbol, limit)
@@ -419,6 +418,46 @@ async def fundamentals_get_insider_trades_tool(
             logger,
             e,
             context={"tool": "fundamentals_get_insider_trades_tool", "symbol": symbol},
+        )
+        return format_api_error(e, "FMP")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get Insider Trading Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def fundamentals_get_insider_trading_statistics_tool(
+    symbol: str,
+    limit: int = 4,
+) -> dict[str, Any]:
+    """Get quarterly insider buy/sell ratios and volume totals.
+
+    Use when you need the overall insider sentiment trend, not individual trades.
+    Key signal: acquiredDisposedRatio > 1 = insiders are net buyers (bullish).
+
+    Args:
+        symbol: Stock ticker symbol (e.g., 'AAPL')
+        limit: Number of most recent quarters (default: 4, max recommended: 8)
+
+    Returns:
+        Per-quarter aggregates: transaction counts, share volumes, and buy/sell ratio
+    """
+    try:
+        result = await get_insider_trading_statistics(symbol, limit)
+        return truncate_response(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "fundamentals_get_insider_trading_statistics_tool",
+                "symbol": symbol,
+            },
         )
         return format_api_error(e, "FMP")
 

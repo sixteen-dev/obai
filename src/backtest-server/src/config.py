@@ -38,9 +38,22 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0")  # noqa: S104
     port: int = Field(default=8007)
 
-    # Data Storage
+    # Data Storage (legacy Parquet path, kept for migration)
     backtest_data_dir: str = Field(default="./data/ohlcv")
     backtest_data_freshness_hours: int = Field(default=24)
+
+    # DuckDB Configuration
+    duckdb_path: str = Field(default="./data/backtest.duckdb")
+    duckdb_memory_limit: str = Field(default="4GB")
+
+    # Retention Limits (max years of history per timeframe)
+    max_daily_years: int = Field(default=30)
+    max_1hour_years: int = Field(default=5)
+    max_15min_years: int = Field(default=2)
+    max_5min_years: int = Field(default=2)
+
+    # Disk Budget
+    max_db_size_gb: float = Field(default=5.0, gt=0.0)
 
     # Cache Configuration
     backtest_cache_dir: str = Field(default="./data/cache")

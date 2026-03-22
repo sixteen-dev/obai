@@ -12,6 +12,7 @@ Determine if a user query is related to stock market research, investing, or fin
 - Market movers, sector performance
 - IPOs, mergers, acquisitions
 - Economic indicators affecting markets
+- Trading strategy design, backtesting, performance analysis
 - Portfolio analysis, asset allocation
 - Cryptocurrency markets (if specifically asked)
 - FX, rates, bonds, credit spreads, yield curves

@@ -128,9 +128,12 @@ User request: [original user request, preserved faithfully]
 Strategy context:
 - Universe: [tickers] (source: user or screener)
 - User objective: [momentum/mean-reversion/breakout/etc]
+- Timeframe: [daily/1hour/15min/5min — include if user mentions day trading, scalping, or intraday]
 - Constraints: [risk/horizon/preferences if provided]
 - Context: [summarized key findings from specialist outputs, if any]
 ```
+
+If the user mentions day trading, scalping, intraday, or short-term active trading, include `Timeframe: 5min` or `Timeframe: 15min` in the hand-off. The strategy agent supports intraday backtesting with session-aware rules (forced close at end-of-day, time-of-day entry filters).
 
 Hand-off rules:
 - Preserve the user's original request faithfully. Do not rewrite it into a different task.

@@ -1,6 +1,6 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 85 test cases across 5 active categories (A-E, F pending).
+# 93 test cases across 5 active categories (A-E, F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 #
 # Usage:
@@ -678,6 +678,67 @@ test_cases:
     query_type: strategy_error_bad_ticker
     expected_tools: [strategy_analysis]
     description: Invalid ticker in backtest - graceful error expected
+
+  # E.5 — Intraday Strategy & Backtesting
+
+  - id: E17
+    query: "I want to fade the opening spike on NVDA. Backtest a 5-min mean-reversion on the first hour — enter when RSI(14) drops below 25 after 9:45, exit on RSI crossing back above 50, flat by close. Tight stop, 1.5% max. Last year of data."
+    category: E
+    query_type: strategy_intraday_fade_open
+    expected_tools: [strategy_analysis]
+    description: Experienced fade-the-open setup with session timing, tight risk, forced EOD close
+    smoke: true
+
+  - id: E18
+    query: "Backtest a 15-min breakout strategy on QQQ and SPY — EMA 9 crossing above EMA 21 with momentum confirmation, but only take entries between 10:00 and 15:00. No overnight holds. 2% stop, 4% target. Compare both symbols side by side."
+    category: E
+    query_type: strategy_intraday_breakout_session
+    expected_tools: [strategy_analysis]
+    description: Multi-symbol intraday breakout with session window, forced flat EOD, explicit R:R
+
+  - id: E19
+    query: "I scalp semis on 5-min bars. Build me a momentum strategy for NVDA, AMD, and AVGO — I want entries only when RSI is above 60 and price is above the 50-bar EMA. Kill switch at 15:30, flat by close. Run it over the past 18 months."
+    category: E
+    query_type: strategy_intraday_momentum_scalp
+    expected_tools: [strategy_analysis]
+    description: Real scalping setup with momentum filters, kill switch time, multi-ticker semi universe
+
+  - id: E20
+    query: "How does a daily SMA 50/200 crossover on AAPL compare to the same logic on 15-minute bars over the past year? I want to see if the intraday version catches moves faster or just adds noise and whipsaws."
+    category: E
+    query_type: strategy_daily_vs_intraday
+    expected_tools: [strategy_analysis]
+    description: Cross-timeframe comparison - tests cache key differentiation and whether agent adjusts indicator periods
+
+  - id: E21
+    query: "Find me the most liquid large-cap tech names and build a 5-min mean-reversion strategy — RSI oversold with Bollinger band lower touch, exit on band midline. No entries in the first 15 minutes or last 30 minutes. 1% stop. I want to see if this edge is real or just curve-fitted noise."
+    category: E
+    query_type: strategy_intraday_screener_meanrev
+    expected_tools: [screener_lookup, strategy_analysis]
+    expected_sequence: [screener_lookup, strategy_analysis]
+    description: Realistic desk trader request - needs screener for liquid universe, intraday mean-reversion with band strategy, session avoidance windows, skepticism about overfitting
+
+  - id: E22
+    query: "What intraday data do we have loaded right now? I need to know if 5-min bars for TSLA and META are available before I waste time building a strategy."
+    category: E
+    query_type: strategy_data_availability
+    expected_tools: [strategy_analysis]
+    description: Practical data check before strategy work - uses list or storage management tool
+
+  - id: E23
+    query: "I trade the mid-day chop on SPY. Backtest this on 5-min bars: when price pulls back to the 20-bar EMA between 11:30 and 14:00, RSI below 40, enter long. Exit on RSI above 60 or at close. 0.8% stop. Past year."
+    category: E
+    query_type: strategy_intraday_midday_reversion
+    expected_tools: [strategy_analysis]
+    description: Session-specific mean-reversion during lunch hour — tests time-of-day window combined with indicator logic
+
+  - id: E24
+    query: "NVDA reports earnings next week. Build me a 5-min scalping strategy for the post-earnings session — I want to capture the initial momentum move. Tight stops, close everything EOD. Backtest it around the last 4 earnings dates."
+    category: E
+    query_type: strategy_intraday_earnings_scalp
+    expected_tools: [events_news_analysis, strategy_analysis]
+    expected_sequence: [events_news_analysis, strategy_analysis]
+    description: Event-driven intraday strategy - needs earnings dates from events agent, then intraday backtest around those windows
 
   # ─────────────────────────────────────────────
   # Category F: Session/Context (Multi-Turn)

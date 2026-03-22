@@ -46,6 +46,10 @@ class BacktestResult:
     beta: float
     information_ratio: float
 
+    # Intraday (Phase 3.7)
+    avg_holding_minutes: float = 0.0
+    timeframe: str = "daily"
+
     # Breakdown
     yearly_returns: dict[str, float] = field(default_factory=dict)
     symbol_returns: dict[str, float] = field(default_factory=dict)
@@ -85,7 +89,9 @@ class BacktestResult:
                 "profit_factor": self.profit_factor,
                 "avg_trade_return_pct": self.avg_trade_return_pct,
                 "avg_holding_days": self.avg_holding_days,
+                "avg_holding_minutes": self.avg_holding_minutes,
                 "max_consecutive_losses": self.max_consecutive_losses,
+                "timeframe": self.timeframe,
             },
             "benchmark": {
                 "benchmark_symbol": self.benchmark_symbol,
@@ -131,7 +137,9 @@ class BacktestResult:
             profit_factor=trading.get("profit_factor", 0.0),
             avg_trade_return_pct=trading.get("avg_trade_return_pct", 0.0),
             avg_holding_days=trading.get("avg_holding_days", 0.0),
+            avg_holding_minutes=trading.get("avg_holding_minutes", 0.0),
             max_consecutive_losses=trading.get("max_consecutive_losses", 0),
+            timeframe=trading.get("timeframe", "daily"),
             benchmark_symbol=bench.get("benchmark_symbol", ""),
             benchmark_return_pct=bench.get("benchmark_return_pct", 0.0),
             benchmark_cagr_pct=bench.get("benchmark_cagr_pct", 0.0),

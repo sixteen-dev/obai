@@ -11,6 +11,7 @@ from ..response_filters import (
     filter_financial_ratios,
     filter_financial_statement,
     filter_insider_trades,
+    filter_insider_trading_statistics,
     filter_key_metrics,
     filter_price_target,
     filter_revenue_segments,
@@ -559,6 +560,74 @@ async def get_insider_trades(
 
     except Exception as e:
         log_error(logger, e, context={"tool": "get_insider_trades", "symbol": symbol})
+        raise
+
+    finally:
+        await fmp.close()
+
+
+async def get_insider_trading_statistics(
+    symbol: str,
+    limit: int = 4,
+) -> dict[str, Any]:
+    """Get aggregated insider trading statistics by quarter.
+
+    Returns quarterly summaries of insider buying/selling activity including
+    transaction counts, volumes, and the acquired-to-disposed ratio. More
+    token-efficient than individual trades for gauging insider sentiment.
+
+    Args:
+        symbol: Stock ticker symbol
+        limit: Number of most recent quarters to return (default: 4)
+
+    Returns:
+        Quarterly insider trading statistics with buy/sell ratios
+
+    Raises:
+        httpx.HTTPError: If FMP API request fails
+    """
+    log_tool_invocation(
+        logger,
+        "get_insider_trading_statistics",
+        {"symbol": symbol, "limit": limit},
+    )
+
+    fmp = FMPClient()
+
+    try:
+        log_api_call(
+            logger,
+            "fmp",
+            "insider-trading/statistics",
+            {"symbol": symbol, "limit": limit},
+        )
+        data = await fmp.get_insider_trading_statistics(symbol, limit)
+
+        logger.info(
+            "insider_trading_statistics_fetched",
+            symbol=symbol,
+            records_count=len(data),
+        )
+        logger.info(
+            "tool_execution_complete",
+            tool="get_insider_trading_statistics",
+            symbol=symbol,
+        )
+
+        filtered_data = filter_insider_trading_statistics(data)
+
+        return {
+            "symbol": symbol,
+            "quarters": len(filtered_data),
+            "data": filtered_data,
+        }
+
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={"tool": "get_insider_trading_statistics", "symbol": symbol},
+        )
         raise
 
     finally:
