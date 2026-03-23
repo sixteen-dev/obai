@@ -25,9 +25,11 @@ from .data.store import DataStore
 from .engine.backtester import BacktestConfig, run_backtest, run_multi_symbol_backtest
 from .engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
 from .engine.indicators import INDICATOR_REGISTRY, compute_indicators, get_supported_indicators
-from .engine.metrics import compute_metrics
+from .engine.metrics import _expected_trading_days, compute_metrics
+from .engine.portfolio_backtester import run_portfolio_backtest
 from .engine.session import session_end as _session_end
 from .engine.signals import generate_signals
+from .engine.walk_forward import walk_forward_validate
 from .jobs import JobStatus, JobStore
 from .logging_config import configure_logging, get_logger
 from .models.strategy import (
@@ -616,6 +618,125 @@ async def backtest_clear_cache_tool(
     return {"cleared": cleared}
 
 
+# --- Tool 10: Walk-Forward Validation ---
+
+
+@mcp.tool(
+    annotations={
+        "title": "Walk-Forward Validation",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def backtest_walk_forward_tool(
+    strategy_json: str,
+    n_windows: int = 5,
+) -> dict[str, Any]:
+    """Run walk-forward validation across expanding time windows.
+
+    Runs 2xN backtests (train + test per window) to detect overfitting.
+    Always runs async due to heavy computation. Use backtest_get_job_status_tool
+    to poll for results.
+
+    Args:
+        strategy_json: JSON string of the strategy definition.
+        n_windows: Number of walk-forward windows (default 5).
+
+    Returns:
+        Job status with job_id for async polling.
+
+    """
+    try:
+        strategy = StrategyDefinition.from_dict(json.loads(strategy_json))
+        strategy.validate()
+    except (json.JSONDecodeError, ValueError, KeyError) as exc:
+        return {"isError": True, "error": f"Invalid strategy: {exc}"}
+
+    return _submit_walk_forward_job(strategy_json, n_windows)
+
+
+def _submit_walk_forward_job(
+    strategy_json: str,
+    n_windows: int,
+) -> dict[str, Any]:
+    """Submit walk-forward validation as an async job.
+
+    Args:
+        strategy_json: Validated strategy JSON string.
+        n_windows: Number of walk-forward windows.
+
+    Returns:
+        Job submission response with job_id and polling hints.
+
+    """
+    job_store = _get_job_store()
+    # Estimate: 2 backtests per window, ~5s each
+    estimated = float(n_windows * 2 * 5)
+
+    async def _run() -> dict[str, Any]:
+        try:
+            result = await walk_forward_validate(
+                strategy_json=strategy_json,
+                n_windows=n_windows,
+                run_backtest_fn=_run_single_backtest,
+            )
+            return result.to_dict()
+        except Exception as exc:
+            logger.exception("walk_forward_failed")
+            return {"isError": True, "error": format_api_error(exc)}
+
+    ttl = _settings.job_result_ttl_seconds if _settings else 3600
+    expires_at = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
+
+    job_id = job_store.submit_job(
+        _run(),
+        estimated_seconds=estimated,
+        expires_at=expires_at,
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "n_windows": n_windows,
+        "total_backtests": n_windows * 2,
+        "estimated_seconds": estimated,
+        "poll_after_seconds": _compute_poll_delay(estimated),
+        "expires_at": expires_at,
+    }
+
+
+async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
+    """Run a single backtest from a strategy JSON string.
+
+    This is the reusable backtest function passed to walk_forward_validate.
+    It handles the full pipeline: parse -> download -> indicators -> signals
+    -> backtest -> metrics.
+
+    Args:
+        strategy_json: JSON string of a strategy definition.
+
+    Returns:
+        BacktestResult dict.
+
+    """
+    strategy = StrategyDefinition.from_dict(json.loads(strategy_json))
+    exec_result = await _execute_strategy(strategy)
+    result = compute_metrics(
+        equity_df=exec_result.equity_df,
+        trades=exec_result.trades,
+        strategy_name=strategy.name,
+        symbols=strategy.universe.symbols,
+        benchmark_df=exec_result.benchmark_df,
+        symbol_dfs=exec_result.symbol_dfs,
+        requested_start=strategy.data_config.start_date,
+        requested_end=strategy.data_config.end_date,
+        timeframe=strategy.data_config.timeframe,
+    )
+    return result.to_dict()
+
+
 # --- Internal Helpers ---
 
 
@@ -692,6 +813,14 @@ async def _run_sync_backtest(
     if train_test is not None:
         output["train_test_split"] = train_test
 
+    # Add portfolio-specific metrics when in portfolio mode
+    if exec_result.portfolio_result is not None:
+        from .engine.metrics import _compute_portfolio_specific  # noqa: PLC0415
+
+        output["portfolio_metrics"] = _compute_portfolio_specific(
+            exec_result.portfolio_result, 100_000.0
+        )
+
     # Surface critical warnings at top level so the agent can't miss them
     critical = [w for w in result.warnings if w.startswith(("CRITICAL", "DATA GAP"))]
     if critical:
@@ -760,8 +889,8 @@ def _compute_train_test_split(
     }
 
 
-_LOW_COVERAGE_THRESHOLD = 0.5  # 50%
-_CRITICAL_COVERAGE_THRESHOLD = 0.1  # 10%
+_LOW_COVERAGE_THRESHOLD = 0.8  # 80% of expected rows
+_CRITICAL_COVERAGE_THRESHOLD = 0.6  # 60% of expected rows
 
 
 def _check_data_coverage(
@@ -770,10 +899,11 @@ def _check_data_coverage(
     requested_end: str,
     timeframe: str,
 ) -> list[str]:
-    """Check if downloaded data covers the requested range.
+    """Check if downloaded data covers the requested range using row counts.
 
-    Returns prominent warnings when FMP returned significantly less data
-    than requested — e.g., FMP plan limits on intraday history.
+    Uses the same expected-row logic as the metrics engine: trading days ×
+    bars per day. This catches sparse data that spans the full date range
+    but has gaps (which date-span coverage would miss).
 
     Args:
         symbol_dfs: Downloaded DataFrames per symbol.
@@ -786,11 +916,9 @@ def _check_data_coverage(
 
     """
     warnings: list[str] = []
-    req_start = date.fromisoformat(requested_start)
-    req_end = date.fromisoformat(requested_end)
-    req_days = (req_end - req_start).days
+    expected_rows = _expected_trading_days(requested_start, requested_end, timeframe)
 
-    if req_days <= 0:
+    if expected_rows <= 0:
         return warnings
 
     for symbol, df in symbol_dfs.items():
@@ -801,35 +929,21 @@ def _check_data_coverage(
             )
             continue
 
-        actual_first = df["date"].min()
-        actual_last = df["date"].max()
-
-        # Extract dates for comparison
-        if isinstance(actual_first, datetime):
-            first_date = actual_first.date()
-            last_date = actual_last.date()
-        elif isinstance(actual_first, date):
-            first_date = actual_first
-            last_date = actual_last
-        else:
-            continue
-
-        actual_days = (last_date - first_date).days
-        coverage = actual_days / req_days if req_days > 0 else 1.0
+        actual_rows = len(df)
+        coverage = actual_rows / expected_rows
 
         if coverage < _CRITICAL_COVERAGE_THRESHOLD:
             warnings.append(
-                f"CRITICAL DATA GAP: {symbol} {timeframe} — requested {req_days} days "
-                f"({requested_start} to {requested_end}) but FMP only returned "
-                f"{actual_days} days ({first_date} to {last_date}), {len(df)} bars. "
-                f"Coverage: {coverage:.0%}. Your FMP plan likely limits intraday history. "
+                f"CRITICAL DATA GAP: {symbol} {timeframe} — expected ~{expected_rows} bars "
+                f"({requested_start} to {requested_end}) but got {actual_rows} bars. "
+                f"Row coverage: {coverage:.0%}. Your FMP plan likely limits history. "
                 f"Results are NOT statistically meaningful."
             )
         elif coverage < _LOW_COVERAGE_THRESHOLD:
             warnings.append(
-                f"LOW DATA COVERAGE: {symbol} {timeframe} — requested {req_days} days "
-                f"but FMP returned {actual_days} days ({len(df)} bars). "
-                f"Coverage: {coverage:.0%}. Consider shortening the date range."
+                f"LOW DATA COVERAGE: {symbol} {timeframe} — expected ~{expected_rows} bars "
+                f"but got {actual_rows} bars. Row coverage: {coverage:.0%}. "
+                f"Consider shortening the date range or checking for data gaps."
             )
 
     return warnings
@@ -844,6 +958,7 @@ class _ExecutionResult:
     warnings: list[str]
     benchmark_df: Any | None = None
     symbol_dfs: dict[str, Any] = field(default_factory=dict)
+    portfolio_result: Any | None = None  # PortfolioBacktestResult when portfolio mode
 
 
 async def _execute_strategy(
@@ -897,6 +1012,7 @@ async def _execute_strategy(
         enriched, warnings = compute_indicators(
             symbol_dfs[symbol],
             strategy.indicators,
+            timeframe=timeframe,
         )
         all_warnings.extend(warnings)
         signaled = generate_signals(
@@ -921,10 +1037,18 @@ async def _execute_strategy(
 
     prepped: dict[str, Any] = {}
     for symbol, raw_df in symbol_dfs.items():
-        enriched, warnings = compute_indicators(raw_df, strategy.indicators)
+        enriched, warnings = compute_indicators(
+            raw_df,
+            strategy.indicators,
+            timeframe=timeframe,
+        )
         all_warnings.extend(warnings)
         signaled = generate_signals(enriched, strategy.entry_rules, strategy.exit_rules)
         prepped[symbol] = signaled
+
+    # Route to portfolio backtester if allocation_mode is "portfolio"
+    if strategy.position_sizing.allocation_mode == "portfolio":
+        return _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs)
 
     eq, trades = run_multi_symbol_backtest(
         prepped,
@@ -938,6 +1062,85 @@ async def _execute_strategy(
         warnings=all_warnings,
         benchmark_df=benchmark_df,
         symbol_dfs=symbol_dfs,
+    )
+
+
+def _run_portfolio_mode(
+    prepped: dict[str, Any],
+    strategy: StrategyDefinition,
+    all_warnings: list[str],
+    benchmark_df: Any,
+    symbol_dfs: dict[str, Any],
+) -> _ExecutionResult:
+    """Run portfolio backtest with shared capital pool.
+
+    Args:
+        prepped: Dict of symbol to signal DataFrames.
+        strategy: Strategy definition.
+        all_warnings: Accumulated warnings.
+        benchmark_df: Optional benchmark DataFrame.
+        symbol_dfs: Raw OHLCV DataFrames per symbol.
+
+    Returns:
+        ExecutionResult with portfolio backtest results.
+
+    """
+    portfolio_result = run_portfolio_backtest(
+        signal_dfs=prepped,
+        initial_capital=100_000.0,
+        position_sizing=strategy.position_sizing,
+        slippage_pct=0.1,
+        commission_per_share=0.0,
+        stop_loss_pct=strategy.risk_management.stop_loss_pct,
+        take_profit_pct=strategy.risk_management.take_profit_pct,
+        close_eod=strategy.risk_management.close_eod,
+        timeframe=strategy.data_config.timeframe,
+    )
+
+    # Build equity DataFrame from portfolio result
+    # Use the date union for the equity curve
+    all_dates_set: set[date] = set()
+    for sym_df in prepped.values():
+        raw_dates = sym_df["date"].to_list()
+        for d in raw_dates:
+            if isinstance(d, datetime):
+                all_dates_set.add(d.date())
+            elif isinstance(d, date):
+                all_dates_set.add(d)
+    sorted_dates = sorted(all_dates_set)
+
+    eq_dates = sorted_dates[: len(portfolio_result.equity_curve)]
+    equity_df = pl.DataFrame(
+        {
+            "date": eq_dates,
+            "equity": portfolio_result.equity_curve,
+        }
+    )
+
+    # Convert PortfolioTradeRecords to Trade objects for metrics
+    from .engine.backtester import Trade  # noqa: PLC0415
+
+    trades = [
+        Trade(
+            symbol=r.symbol,
+            entry_date=r.entry_date,
+            entry_price=r.entry_price,
+            exit_date=r.exit_date,
+            exit_price=r.exit_price,
+            return_pct=r.return_pct,
+            holding_days=r.holding_days,
+            exit_reason=r.exit_reason,
+        )
+        for r in portfolio_result.trades
+    ]
+
+    return _ExecutionResult(
+        equity_df=equity_df,
+        trades=trades,
+        warnings=all_warnings,
+        benchmark_df=benchmark_df,
+        symbol_dfs=symbol_dfs,
+        portfolio_result=portfolio_result,
     )
 
 

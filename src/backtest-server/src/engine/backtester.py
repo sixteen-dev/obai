@@ -15,6 +15,94 @@ import polars as pl
 from ..models.strategy import PositionSizing, RiskManagement
 from .session import is_after_time, is_last_bar_of_session, parse_time_str
 
+# --- Shared pure functions (importable by portfolio backtester) ---
+
+
+def compute_entry_fill(open_price: float, slippage_pct: float) -> float:
+    """Compute fill price for entry (buy). Slippage makes it worse (higher).
+
+    Args:
+        open_price: The bar's open price.
+        slippage_pct: Slippage as a percentage (e.g. 0.1 for 0.1%).
+
+    Returns:
+        Adjusted fill price.
+
+    """
+    return open_price * (1 + slippage_pct / 100)
+
+
+def compute_exit_fill(  # noqa: PLR0913
+    reason: str,
+    open_price: float,
+    close_price: float,
+    stop_level: float | None,
+    tp_level: float | None,
+    slippage_pct: float,
+) -> float:
+    """Compute fill price for exit based on exit reason.
+
+    Args:
+        reason: Exit reason (signal, stop_loss, take_profit, eod_close).
+        open_price: The bar's open price.
+        close_price: The bar's close price.
+        stop_level: Stop-loss price level (if applicable).
+        tp_level: Take-profit price level (if applicable).
+        slippage_pct: Slippage as a percentage.
+
+    Returns:
+        Fill price for the exit.
+
+    """
+    if reason == "signal":
+        return open_price * (1 - slippage_pct / 100)
+    if reason == "stop_loss" and stop_level is not None:
+        return min(stop_level, open_price)
+    if reason == "take_profit" and tp_level is not None:
+        return max(tp_level, open_price)
+    # eod_close and fallback
+    return close_price
+
+
+def check_intrabar_stop(
+    entry_price: float,
+    low_price: float,
+    stop_pct: float,
+) -> tuple[bool, float]:
+    """Check if stop loss was hit intrabar.
+
+    Args:
+        entry_price: Entry price of the position.
+        low_price: The bar's low price.
+        stop_pct: Stop-loss percentage.
+
+    Returns:
+        Tuple of (hit, stop_level).
+
+    """
+    stop_level = entry_price * (1 - stop_pct / 100)
+    return low_price <= stop_level, stop_level
+
+
+def check_intrabar_tp(
+    entry_price: float,
+    high_price: float,
+    tp_pct: float,
+) -> tuple[bool, float]:
+    """Check if take profit was hit intrabar.
+
+    Args:
+        entry_price: Entry price of the position.
+        high_price: The bar's high price.
+        tp_pct: Take-profit percentage.
+
+    Returns:
+        Tuple of (hit, tp_level).
+
+    """
+    tp_level = entry_price * (1 + tp_pct / 100)
+    return high_price >= tp_level, tp_level
+
 
 @dataclass
 class Trade:
@@ -180,7 +268,7 @@ def _check_entry(  # noqa: PLR0913
         if isinstance(bar_time, datetime) and is_after_time(bar_time, no_entry_cutoff):
             return
 
-    state.entry_price = float(market.opens[idx]) * (1 + cfg.slippage_pct / 100)
+    state.entry_price = compute_entry_fill(float(market.opens[idx]), cfg.slippage_pct)
     state.entry_idx = idx
     state.in_position = True
     state.last_price = state.entry_price
@@ -221,16 +309,14 @@ def _get_exit_reason(
     """
     # Intrabar stop-loss check using low (worst case for longs)
     if state.stop_loss:
-        worst_price = float(market.lows[idx])
-        worst_return = (worst_price - state.entry_price) / state.entry_price
-        if worst_return <= -(state.stop_loss / 100):
+        hit, _ = check_intrabar_stop(state.entry_price, float(market.lows[idx]), state.stop_loss)
+        if hit:
             return "stop_loss"
 
     # Intrabar take-profit check using high (best case for longs)
     if state.take_profit:
-        best_price = float(market.highs[idx])
-        best_return = (best_price - state.entry_price) / state.entry_price
-        if best_return >= (state.take_profit / 100):
+        hit, _ = check_intrabar_tp(state.entry_price, float(market.highs[idx]), state.take_profit)
+        if hit:
             return "take_profit"
 
     # Signal-based exit
@@ -305,7 +391,7 @@ def _compute_exit_price(  # noqa: PLR0913
 ) -> float:
     """Compute fill price based on exit reason.
 
-    Design doc Phase 3.3 fill model table.
+    Design doc Phase 3.3 fill model table. Delegates to shared compute_exit_fill.
 
     Args:
         state: Current backtest state.
@@ -318,21 +404,22 @@ def _compute_exit_price(  # noqa: PLR0913
         Fill price for the exit.
 
     """
-    if exit_reason == "signal":
-        return float(market.opens[idx]) * (1 - cfg.slippage_pct / 100)
+    stop_level: float | None = None
+    tp_level: float | None = None
 
-    if exit_reason == "stop_loss" and state.stop_loss:
+    if state.stop_loss:
         stop_level = state.entry_price * (1 - state.stop_loss / 100)
-        # Gap-through: if open gaps below stop, fill at open (worse)
-        return min(stop_level, float(market.opens[idx]))
-
-    if exit_reason == "take_profit" and state.take_profit:
+    if state.take_profit:
         tp_level = state.entry_price * (1 + state.take_profit / 100)
-        # Gap-through: if open gaps above target, fill at open (better)
-        return max(tp_level, float(market.opens[idx]))
 
-    # eod_close and fallback: fill at session close price
-    return float(market.closes[idx])
+    return compute_exit_fill(
+        reason=exit_reason,
+        open_price=float(market.opens[idx]),
+        close_price=float(market.closes[idx]),
+        stop_level=stop_level,
+        tp_level=tp_level,
+        slippage_pct=cfg.slippage_pct,
+    )
 
 
 def _compute_holding_period(

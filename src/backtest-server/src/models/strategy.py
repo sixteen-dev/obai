@@ -7,6 +7,63 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+
+@dataclass
+class WindowResult:
+    """Metrics for a single walk-forward validation window."""
+
+    window_id: int
+    train_start: str
+    train_end: str
+    test_start: str
+    test_end: str
+    train_metrics: dict[str, Any]
+    test_metrics: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for JSON output."""
+        return {
+            "window_id": self.window_id,
+            "train_start": self.train_start,
+            "train_end": self.train_end,
+            "test_start": self.test_start,
+            "test_end": self.test_end,
+            "train_metrics": self.train_metrics,
+            "test_metrics": self.test_metrics,
+        }
+
+
+@dataclass
+class WalkForwardResult:
+    """Aggregate results from walk-forward validation across multiple windows."""
+
+    windows: list[WindowResult]
+    n_windows: int
+    mean_test_sharpe: float
+    std_test_sharpe: float
+    mean_test_win_rate: float
+    mean_test_max_drawdown: float
+    consistency_score: float  # % of windows where test Sharpe > 0
+    degradation: float  # mean(train_sharpe - test_sharpe)
+    total_runtime_seconds: float
+    failed_windows: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for JSON output."""
+        return {
+            "windows": [w.to_dict() for w in self.windows],
+            "n_windows": self.n_windows,
+            "failed_windows": self.failed_windows,
+            "mean_test_sharpe": round(self.mean_test_sharpe, 4),
+            "std_test_sharpe": round(self.std_test_sharpe, 4),
+            "mean_test_win_rate": round(self.mean_test_win_rate, 2),
+            "mean_test_max_drawdown": round(self.mean_test_max_drawdown, 2),
+            "consistency_score": round(self.consistency_score, 2),
+            "degradation": round(self.degradation, 4),
+            "total_runtime_seconds": round(self.total_runtime_seconds, 2),
+        }
+
+
 SUPPORTED_INDICATORS: set[str] = {
     "SMA",
     "EMA",
@@ -28,18 +85,103 @@ SUPPORTED_INDICATORS: set[str] = {
     "MFI",
     "AROON",
     "SAR",
+    # Statistical indicators
+    "LINEARREG",
+    "LINEARREG_SLOPE",
+    "LINEARREG_ANGLE",
+    "STDDEV",
+    "BETA",
+    "CORREL",
+    # VWAP (intraday-only)
+    "VWAP",
+    # Candlestick patterns — dynamically added below
 }
+
+# Batch-add all candlestick pattern names
+_CDL_PATTERN_NAMES: list[str] = [
+    "CDL_2CROWS",
+    "CDL_3BLACKCROWS",
+    "CDL_3INSIDE",
+    "CDL_3LINESTRIKE",
+    "CDL_3OUTSIDE",
+    "CDL_3STARSINSOUTH",
+    "CDL_3WHITESOLDIERS",
+    "CDL_ABANDONEDBABY",
+    "CDL_ADVANCEBLOCK",
+    "CDL_BELTHOLD",
+    "CDL_BREAKAWAY",
+    "CDL_CLOSINGMARUBOZU",
+    "CDL_CONCEALBABYSWALL",
+    "CDL_COUNTERATTACK",
+    "CDL_DARKCLOUDCOVER",
+    "CDL_DOJI",
+    "CDL_DOJISTAR",
+    "CDL_DRAGONFLYDOJI",
+    "CDL_ENGULFING",
+    "CDL_EVENINGDOJISTAR",
+    "CDL_EVENINGSTAR",
+    "CDL_GAPSIDESIDEWHITE",
+    "CDL_GRAVESTONEDOJI",
+    "CDL_HAMMER",
+    "CDL_HANGINGMAN",
+    "CDL_HARAMI",
+    "CDL_HARAMICROSS",
+    "CDL_HIGHWAVE",
+    "CDL_HIKKAKE",
+    "CDL_HIKKAKEMOD",
+    "CDL_HOMINGPIGEON",
+    "CDL_IDENTICAL3CROWS",
+    "CDL_INNECK",
+    "CDL_INVERTEDHAMMER",
+    "CDL_KICKING",
+    "CDL_KICKINGBYLENGTH",
+    "CDL_LADDERBOTTOM",
+    "CDL_LONGLEGGEDDOJI",
+    "CDL_LONGLINE",
+    "CDL_MARUBOZU",
+    "CDL_MATCHINGLOW",
+    "CDL_MATHOLD",
+    "CDL_MORNINGDOJISTAR",
+    "CDL_MORNINGSTAR",
+    "CDL_ONNECK",
+    "CDL_PIERCING",
+    "CDL_RICKSHAWMAN",
+    "CDL_RISEFALL3METHODS",
+    "CDL_SEPARATINGLINES",
+    "CDL_SHOOTINGSTAR",
+    "CDL_SHORTLINE",
+    "CDL_SPINNINGTOP",
+    "CDL_STALLEDPATTERN",
+    "CDL_STICKSANDWICH",
+    "CDL_TAKURI",
+    "CDL_TASUKIGAP",
+    "CDL_THRUSTING",
+    "CDL_TRISTAR",
+    "CDL_UNIQUE3RIVER",
+    "CDL_UPSIDEGAP2CROWS",
+    "CDL_XSIDEGAP3METHODS",
+]
+SUPPORTED_INDICATORS.update(_CDL_PATTERN_NAMES)
+
+INTRADAY_ONLY_INDICATORS: set[str] = {"VWAP"}
+
+# Raw OHLCV columns always present in DataFrames — valid as operand references
+RAW_PRICE_COLUMNS: set[str] = {"open", "high", "low", "close", "volume"}
 
 SUPPORTED_OPERATORS: set[str] = {
     "greater_than",
     "less_than",
     "crosses_above",
     "crosses_below",
+    "equals",
+    "not_equals",
     "after_time",
     "before_time",
 }
 
 SUPPORTED_SIZING_METHODS: set[str] = {"equal_weight", "fixed_pct"}
+
+SUPPORTED_ALLOCATION_MODES: set[str] = {"independent", "portfolio"}
 
 # Design doc: Phase 2.2 — timeframe constants
 SUPPORTED_TIMEFRAMES: set[str] = {"daily", "1hour", "15min", "5min"}
@@ -163,6 +305,7 @@ class PositionSizing:
     method: str = "equal_weight"
     max_position_pct: float = 20.0
     max_positions: int = 5
+    allocation_mode: str = "independent"
 
     def validate(self) -> list[str]:
         """Validate position sizing."""
@@ -171,6 +314,11 @@ class PositionSizing:
             errors.append(
                 f"Unsupported sizing method '{self.method}'. "
                 f"Supported: {sorted(SUPPORTED_SIZING_METHODS)}"
+            )
+        if self.allocation_mode not in SUPPORTED_ALLOCATION_MODES:
+            errors.append(
+                f"Unsupported allocation_mode '{self.allocation_mode}'. "
+                f"Supported: {sorted(SUPPORTED_ALLOCATION_MODES)}"
             )
         return errors
 
@@ -288,9 +436,31 @@ class StrategyDefinition:
         errors.extend(self.entry_rules.validate())
         errors.extend(self.exit_rules.validate())
         errors.extend(self.position_sizing.validate())
+
+        # Portfolio mode requires daily timeframe (intraday bars collapse to same date key)
+        if (
+            self.position_sizing.allocation_mode == "portfolio"
+            and self.data_config.timeframe != "daily"
+        ):
+            errors.append(
+                "Portfolio allocation mode requires daily timeframe. "
+                "Intraday timeframes (5min, 15min, 1hour) are not supported "
+                "in portfolio mode."
+            )
+
+        # VWAP timeframe validation: reject at parse time if daily
+        timeframe = self.data_config.timeframe
+        for ind in self.indicators:
+            if ind.type.upper() in INTRADAY_ONLY_INDICATORS and timeframe == "daily":
+                errors.append(
+                    f"Indicator '{ind.type}' requires intraday data. "
+                    f"Use timeframe '5min', '15min', or '1hour' instead of 'daily'."
+                )
+
         # Validate indicator references in rules.
-        # Expand multi-output indicators so {id}_{suffix} refs are valid too.
-        defined_ids = {ind.id for ind in self.indicators}
+        # Raw OHLCV columns + computed indicators + multi-output suffixes are valid.
+        defined_ids = set(RAW_PRICE_COLUMNS)
+        defined_ids.update(ind.id for ind in self.indicators)
         for ind in self.indicators:
             suffixes = MULTI_OUTPUT_SUFFIXES.get(ind.type.upper())
             if suffixes:
@@ -333,6 +503,7 @@ class StrategyDefinition:
                 "method": self.position_sizing.method,
                 "max_position_pct": self.position_sizing.max_position_pct,
                 "max_positions": self.position_sizing.max_positions,
+                "allocation_mode": self.position_sizing.allocation_mode,
             },
             "risk_management": {
                 "stop_loss_pct": self.risk_management.stop_loss_pct,
@@ -384,6 +555,7 @@ class StrategyDefinition:
                 method=sizing_data.get("method", "equal_weight"),
                 max_position_pct=sizing_data.get("max_position_pct", 20.0),
                 max_positions=sizing_data.get("max_positions", 5),
+                allocation_mode=sizing_data.get("allocation_mode", "independent"),
             ),
             risk_management=RiskManagement(
                 stop_loss_pct=risk_data.get("stop_loss_pct"),

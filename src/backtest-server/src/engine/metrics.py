@@ -11,6 +11,7 @@ import polars as pl
 
 from ..models.backtest_result import BacktestResult
 from .backtester import Trade
+from .portfolio_backtester import PortfolioBacktestResult, PortfolioTradeRecord
 
 TRADING_DAYS_PER_YEAR = 252
 RISK_FREE_RATE = 0.0  # Can be parameterized later
@@ -581,3 +582,126 @@ def _expected_trading_days(
     trading_days = max(0, int(calendar_days * TRADING_DAYS_PER_YEAR / 365.25))
     bpd = BARS_PER_DAY.get(timeframe, 1)
     return trading_days * bpd
+
+
+def compute_portfolio_metrics(  # noqa: PLR0913
+    result: PortfolioBacktestResult,
+    initial_capital: float,
+    dates: list[Any],
+    timeframe: str = "daily",
+    strategy_name: str = "",
+    symbols: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compute metrics for a portfolio backtest result.
+
+    Reuses compute_metrics() for standard metrics, then adds portfolio-specific
+    metrics like capital utilization, turnover, and position count stats.
+
+    Args:
+        result: Portfolio backtest result.
+        initial_capital: Starting capital amount.
+        dates: List of dates corresponding to equity curve.
+        timeframe: Bar timeframe for annualization.
+        strategy_name: Name of the strategy.
+        symbols: List of symbols traded.
+
+    Returns:
+        Dict with all standard and portfolio-specific metrics.
+
+    """
+    if not result.equity_curve or len(result.equity_curve) < MIN_DATA_POINTS:
+        return {"isError": True, "error": "Insufficient data for metrics"}
+
+    # Build Trade objects from PortfolioTradeRecords for compute_metrics
+    trades = _convert_portfolio_trades(result.trades)
+
+    equity_df = pl.DataFrame(
+        {
+            "date": dates[: len(result.equity_curve)],
+            "equity": result.equity_curve,
+        }
+    )
+
+    base_result = compute_metrics(
+        equity_df=equity_df,
+        trades=trades,
+        strategy_name=strategy_name,
+        symbols=symbols or [],
+        timeframe=timeframe,
+    )
+
+    output = base_result.to_dict()
+    output["portfolio_metrics"] = _compute_portfolio_specific(result, initial_capital)
+    return output
+
+
+def _convert_portfolio_trades(
+    records: list[PortfolioTradeRecord],
+) -> list[Trade]:
+    """Convert PortfolioTradeRecords to Trade objects for compute_metrics.
+
+    Args:
+        records: Portfolio trade records.
+
+    Returns:
+        List of Trade objects.
+
+    """
+    return [
+        Trade(
+            symbol=r.symbol,
+            entry_date=r.entry_date,
+            entry_price=r.entry_price,
+            exit_date=r.exit_date,
+            exit_price=r.exit_price,
+            return_pct=r.return_pct,
+            holding_days=r.holding_days,
+            exit_reason=r.exit_reason,
+        )
+        for r in records
+    ]
+
+
+def _compute_portfolio_specific(
+    result: PortfolioBacktestResult,
+    initial_capital: float,
+) -> dict[str, Any]:
+    """Compute portfolio-specific metrics.
+
+    Args:
+        result: Portfolio backtest result.
+        initial_capital: Starting capital amount.
+
+    Returns:
+        Dict of portfolio-specific metrics.
+
+    """
+    equity = np.array(result.equity_curve, dtype=np.float64)
+    pos_counts = np.array(result.daily_position_counts, dtype=np.float64)
+
+    # Capital utilization: mean of (1 - cash/equity) across days
+    # We approximate cash/equity as: when positions = 0, utilization = 0
+    # Otherwise, utilization = 1 - (equity - invested) / equity
+    # Since we don't track daily cash separately, use position counts
+    cap_util = 0.0
+    if len(equity) > 0 and len(result.trades) > 0:
+        # Rough estimation: mean(position_count / max_observed)
+        max_count = float(np.max(pos_counts)) if np.max(pos_counts) > 0 else 1.0
+        cap_util = float(np.mean(pos_counts) / max_count * 100)
+
+    # Turnover rate: sum of absolute trade PnL / mean equity
+    mean_equity = float(np.mean(equity)) if len(equity) > 0 else initial_capital
+    total_abs_pnl = sum(abs(t.pnl) for t in result.trades)
+    turnover = total_abs_pnl / mean_equity if mean_equity > 0 else 0.0
+
+    # Unique skipped symbols
+    skipped_symbols = sorted({s["symbol"] for s in result.signals_skipped if "symbol" in s})
+
+    return {
+        "capital_utilization_pct": round(cap_util, 2),
+        "turnover_rate": round(turnover, 4),
+        "position_count_max": int(np.max(pos_counts)) if len(pos_counts) > 0 else 0,
+        "position_count_avg": round(float(np.mean(pos_counts)), 2) if len(pos_counts) > 0 else 0.0,
+        "signals_skipped_count": len(result.signals_skipped),
+        "signals_skipped_symbols": skipped_symbols,
+    }

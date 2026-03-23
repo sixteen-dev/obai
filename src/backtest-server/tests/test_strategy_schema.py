@@ -406,3 +406,192 @@ class TestStrategyDefinition:
         data["data_config"]["train_end_date"] = None
         with pytest.raises(ValueError, match="at least"):
             StrategyDefinition.from_dict(data)
+
+    def test_vwap_daily_timeframe_rejected(self) -> None:
+        """VWAP with daily timeframe should fail validation."""
+        data: dict[str, Any] = {
+            "name": "VWAP Daily Test",
+            "universe": {"symbols": ["AAPL"]},
+            "data_config": {
+                "start_date": "2023-01-01",
+                "end_date": "2024-01-01",
+                "timeframe": "daily",
+            },
+            "indicators": [
+                {"id": "vwap", "type": "VWAP"},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "vwap"},
+                        "operator": "greater_than",
+                        "right": {"constant": 100.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+        }
+        with pytest.raises(ValueError, match="intraday data"):
+            StrategyDefinition.from_dict(data)
+
+    def test_vwap_intraday_timeframe_accepted(self) -> None:
+        """VWAP with intraday timeframe should pass validation."""
+        data: dict[str, Any] = {
+            "name": "VWAP Intraday Test",
+            "universe": {"symbols": ["AAPL"]},
+            "data_config": {
+                "start_date": "2023-01-01",
+                "end_date": "2024-01-01",
+                "timeframe": "5min",
+            },
+            "indicators": [
+                {"id": "vwap", "type": "VWAP"},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "vwap"},
+                        "operator": "greater_than",
+                        "right": {"constant": 100.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+        }
+        strategy = StrategyDefinition.from_dict(data)
+        assert strategy.name == "VWAP Intraday Test"
+
+    def test_equals_operator_accepted(self) -> None:
+        """Equals operator should pass validation."""
+        data: dict[str, Any] = {
+            "name": "CDL Equals Test",
+            "universe": {"symbols": ["AAPL"]},
+            "data_config": {"start_date": "2023-01-01", "end_date": "2024-01-01"},
+            "indicators": [
+                {"id": "engulf", "type": "CDL_ENGULFING"},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "engulf"},
+                        "operator": "equals",
+                        "right": {"constant": 100.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+        }
+        strategy = StrategyDefinition.from_dict(data)
+        assert strategy.name == "CDL Equals Test"
+
+    def test_not_equals_operator_accepted(self) -> None:
+        """not_equals operator should pass validation."""
+        data: dict[str, Any] = {
+            "name": "CDL Not Equals Test",
+            "universe": {"symbols": ["AAPL"]},
+            "data_config": {"start_date": "2023-01-01", "end_date": "2024-01-01"},
+            "indicators": [
+                {"id": "doji", "type": "CDL_DOJI"},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "doji"},
+                        "operator": "not_equals",
+                        "right": {"constant": 0.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+        }
+        strategy = StrategyDefinition.from_dict(data)
+        assert strategy.name == "CDL Not Equals Test"
+
+    def test_candlestick_indicator_accepted(self) -> None:
+        """CDL_* indicators should pass validation."""
+        config = IndicatorConfig(id="cdl_test", type="CDL_HAMMER")
+        assert config.validate() == []
+
+    def test_statistical_indicator_accepted(self) -> None:
+        """Statistical indicators should pass validation."""
+        for ind_type in ["LINEARREG", "LINEARREG_SLOPE", "LINEARREG_ANGLE", "STDDEV"]:
+            config = IndicatorConfig(id="stat_test", type=ind_type, params={"length": 14})
+            assert config.validate() == [], f"{ind_type} failed validation"
+
+    def test_beta_correl_indicator_accepted(self) -> None:
+        """BETA and CORREL should pass validation."""
+        for ind_type in ["BETA", "CORREL"]:
+            config = IndicatorConfig(id="dual_test", type=ind_type, params={"length": 20})
+            assert config.validate() == [], f"{ind_type} failed validation"
+
+    def test_portfolio_mode_rejects_intraday_timeframe(self) -> None:
+        """Portfolio allocation_mode with intraday timeframe should raise ValueError."""
+        data: dict[str, Any] = {
+            "name": "Portfolio Intraday Test",
+            "universe": {"symbols": ["AAPL", "MSFT"]},
+            "data_config": {
+                "start_date": "2024-01-01",
+                "end_date": "2025-01-01",
+                "timeframe": "5min",
+            },
+            "indicators": [
+                {"id": "sma", "type": "SMA", "params": {"length": 20}},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "sma"},
+                        "operator": "greater_than",
+                        "right": {"constant": 100.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+            "position_sizing": {
+                "method": "equal_weight",
+                "max_position_pct": 20.0,
+                "max_positions": 5,
+                "allocation_mode": "portfolio",
+            },
+        }
+        with pytest.raises(ValueError, match="Portfolio allocation mode requires daily"):
+            StrategyDefinition.from_dict(data)
+
+    def test_portfolio_mode_accepts_daily_timeframe(self) -> None:
+        """Portfolio allocation_mode with daily timeframe should pass validation."""
+        data: dict[str, Any] = {
+            "name": "Portfolio Daily Test",
+            "universe": {"symbols": ["AAPL", "MSFT"]},
+            "data_config": {
+                "start_date": "2023-01-01",
+                "end_date": "2024-01-01",
+                "timeframe": "daily",
+            },
+            "indicators": [
+                {"id": "sma", "type": "SMA", "params": {"length": 20}},
+            ],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "sma"},
+                        "operator": "greater_than",
+                        "right": {"constant": 100.0},
+                    },
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+            "position_sizing": {
+                "method": "equal_weight",
+                "max_position_pct": 20.0,
+                "max_positions": 5,
+                "allocation_mode": "portfolio",
+            },
+        }
+        strategy = StrategyDefinition.from_dict(data)
+        assert strategy.position_sizing.allocation_mode == "portfolio"

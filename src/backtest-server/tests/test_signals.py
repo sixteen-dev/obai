@@ -234,3 +234,78 @@ class TestGenerateSignals:
 
         with pytest.raises(ValueError, match="must have one of"):
             generate_signals(df, entry, exit_rules)
+
+    def test_equals_operator(self) -> None:
+        """Equals should produce True when values match exactly."""
+        df = pl.DataFrame(
+            {
+                "date": [1, 2, 3, 4, 5],
+                "cdl_signal": [0, 100, -100, 0, 100],
+            }
+        )
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="cdl_signal"),
+                    operator="equals",
+                    right=Operand(constant=100.0),
+                ),
+            ],
+        )
+        exit_rules = RuleSet(logic="OR", conditions=[])
+
+        result = generate_signals(df, entry, exit_rules)
+        entries = result["entry_signal"].to_list()
+        # cdl_signal == 100: [False, True, False, False, True]
+        assert entries == [False, True, False, False, True]
+
+    def test_not_equals_operator(self) -> None:
+        """not_equals should produce True when values differ."""
+        df = pl.DataFrame(
+            {
+                "date": [1, 2, 3, 4, 5],
+                "cdl_signal": [0, 100, -100, 0, 100],
+            }
+        )
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="cdl_signal"),
+                    operator="not_equals",
+                    right=Operand(constant=0.0),
+                ),
+            ],
+        )
+        exit_rules = RuleSet(logic="OR", conditions=[])
+
+        result = generate_signals(df, entry, exit_rules)
+        entries = result["entry_signal"].to_list()
+        # cdl_signal != 0: [False, True, True, False, True]
+        assert entries == [False, True, True, False, True]
+
+    def test_equals_with_indicator_comparison(self) -> None:
+        """Equals should work between two indicator columns."""
+        df = pl.DataFrame(
+            {
+                "date": [1, 2, 3],
+                "col_a": [10.0, 20.0, 30.0],
+                "col_b": [10.0, 25.0, 30.0],
+            }
+        )
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="col_a"),
+                    operator="equals",
+                    right=Operand(indicator="col_b"),
+                ),
+            ],
+        )
+        exit_rules = RuleSet(logic="OR", conditions=[])
+
+        result = generate_signals(df, entry, exit_rules)
+        entries = result["entry_signal"].to_list()
+        assert entries == [True, False, True]

@@ -1,6 +1,7 @@
 """Portfolio MCP Server - Main entry point."""
 
 import asyncio
+from decimal import Decimal
 from typing import Any
 
 from fastmcp import FastMCP
@@ -12,7 +13,9 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients import FMPClient
 from .config import Settings, load_settings
+from .engine import compute_allocation_breakdown, compute_portfolio_risk
 from .logging_config import configure_logging, get_logger, log_error
+from .models import AssetType, Position, WeightType
 from .response_utils import format_api_error, truncate_response
 from .tools import (
     calculate_effective_exposure,
@@ -352,6 +355,181 @@ async def portfolio_get_treasury_rates_tool() -> dict[str, Any]:
     except Exception as e:
         log_error(logger, e, context={"tool": "portfolio_get_treasury_rates_tool"})
         return format_api_error(e)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Portfolio Risk Analysis",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def portfolio_risk_analysis_tool(
+    text: str,
+    benchmark: str = "SPY",
+    lookback_days: int = 252,
+) -> dict[str, Any]:
+    """Compute portfolio risk metrics from held instrument price history.
+
+    Calculates volatility, Sharpe/Sortino ratios, beta, max drawdown, VaR,
+    and other risk statistics for a portfolio described in free-form text.
+
+    Risk metrics use HELD instruments (the tickers you actually own), not
+    look-through exposure. This gives risk based on actual tradeable positions.
+
+    Args:
+        text: Portfolio description (e.g., "AAPL 40%, QQQ 35%, BND 25%").
+        benchmark: Benchmark symbol for beta/correlation (default "SPY").
+        lookback_days: Trading days to look back (default 252 = ~1 year).
+
+    Returns:
+        Risk metrics including volatility, Sharpe, beta, drawdown, and more.
+
+    """
+    try:
+        # Step 1: Parse positions
+        parse_result = parse_positions(text=text, normalize=True)
+        if parse_result.get("isError"):
+            return parse_result
+
+        portfolio_data = parse_result.get("portfolio", {})
+        raw_positions = portfolio_data.get("positions", [])
+        if not raw_positions:
+            return {"isError": True, "error": "No positions found", "error_type": "parse_error"}
+
+        # Convert raw position dicts back to Position objects
+        positions = _dicts_to_positions(raw_positions)
+
+        # Step 2: Get risk-free rate
+        client = get_fmp_client()
+        rfr = await client.get_risk_free_rate()
+
+        # Step 3: Compute risk metrics
+        risk_metrics = await compute_portfolio_risk(
+            positions=positions,
+            fmp_client=client,
+            benchmark=benchmark,
+            lookback_days=lookback_days,
+            risk_free_rate=float(rfr),
+        )
+
+        # Step 4: Build response
+        result: dict[str, Any] = {
+            "risk_metrics": risk_metrics.to_dict(),
+            "benchmark": benchmark,
+            "risk_free_rate": float(rfr),
+            "positions_analyzed": len(positions),
+            "parsing_warnings": parse_result.get("warnings", []),
+        }
+
+        return truncate_response(result)
+
+    except Exception as e:
+        log_error(logger, e, context={"tool": "portfolio_risk_analysis_tool"})
+        return format_api_error(e)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Portfolio Allocation Breakdown",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def portfolio_allocation_breakdown_tool(
+    text: str,
+) -> dict[str, Any]:
+    """Compute portfolio allocation breakdown with look-through analysis.
+
+    Expands ETFs to underlying holdings and computes sector exposure,
+    asset class distribution, concentration metrics, and ETF attribution.
+
+    Allocation uses LOOK-THROUGH exposure (expanding ETFs to underlying stocks).
+    This shows where your money actually ends up.
+
+    Args:
+        text: Portfolio description (e.g., "AAPL 40%, QQQ 35%, BND 25%").
+
+    Returns:
+        Allocation breakdown by ticker, sector, asset class, with concentration metrics.
+
+    """
+    try:
+        # Step 1: Parse positions
+        parse_result = parse_positions(text=text, normalize=True)
+        if parse_result.get("isError"):
+            return parse_result
+
+        portfolio_data = parse_result.get("portfolio", {})
+        raw_positions = portfolio_data.get("positions", [])
+        if not raw_positions:
+            return {"isError": True, "error": "No positions found", "error_type": "parse_error"}
+
+        # Convert raw position dicts back to Position objects
+        positions = _dicts_to_positions(raw_positions)
+
+        # Step 2: Fetch ETF holdings
+        etf_positions = [p for p in raw_positions if p.get("asset_type") == "etf"]
+        etf_holdings_map = await _fetch_etf_holdings(etf_positions)
+
+        # Step 3: Compute allocation breakdown
+        client = get_fmp_client()
+        breakdown = await compute_allocation_breakdown(
+            positions=positions,
+            etf_holdings_map=etf_holdings_map,
+            fmp_client=client,
+        )
+
+        # Step 4: Build response
+        result: dict[str, Any] = {
+            "allocation": breakdown.to_dict(),
+            "positions_analyzed": len(positions),
+            "etfs_expanded": len(etf_holdings_map),
+            "parsing_warnings": parse_result.get("warnings", []),
+        }
+
+        return truncate_response(result)
+
+    except Exception as e:
+        log_error(logger, e, context={"tool": "portfolio_allocation_breakdown_tool"})
+        return format_api_error(e)
+
+
+def _dicts_to_positions(raw_positions: list[dict[str, Any]]) -> list[Position]:
+    """Convert position dicts from parse_positions back to Position objects.
+
+    Args:
+        raw_positions: List of position dicts from parsed portfolio.
+
+    Returns:
+        List of Position model objects.
+
+    """
+    positions: list[Position] = []
+    for raw in raw_positions:
+        positions.append(
+            Position(
+                symbol=raw["symbol"],
+                weight=Decimal(str(raw.get("weight", 0))),
+                asset_type=AssetType(raw.get("asset_type", "stock")),
+                original_input=raw.get("original_input", ""),
+                weight_type=WeightType(raw.get("weight_type", "percentage")),
+                shares=(Decimal(str(raw["shares"])) if raw.get("shares") is not None else None),
+                dollar_value=(
+                    Decimal(str(raw["dollar_value"]))
+                    if raw.get("dollar_value") is not None
+                    else None
+                ),
+                price_used=(
+                    Decimal(str(raw["price_used"])) if raw.get("price_used") is not None else None
+                ),
+            )
+        )
+    return positions
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ dependencies = [
     "pydantic-settings>=2.6.1",
     "structlog>=25.1.0",
     "pyyaml>=6.0.3",
+    "numpy>=2.4.3",
 ]
 
 [project.optional-dependencies]

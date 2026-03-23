@@ -113,3 +113,8 @@ def filter_short_volume(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def filter_technical_indicators(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter technical indicators - keep all indicator values."""
     return _apply_filter(data, "technical_indicators")
+
+
+def filter_commodities_list(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter commodities list to symbol and name."""
+    return _apply_filter(data, "commodities_list")
