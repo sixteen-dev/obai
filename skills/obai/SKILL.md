@@ -1,6 +1,6 @@
 ---
 name: obai
-description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, screening, dividends, SEC filings, insider trades, backtesting strategies, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
+description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, portfolio risk, screening, dividends, SEC filings, insider trades, backtesting strategies, commodity or futures prices, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
 ---
 
 # OBaI CLI — Agent Execution Guide
@@ -129,15 +129,15 @@ If `all_healthy` is `false`, report which servers are down. Exit code `3` means 
 
 Route awareness helps you understand the response, but you don't need to pick agents — the Hub does that automatically.
 
-| Agent | Handles | Example Questions |
-|-------|---------|-------------------|
-| **Fundamentals** | Financials, ratios, SEC filings, insider trades, revenue segments | "What is AAPL's P/E ratio?", "Show MSFT income statement" |
-| **Market Data** | Prices, quotes, candles, movers, market status | "What is AAPL trading at?", "Top gainers today" |
-| **Events/News** | Earnings calendar, dividends, news search | "When does NVDA report earnings?", "Latest news on Tesla" |
-| **Options** | Options chains, Greeks, IV, open interest | "Show AAPL options chain", "What's the IV on SPY puts?" |
-| **Screening** | Stock screening with filters | "Find tech stocks with P/E under 20" |
-| **Portfolio** | Portfolio analysis, ETF holdings, risk, treasury rates | "Analyze a portfolio of AAPL, MSFT, GOOGL", "Current treasury rates" |
-| **Strategy** | Backtest design, iteration, performance metrics | "Design a momentum strategy for AAPL" |
+| Agent | Handles |
+|-------|---------|
+| **Fundamentals** | Financials, ratios, SEC filings, insider trades, revenue segments |
+| **Market Data** | Prices, quotes, candles, movers, market status, commodity/futures prices |
+| **Events/News** | Earnings calendar, dividends, news search |
+| **Options** | Options chains, Greeks, IV, open interest, pricing analytics, scenario analysis, position risk profiles |
+| **Screening** | Stock screening with filters |
+| **Portfolio** | Portfolio analysis, ETF holdings, risk metrics, sector/asset class allocation, treasury rates |
+| **Strategy** | Backtest design and iteration (daily and intraday), walk-forward robustness validation, shared-capital portfolio backtesting |
 
 Multi-domain queries (e.g., "Compare AAPL earnings with options flow") automatically dispatch to multiple agents in parallel.
 
@@ -167,7 +167,7 @@ uv run python -m evaluation evaluate --suite --category A
 | `--model` | `-m` | Model for queries (default: `gpt-4o`) |
 | `--judge` | `-j` | Model for LLM scorers (default: `anthropic/claude-sonnet-4-5-20250929`) |
 | `--no-builtin` | | Skip Opik built-in scorers (faster) |
-| `--category` | `-c` | Filter: A, B, C, or D |
+| `--category` | `-c` | Filter: A-G (A=single-agent, B=multi-agent, C=guardrails, D=errors, E=strategy/backtest, G=new capabilities) |
 | `--file` | `-f` | Custom YAML test file |
 | `--report` | `-r` | Export markdown report |
 | `--export` | `-e` | Export raw JSON results |

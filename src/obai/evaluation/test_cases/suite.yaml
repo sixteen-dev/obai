@@ -1,7 +1,9 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 93 test cases across 5 active categories (A-E, F pending).
+# 139 test cases across 6 active categories (A-E, G; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
+# Category G: New capabilities — portfolio risk/allocation, options analytics,
+#   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
 #
 # Usage:
 #   python -m evaluation evaluate --suite                    # Run all
@@ -199,6 +201,27 @@ test_cases:
     query_type: short_rate
     expected_tools: [portfolio_analysis]
     description: Risk-free rate lookup
+
+  - id: A27
+    query: "Pull up the AAPL options chain for next month, find the most liquid at-the-money call, and then run a scenario analysis on it — I want to see P&L if the stock moves up 5% or down 5%."
+    category: A
+    query_type: options_chain_then_scenario
+    expected_tools: [options_analysis]
+    description: Chain lookup then scenario analysis — tests analytics tools chained with existing lookup within single agent
+
+  - id: A28
+    query: "I'm looking at TSLA options. Get me the current Greeks on the front-month 250 call from the chain, then compare those to what Black-Scholes says the theoretical Greeks should be. I want to see if there's a discrepancy."
+    category: A
+    query_type: options_market_vs_theoretical_greeks
+    expected_tools: [options_analysis]
+    description: Market Greeks from snapshot vs computed BS Greeks — tests both lookup and compute tools in comparison
+
+  - id: A29
+    query: "NVDA IV is at 60%. If I sell a strangle — short the 900 put and short the 1000 call, next month expiry — what's my theta income per day and at what prices do I start losing money?"
+    category: A
+    query_type: options_strangle_theta_income
+    expected_tools: [options_analysis]
+    description: Short strangle risk profile — theta income, breakevens, max loss should show unlimited on call side
 
   # ─────────────────────────────────────────────
   # Category B: Multi-Agent (Coordination & Sequencing)
@@ -406,6 +429,13 @@ test_cases:
     expected_tools: [fundamentals_analysis, events_news_analysis]
     description: Growth trajectory vs forward expectations — financials plus analyst/management context
 
+  - id: B28
+    query: "I have a collar on AAPL — long 100 shares, long 1 put at 180 strike, short 1 call at 220 strike, both expiring in 3 months. What's my net delta exposure and where do I break even?"
+    category: B
+    query_type: options_collar_risk_profile
+    expected_tools: [options_analysis, market_data_analysis]
+    description: Collar (stock + protective put + covered call) risk profile — needs current AAPL price from market data, then options analytics
+
   # ─────────────────────────────────────────────
   # Category C: Guardrail Tests
   # ─────────────────────────────────────────────
@@ -532,6 +562,20 @@ test_cases:
     query_type: error_empty_screen_result
     expected_tools: [screener_lookup]
     description: Impossible filter combination should return empty set gracefully
+
+  - id: D9
+    query: "Analyze portfolio risk for: AAPL 40%, 100 shares MSFT, $50k in GOOGL"
+    category: D
+    query_type: error_mixed_portfolio_formats
+    expected_tools: [portfolio_analysis]
+    description: Mixed input formats (percentages + shares + dollars) should produce clear error asking user to pick one format
+
+  - id: D10
+    query: "Backtest a shared-capital RSI strategy on AAPL and MSFT using 5-min bars with portfolio allocation mode."
+    category: D
+    query_type: error_portfolio_mode_intraday
+    expected_tools: [strategy_analysis]
+    description: Portfolio mode + intraday timeframe should produce validation error — portfolio mode requires daily bars
 
   # ─────────────────────────────────────────────
   # Category E: Strategy & Backtesting
@@ -739,6 +783,306 @@ test_cases:
     expected_tools: [events_news_analysis, strategy_analysis]
     expected_sequence: [events_news_analysis, strategy_analysis]
     description: Event-driven intraday strategy - needs earnings dates from events agent, then intraday backtest around those windows
+
+  # E.6 — Intraday with New Indicators (VWAP, Candlestick, Statistical)
+
+  - id: E25
+    query: "I want to combine VWAP and candlestick patterns for intraday NVDA. Entry: price below VWAP and a bullish engulfing pattern fires, RSI under 40. Exit: price crosses back above VWAP. 5-min bars, flat by close, 1% stop. Last 6 months."
+    category: E
+    query_type: strategy_intraday_vwap_plus_candlestick
+    expected_tools: [strategy_analysis]
+    description: Combines VWAP (new) + CDL_ENGULFING (new) + RSI (existing) on intraday bars — tests multiple new indicator types together
+
+  - id: E26
+    query: "Build a 15-min strategy on AMD that uses LINEARREG_SLOPE to confirm trend direction before entering on EMA crossovers. Only trade during the 10:00-15:00 window. I want to see if the regression filter actually reduces whipsaws."
+    category: E
+    query_type: strategy_intraday_regression_filter
+    expected_tools: [strategy_analysis]
+    description: LINEARREG_SLOPE statistical indicator on intraday bars — trend confirmation filter
+
+  - id: E27
+    query: "Backtest a doji reversal strategy on SPY using 15-min bars — when a doji appears and RSI is oversold below 30, go long. Exit when RSI hits 60 or at close. 1.5% stop. Past year."
+    category: E
+    query_type: strategy_intraday_candlestick_reversal
+    expected_tools: [strategy_analysis]
+    description: CDL_DOJI candlestick pattern on intraday bars with equals operator (CDL_DOJI not_equals 0)
+
+  - id: E28
+    query: "I want to test a volatility regime strategy on QQQ — use standard deviation to identify low-vol periods, then buy breakouts when price crosses above the upper Bollinger band. 5-min bars, only between 10:00 and 15:30, flat by close."
+    category: E
+    query_type: strategy_intraday_stddev_regime
+    expected_tools: [strategy_analysis]
+    description: STDDEV statistical indicator for vol regime detection on intraday — combined with Bollinger band breakout
+
+  # E.7 — Indicator & Operator Discovery
+
+  - id: E29
+    query: "Does the backtest engine support VWAP? What about candlestick patterns like doji and engulfing?"
+    category: E
+    query_type: indicator_discovery_new
+    expected_tools: [strategy_analysis]
+    description: Indicator discovery — should list VWAP (intraday-only), CDL_DOJI, CDL_ENGULFING from supported indicators tool
+
+  - id: E30
+    query: "I want to use linear regression slope and standard deviation in a strategy. Are those available? What parameters do they take?"
+    category: E
+    query_type: indicator_discovery_statistical
+    expected_tools: [strategy_analysis]
+    description: Statistical indicator discovery — should list LINEARREG_SLOPE, STDDEV with their params from supported indicators tool
+
+  - id: E31
+    query: "What operators can I use in strategy conditions? I need something like 'equals' to match on candlestick pattern signals."
+    category: E
+    query_type: operator_discovery
+    expected_tools: [strategy_analysis]
+    description: Operator discovery — should list equals and not_equals alongside existing operators
+
+  - id: E32
+    query: "Can I compute the beta of a stock's close price versus its own moving average? Like BETA(close, sma_50)?"
+    category: E
+    query_type: indicator_discovery_dual_input
+    expected_tools: [strategy_analysis]
+    description: BETA/CORREL dual-input indicator discovery — should confirm same-symbol dual-column works, clarify NOT cross-symbol
+
+  # ─────────────────────────────────────────────
+  # Category G: New Capabilities (Portfolio Risk, Options Analytics,
+  #   Walk-Forward, Shared-Capital, Commodities, Expanded Indicators)
+  # ─────────────────────────────────────────────
+
+  # G.1 — Portfolio Risk & Allocation (P2)
+
+  - id: G1
+    query: "I've got about $200k split across VOO 40%, QQQ 25%, AAPL 15%, and 20% sitting in cash. How risky is this overall? What's my Sharpe looking like?"
+    category: G
+    query_type: portfolio_risk_with_cash
+    expected_tools: [portfolio_analysis]
+    description: Risk analysis with cash position — verifies cash dampens vol instead of being dropped and renormalized
+    smoke: true
+
+  - id: G2
+    query: "I hold SPY 50%, AAPL 20%, MSFT 15%, GOOGL 15%. Am I actually diversified or is this just a tech bet disguised as an index fund?"
+    category: G
+    query_type: portfolio_allocation_look_through
+    expected_tools: [portfolio_analysis]
+    description: Allocation breakdown with ETF look-through — SPY expansion should reveal tech overweight
+
+  - id: G3
+    query: "What's my portfolio beta against the S&P? I hold NVDA 30%, AMD 25%, AVGO 25%, INTC 20%. I feel like I'm way more volatile than the market."
+    category: G
+    query_type: portfolio_beta_concentrated
+    expected_tools: [portfolio_analysis]
+    description: Concentrated sector portfolio — beta should be well above 1.0 for all-semis
+
+  - id: G4
+    query: "Show me how correlated my holdings are. I've got AAPL 25%, MSFT 25%, GOOGL 25%, AMZN 25%. I thought I was diversified across big tech but everything seems to move together."
+    category: G
+    query_type: portfolio_correlation
+    expected_tools: [portfolio_analysis]
+    description: Correlation matrix request for mega-cap tech — should show high correlation
+
+  - id: G5
+    query: "I'm retired and hold 60% BND, 30% VTI, 10% cash. What's my max drawdown and how much am I actually earning after inflation?"
+    category: G
+    query_type: portfolio_risk_conservative
+    expected_tools: [portfolio_analysis]
+    description: Conservative portfolio risk — tests bond ETF + cash handling, drawdown, real returns context
+
+  - id: G6
+    query: "Break down where my money actually ends up by sector. I hold VTI 50%, XLK 30%, AAPL 20%. I bet I'm way overweight tech but I want to see the numbers."
+    category: G
+    query_type: portfolio_sector_look_through
+    expected_tools: [portfolio_analysis]
+    description: Sector allocation with ETF look-through — VTI + XLK + direct AAPL should show massive tech concentration
+    smoke: true
+
+  # G.2 — Options Analytics (P5)
+
+  - id: G7
+    query: "I bought 5 AAPL 200 calls expiring in June for $8.50 each. What happens to my position if the stock drops 5% and vol spikes 10%?"
+    category: G
+    query_type: options_scenario_whatif
+    expected_tools: [options_analysis]
+    description: Scenario analysis — specific position with spot and vol shift, expects P&L grid
+    smoke: true
+
+  - id: G8
+    query: "I'm thinking about selling covered calls on my NVDA shares. What would the Greeks look like on the 950 strike expiring next month? I want to understand my theta income vs delta risk."
+    category: G
+    query_type: options_greeks_hypothetical
+    expected_tools: [options_analysis, market_data_analysis]
+    description: Hypothetical Greeks computation — may need current NVDA price first
+
+  - id: G9
+    query: "I have a straddle on TSLA — long the 250 call and long the 250 put, both expiring in April, paid $12 for the call and $10 for the put. What are my breakevens and max loss?"
+    category: G
+    query_type: options_multi_leg_risk
+    expected_tools: [options_analysis]
+    description: Multi-leg position risk profile — straddle breakevens and net Greeks
+    smoke: true
+
+  - id: G10
+    query: "I sold a naked call on AMZN — 1 contract, 200 strike, July expiry, collected $6.50 premium. How bad can this get? Show me the risk profile."
+    category: G
+    query_type: options_naked_call_risk
+    expected_tools: [options_analysis]
+    description: Naked short call risk — must show unlimited loss, not a finite number
+
+  - id: G11
+    query: "I want to put on an iron condor on SPY — sell the 520 call, buy the 530 call, sell the 480 put, buy the 470 put, all June expiry. What's the risk/reward and where do I break even?"
+    category: G
+    query_type: options_iron_condor
+    expected_tools: [options_analysis]
+    description: 4-leg iron condor risk profile — max profit capped at premium, max loss = wing width minus premium, two breakevens
+
+  # G.3 — Commodities & Futures (P6)
+
+  - id: G12
+    query: "Where is gold trading right now?"
+    category: G
+    query_type: commodity_quote
+    expected_tools: [market_data_analysis]
+    description: Basic commodity quote — should resolve GCUSD symbol and use existing quote tool
+    smoke: true
+
+  - id: G13
+    query: "Show me a 6-month daily chart of crude oil. I want to see if it's still trending down."
+    category: G
+    query_type: commodity_candles
+    expected_tools: [market_data_analysis]
+    description: Commodity candle data — should resolve CLUSD and use existing candle tool
+
+  - id: G14
+    query: "What commodities can I look up? I want to check copper and natural gas."
+    category: G
+    query_type: commodity_discovery
+    expected_tools: [market_data_analysis]
+    description: Commodity list discovery — should use list_commodities tool, then quote HGUSD and NGUSD
+
+  - id: G15
+    query: "Gold is ripping. Give me the price plus NVDA and AAPL — I want to see how my holdings compare to the gold move today."
+    category: G
+    query_type: commodity_vs_stocks
+    expected_tools: [market_data_analysis]
+    description: Mixed commodity + equity quotes in single request — tests that quote tool handles both symbol types
+
+  # G.4 — Walk-Forward Validation (P3)
+
+  - id: G16
+    query: "I've been running an RSI mean-reversion strategy on AAPL and it looks great in backtest. But is it actually robust or did I just overfit? Run a walk-forward test on it — I have data from 2018 to 2025."
+    category: G
+    query_type: strategy_walk_forward
+    expected_tools: [strategy_analysis]
+    description: Walk-forward validation request — date range is 7 years, should trigger walk-forward with 5 windows
+    smoke: true
+
+  - id: G17
+    query: "I backtested a MACD crossover on MSFT from 2020-2025 and got a 1.8 Sharpe. That seems too good to be true. Can you stress test it across different time periods so I know it's not curve-fitted garbage?"
+    category: G
+    query_type: strategy_walk_forward_skeptical
+    expected_tools: [strategy_analysis]
+    description: Overfitting skepticism — should trigger walk-forward, report consistency and degradation
+
+  - id: G18
+    query: "Compare how a Bollinger band strategy on GOOGL holds up: just a normal backtest from 2019-2025, versus a walk-forward validation over the same period. I want to see if the out-of-sample numbers are worse."
+    category: G
+    query_type: strategy_backtest_vs_walkforward
+    expected_tools: [strategy_analysis]
+    description: Head-to-head single backtest vs walk-forward — should run both and contrast metrics
+
+  # G.5 — Shared-Capital Portfolio Backtesting (P1)
+
+  - id: G19
+    query: "Backtest an RSI mean-reversion strategy across AAPL, MSFT, GOOGL, AMZN, and NVDA with a shared $100k capital pool. I want to see what happens when multiple signals fire and I can't buy everything."
+    category: G
+    query_type: strategy_portfolio_mode
+    expected_tools: [strategy_analysis]
+    description: Portfolio allocation mode — shared capital, signal competition, skipped signals tracking
+    smoke: true
+
+  - id: G20
+    query: "I run a 5-stock momentum basket with equal-weight sizing, max 20% per name, and no more than 3 positions at once. Backtest it with shared capital on TSLA, NVDA, AMD, META, NFLX — 2020 to 2025."
+    category: G
+    query_type: strategy_portfolio_constrained
+    expected_tools: [strategy_analysis]
+    description: Portfolio mode with explicit position sizing constraints — max_positions=3, max_position_pct=20
+
+  - id: G21
+    query: "Run the same SMA crossover strategy on AAPL, MSFT, and GOOGL two ways: first independently per stock, then with shared capital. I want to see the gap between theoretical and realistic returns."
+    category: G
+    query_type: strategy_independent_vs_portfolio
+    expected_tools: [strategy_analysis]
+    description: Independent vs portfolio mode comparison — same strategy, different allocation modes, should show capital-constrained drag
+
+  # G.6 — Expanded Indicators (P4)
+
+  - id: G22
+    query: "Backtest a VWAP reversion strategy on NVDA using 5-min bars — buy when price drops below VWAP with RSI under 35, sell when it crosses back above VWAP. Flat by close. Last 6 months."
+    category: G
+    query_type: strategy_vwap_intraday
+    expected_tools: [strategy_analysis]
+    description: VWAP indicator on intraday bars — tests VWAP session reset and intraday-only validation
+    smoke: true
+
+  - id: G23
+    query: "Can you backtest candlestick patterns on AAPL? I want to buy on bullish engulfing patterns and sell when RSI hits 70. Daily bars, 2020-2025."
+    category: G
+    query_type: strategy_candlestick_pattern
+    expected_tools: [strategy_analysis]
+    description: Candlestick pattern indicator — CDL_ENGULFING with equals operator, mixed with RSI exit
+
+  - id: G24
+    query: "Build me a trend-following strategy on MSFT that uses the slope of linear regression to confirm the trend direction, not just moving average crosses. Daily data, past 5 years."
+    category: G
+    query_type: strategy_statistical_indicator
+    expected_tools: [strategy_analysis]
+    description: LINEARREG_SLOPE statistical indicator — tests new indicator type for trend confirmation
+
+  - id: G25
+    query: "Try to run a VWAP strategy on daily bars for AAPL."
+    category: G
+    query_type: strategy_vwap_daily_rejection
+    expected_tools: [strategy_analysis]
+    description: VWAP on daily bars should produce a clear validation error — VWAP is intraday-only
+
+  # G.7 — Multi-Agent with New Capabilities
+
+  - id: G26
+    query: "My portfolio is AAPL 30%, MSFT 20%, QQQ 30%, CASH 20%. Give me the full picture: risk metrics, sector breakdown, and how the market's doing today so I know if I should be worried."
+    category: G
+    query_type: portfolio_risk_plus_market
+    expected_tools: [portfolio_analysis, market_data_analysis]
+    description: Multi-agent — portfolio risk + allocation + live market context in one request
+    smoke: true
+
+  - id: G27
+    query: "I'm long 3 NVDA 900 calls expiring next month. NVDA just reported earnings — what's the news saying and how does my position look under different vol scenarios?"
+    category: G
+    query_type: options_scenario_plus_news
+    expected_tools: [events_news_analysis, options_analysis]
+    expected_sequence: [events_news_analysis, options_analysis]
+    description: Multi-agent — news context informs vol scenario analysis for options position
+
+  - id: G28
+    query: "Gold is spiking. What's driving it and where is it trading relative to the last 3 months?"
+    category: G
+    query_type: commodity_with_news
+    expected_tools: [market_data_analysis, events_news_analysis]
+    description: Commodity price + news explanation — tests commodity support with multi-agent synthesis
+
+  - id: G29
+    query: "I backtested a mean-reversion strategy on AAPL and it passed walk-forward with 80% consistency. Now I want to check — is AAPL in a mean-reverting regime right now or is it trending? Show me technicals."
+    category: G
+    query_type: strategy_then_technicals
+    expected_tools: [strategy_analysis, market_data_analysis]
+    description: Strategy validation followed by current regime check — deployment readiness assessment
+
+  - id: G30
+    query: "My portfolio is 100% in NVDA. Show me how concentrated and risky this is compared to holding VOO, and give me NVDA's latest news so I know if something is about to blow up."
+    category: G
+    query_type: portfolio_risk_plus_news
+    expected_tools: [portfolio_analysis, events_news_analysis]
+    description: Concentrated single-stock portfolio risk + catalyst awareness — retail investor reality check
+
 
   # ─────────────────────────────────────────────
   # Category F: Session/Context (Multi-Turn)

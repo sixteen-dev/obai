@@ -25,6 +25,7 @@ from .tools import (
     get_short_volume,
     get_technical_indicators,
     is_market_open,
+    list_commodities,
 )
 
 # Server start time for uptime tracking
@@ -405,6 +406,29 @@ async def market_data_get_technical_indicators_tool(
                 "indicator_type": indicator_type,
             },
         )
+        return format_api_error(e, "FMP")
+
+
+@mcp.tool(
+    annotations={
+        "title": "List Available Commodities",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def market_data_list_commodities_tool() -> dict[str, Any]:
+    """List available commodity/futures symbols with display names.
+
+    Returns:
+        List of commodity symbols and their names
+    """
+    try:
+        result = await list_commodities()
+        return truncate_response(result)
+    except Exception as e:
+        log_error(logger, e, context={"tool": "market_data_list_commodities_tool"})
         return format_api_error(e, "FMP")
 
 

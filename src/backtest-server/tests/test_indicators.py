@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import polars as pl
+import pytest
 
 from src.engine.indicators import compute_indicators, get_supported_indicators
 from src.models.strategy import IndicatorConfig
@@ -121,7 +124,8 @@ class TestGetSupportedIndicators:
 
     def test_returns_all_indicators(self) -> None:
         """Should return entries for all supported indicators."""
-        supported = get_supported_indicators()
+        result = get_supported_indicators()
+        supported = result["indicators"]
         assert "SMA" in supported
         assert "RSI" in supported
         assert "MACD" in supported
@@ -130,8 +134,8 @@ class TestGetSupportedIndicators:
 
     def test_indicator_info_structure(self) -> None:
         """Each indicator should have expected info fields."""
-        supported = get_supported_indicators()
-        for name, info in supported.items():
+        result = get_supported_indicators()
+        for name, info in result["indicators"].items():
             assert "params" in info, f"{name} missing params"
             assert "multi_output" in info, f"{name} missing multi_output"
             assert "needs_hlc" in info, f"{name} missing needs_hlc"
@@ -139,11 +143,285 @@ class TestGetSupportedIndicators:
 
     def test_macd_is_multi_output(self) -> None:
         """MACD should be marked as multi-output."""
-        supported = get_supported_indicators()
+        supported = get_supported_indicators()["indicators"]
         assert supported["MACD"]["multi_output"] is True
         assert supported["MACD"]["output_columns"] == ["macd", "signal", "hist"]
 
     def test_sma_is_single_output(self) -> None:
         """SMA should be marked as single-output."""
-        supported = get_supported_indicators()
+        supported = get_supported_indicators()["indicators"]
         assert supported["SMA"]["multi_output"] is False
+
+    def test_candlestick_patterns_registered(self) -> None:
+        """Candlestick patterns should be in the supported registry."""
+        supported = get_supported_indicators()["indicators"]
+        assert "CDL_DOJI" in supported
+        assert "CDL_ENGULFING" in supported
+        assert "CDL_HAMMER" in supported
+        assert supported["CDL_DOJI"]["output_scale"] == "signal"
+        assert supported["CDL_DOJI"]["needs_ohlc"] is True
+
+    def test_statistical_indicators_registered(self) -> None:
+        """Statistical indicators should be in the registry."""
+        supported = get_supported_indicators()["indicators"]
+        for name in ["LINEARREG", "LINEARREG_SLOPE", "LINEARREG_ANGLE", "STDDEV"]:
+            assert name in supported, f"{name} missing"
+
+    def test_dual_input_indicators_registered(self) -> None:
+        """BETA and CORREL should be marked as dual-input."""
+        supported = get_supported_indicators()["indicators"]
+        assert supported["BETA"]["dual_input"] is True
+        assert supported["CORREL"]["dual_input"] is True
+
+    def test_vwap_marked_intraday_only(self) -> None:
+        """VWAP should be marked as intraday-only."""
+        supported = get_supported_indicators()["indicators"]
+        assert supported["VWAP"]["intraday_only"] is True
+
+    def test_raw_columns_included(self) -> None:
+        """Raw OHLCV columns should be listed as valid operand references."""
+        result = get_supported_indicators()
+        assert "raw_columns" in result
+        raw = result["raw_columns"]
+        assert "close" in raw
+        assert "open" in raw
+        assert "high" in raw
+        assert "low" in raw
+        assert "volume" in raw
+
+
+class TestVWAPIndicator:
+    """Tests for VWAP computation."""
+
+    @staticmethod
+    def _make_intraday_df() -> pl.DataFrame:
+        """Create a 2-day intraday DataFrame for VWAP testing."""
+        # Day 1: 3 bars, Day 2: 3 bars
+        dates = [
+            datetime(2024, 1, 2, 10, 0),
+            datetime(2024, 1, 2, 11, 0),
+            datetime(2024, 1, 2, 12, 0),
+            datetime(2024, 1, 3, 10, 0),
+            datetime(2024, 1, 3, 11, 0),
+            datetime(2024, 1, 3, 12, 0),
+        ]
+        return pl.DataFrame(
+            {
+                "date": dates,
+                "open": [100.0, 102.0, 104.0, 106.0, 108.0, 110.0],
+                "high": [103.0, 105.0, 107.0, 109.0, 111.0, 113.0],
+                "low": [99.0, 101.0, 103.0, 105.0, 107.0, 109.0],
+                "close": [102.0, 104.0, 106.0, 108.0, 110.0, 112.0],
+                "volume": [1000, 2000, 3000, 1000, 2000, 3000],
+            }
+        )
+
+    def test_vwap_produces_column(self) -> None:
+        """VWAP should produce a named column with float values."""
+        df = self._make_intraday_df()
+        configs = [IndicatorConfig(id="vwap", type="VWAP")]
+        result, warnings = compute_indicators(df, configs, timeframe="1hour")
+
+        assert "vwap" in result.columns
+        assert not warnings
+        assert result["vwap"].dtype == pl.Float64
+
+    def test_vwap_resets_per_session(self) -> None:
+        """VWAP should reset at each new trading day boundary."""
+        df = self._make_intraday_df()
+        configs = [IndicatorConfig(id="vwap", type="VWAP")]
+        result, _ = compute_indicators(df, configs, timeframe="5min")
+
+        vwap_vals = result["vwap"].to_list()
+        # First bar of each day: VWAP = typical_price (since it's the first bar)
+        # Day 1, bar 0: tp = (103 + 99 + 102) / 3 = 101.333...
+        expected_first_bar = (103.0 + 99.0 + 102.0) / 3.0
+        assert abs(vwap_vals[0] - expected_first_bar) < 0.01
+
+        # Day 2, bar 0: tp = (109 + 105 + 108) / 3 = 107.333...
+        expected_day2_first = (109.0 + 105.0 + 108.0) / 3.0
+        assert abs(vwap_vals[3] - expected_day2_first) < 0.01
+
+    def test_vwap_daily_timeframe_raises(self) -> None:
+        """VWAP with daily timeframe should raise ValueError."""
+        df = self._make_intraday_df()
+        configs = [IndicatorConfig(id="vwap", type="VWAP")]
+
+        with pytest.raises(ValueError, match="VWAP requires intraday data"):
+            compute_indicators(df, configs, timeframe="daily")
+
+
+class TestCandlestickPatterns:
+    """Tests for candlestick pattern indicators."""
+
+    def test_cdl_doji_produces_integer_output(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """CDL_DOJI should produce an integer signal column."""
+        configs = [IndicatorConfig(id="doji", type="CDL_DOJI")]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "doji" in result.columns
+        assert not warnings
+        # Should be integer type (candlestick patterns return i32/i64)
+        assert result["doji"].dtype in (pl.Int32, pl.Int64)
+
+    def test_cdl_engulfing_produces_valid_signals(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """CDL_ENGULFING should produce values in {-100, 0, 100}."""
+        configs = [IndicatorConfig(id="engulfing", type="CDL_ENGULFING")]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "engulfing" in result.columns
+        assert not warnings
+        unique_vals = set(result["engulfing"].to_list())
+        assert unique_vals.issubset({-100, 0, 100})
+
+    def test_cdl_hammer_produces_column(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """CDL_HAMMER should produce a named output column."""
+        configs = [IndicatorConfig(id="hammer", type="CDL_HAMMER")]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "hammer" in result.columns
+        assert not warnings
+
+    def test_cdl_morningstar_produces_column(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """CDL_MORNINGSTAR should produce a named output column."""
+        configs = [IndicatorConfig(id="mstar", type="CDL_MORNINGSTAR")]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "mstar" in result.columns
+        assert not warnings
+
+
+class TestStatisticalIndicators:
+    """Tests for statistical indicator computation."""
+
+    def test_linearreg_slope_produces_float(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """LINEARREG_SLOPE should produce a float column."""
+        configs = [
+            IndicatorConfig(
+                id="slope_14",
+                type="LINEARREG_SLOPE",
+                params={"length": 14},
+            ),
+        ]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "slope_14" in result.columns
+        assert not warnings
+        assert result["slope_14"].dtype == pl.Float64
+
+    def test_linearreg_angle_produces_column(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """LINEARREG_ANGLE should produce a valid column."""
+        configs = [
+            IndicatorConfig(
+                id="angle_14",
+                type="LINEARREG_ANGLE",
+                params={"length": 14},
+            ),
+        ]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "angle_14" in result.columns
+        assert not warnings
+
+    def test_stddev_produces_column(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """STDDEV should produce a valid column."""
+        configs = [
+            IndicatorConfig(id="std_20", type="STDDEV", params={"length": 20}),
+        ]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "std_20" in result.columns
+        assert not warnings
+        # Standard deviation should be non-negative
+        non_null = result.filter(pl.col("std_20").is_not_null())
+        assert non_null["std_20"].min() >= 0  # type: ignore[operator]
+
+    def test_linearreg_produces_column(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """LINEARREG should produce a valid column."""
+        configs = [
+            IndicatorConfig(id="lr_14", type="LINEARREG", params={"length": 14}),
+        ]
+        result, warnings = compute_indicators(sample_ohlcv_df, configs)
+
+        assert "lr_14" in result.columns
+        assert not warnings
+
+
+class TestDualInputIndicators:
+    """Tests for dual-input indicators (BETA, CORREL)."""
+
+    def test_beta_with_second_source(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """BETA should compute between source and second_source columns."""
+        # First compute an SMA to use as second source
+        sma_config = [
+            IndicatorConfig(id="sma_20", type="SMA", params={"length": 20}),
+        ]
+        df_with_sma, _ = compute_indicators(sample_ohlcv_df, sma_config)
+
+        beta_config = [
+            IndicatorConfig(
+                id="beta_20",
+                type="BETA",
+                source="close",
+                params={"length": 5, "second_source": "sma_20"},
+            ),
+        ]
+        result, warnings = compute_indicators(df_with_sma, beta_config)
+
+        assert "beta_20" in result.columns
+        assert not warnings
+        assert result["beta_20"].dtype == pl.Float64
+
+    def test_correl_with_second_source(
+        self,
+        sample_ohlcv_df: pl.DataFrame,
+    ) -> None:
+        """CORREL should compute correlation between two columns."""
+        # First compute an EMA to use as second source
+        ema_config = [
+            IndicatorConfig(id="ema_20", type="EMA", params={"length": 20}),
+        ]
+        df_with_ema, _ = compute_indicators(sample_ohlcv_df, ema_config)
+
+        correl_config = [
+            IndicatorConfig(
+                id="corr_20",
+                type="CORREL",
+                source="close",
+                params={"length": 20, "second_source": "ema_20"},
+            ),
+        ]
+        result, warnings = compute_indicators(df_with_ema, correl_config)
+
+        assert "corr_20" in result.columns
+        assert not warnings
+        # Correlation between close and its EMA should be high
+        valid = result.filter(pl.col("corr_20").is_not_nan() & pl.col("corr_20").is_not_null())
+        assert valid["corr_20"].mean() > 0.5  # type: ignore[operator]

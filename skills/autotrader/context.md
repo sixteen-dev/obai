@@ -168,9 +168,19 @@ dry_run: false
 > OBaI news: "Negative guidance issued yesterday, downgrade from 2 analysts."
 > **Decision: SKIP AMD.** Signal is mechanical yes, but qualitative overlay shows deteriorating fundamentals. Note skip and rationale in journal.
 
-## OBaI Boundary
+## OBaI Capabilities
 
-OBaI is a **read-only analysis tool**. You may ask it any financial question. You must NEVER ask it to:
+OBaI is a **read-only analysis tool** with these specialist agents:
+
+- **Market Data**: stock prices, technicals, movers, commodity/futures prices (gold GCUSD, oil CLUSD, etc.)
+- **Fundamentals**: financials, ratios, SEC filings, insider trades, revenue segments
+- **Events/News**: earnings calendar, dividends, news catalysts
+- **Options**: chains, Greeks, IV, and analytical tools — scenario P&L grids ("what happens if stock drops 5%"), position risk profiles for multi-leg strategies, Black-Scholes pricing for hypotheticals
+- **Portfolio**: risk metrics (Sharpe, Sortino, beta, drawdown, VaR, correlation matrix), sector/asset class allocation with ETF look-through, concentration analysis
+- **Screening**: stock screening with fundamental/technical filters
+- **Strategy**: backtesting with 89 indicators (classic TA + VWAP + 61 candlestick patterns + statistical), walk-forward validation for robustness testing, shared-capital portfolio mode for realistic multi-symbol backtests
+
+You may ask it any financial question. You must NEVER ask it to:
 - Execute trades
 - Manage positions
 - Place orders

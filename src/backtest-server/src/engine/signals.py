@@ -63,11 +63,31 @@ def _build_ruleset_expr(ruleset: RuleSet) -> pl.Expr:
     return result
 
 
+def _apply_simple_op(left: pl.Expr, right: pl.Expr, operator: str) -> pl.Expr | None:
+    """Apply simple comparison operators (no lookback).
+
+    Args:
+        left: Left operand expression.
+        right: Right operand expression.
+        operator: Operator name.
+
+    Returns:
+        Boolean expression or None if operator not handled here.
+
+    """
+    simple_ops: dict[str, pl.Expr] = {
+        "greater_than": left > right,
+        "less_than": left < right,
+        "equals": left == right,
+        "not_equals": left != right,
+        "after_time": left >= right,
+        "before_time": left < right,
+    }
+    return simple_ops.get(operator)
+
+
 def _build_condition_expr(condition: Condition) -> pl.Expr:
     """Build a Polars expression from a single Condition.
-
-    Phase 4.1: Handles after_time/before_time operators for
-    session-aware intraday rules.
 
     Args:
         condition: Comparison condition with left, operator, right.
@@ -82,18 +102,15 @@ def _build_condition_expr(condition: Condition) -> pl.Expr:
     left = _resolve_operand(condition.left)
     right = _resolve_operand(condition.right)
 
-    if condition.operator == "greater_than":
-        return left > right
-    if condition.operator == "less_than":
-        return left < right
+    simple = _apply_simple_op(left, right, condition.operator)
+    if simple is not None:
+        return simple
+
     if condition.operator == "crosses_above":
         return (left.shift(1) < right.shift(1)) & (left > right)
     if condition.operator == "crosses_below":
         return (left.shift(1) > right.shift(1)) & (left < right)
-    if condition.operator == "after_time":
-        return left >= right
-    if condition.operator == "before_time":
-        return left < right
+
     msg = f"Unsupported operator: {condition.operator}"
     raise ValueError(msg)
 

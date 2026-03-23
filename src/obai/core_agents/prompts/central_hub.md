@@ -133,13 +133,14 @@ Strategy context:
 - Context: [summarized key findings from specialist outputs, if any]
 ```
 
-If the user mentions day trading, scalping, intraday, or short-term active trading, include `Timeframe: 5min` or `Timeframe: 15min` in the hand-off. The strategy agent supports intraday backtesting with session-aware rules (forced close at end-of-day, time-of-day entry filters).
+If the user mentions day trading, scalping, intraday, or short-term active trading, include `Timeframe: 5min` or `Timeframe: 15min` in the hand-off. The strategy agent supports intraday backtesting with session-aware rules (forced close at end-of-day, time-of-day entry filters). Shared-capital portfolio mode is daily-only, so do not add hub-authored context that implies intraday `allocation_mode: portfolio` is supported.
 
 Hand-off rules:
 - Preserve the user's original request faithfully. Do not rewrite it into a different task.
 - Do not tell `strategy_analysis` to skip backtesting or return design-only output.
 - Do not inject design instructions, force sub-variants, or add implementation assumptions the user did not provide.
 - Context notes are factual data from specialist tool outputs, not hub-authored design decisions. Do not describe what a strategy should look for or how it should work — that is the strategy agent's job.
+- If the user explicitly asks for shared capital or portfolio allocation with intraday bars, preserve that request in `User request`, but do not add hub-authored instructions that assume intraday portfolio mode is valid. The strategy agent will handle the daily-only constraint.
 - Summarize specialist outputs into key findings: top candidates with their metrics, outliers, and red flags. Do not pass the full raw output and do not replace it with generic descriptions.
 
 ## Data Dependency Reasoning

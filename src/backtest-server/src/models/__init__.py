@@ -11,6 +11,8 @@ from .strategy import (
     RuleSet,
     StrategyDefinition,
     Universe,
+    WalkForwardResult,
+    WindowResult,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "RuleSet",
     "StrategyDefinition",
     "Universe",
+    "WalkForwardResult",
+    "WindowResult",
 ]

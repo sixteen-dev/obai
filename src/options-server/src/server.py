@@ -1,7 +1,9 @@
 """MCP server for real-time options data via Massive API."""
 
 import asyncio
+import json
 import time
+from datetime import date, datetime
 from typing import Any
 
 from fastmcp import FastMCP
@@ -13,6 +15,8 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients.massive_client import MassiveClient
 from .config import Settings, get_settings, load_settings
+from .engine.pricing import breakeven_at_expiry, bs_greeks, bs_price
+from .engine.scenarios import position_pnl_scenarios, position_risk_profile
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
 from .tools import (
@@ -501,6 +505,224 @@ async def options_get_aggregates_tool(
             },
         )
         return format_api_error(e, "Massive")
+
+
+# =============================================================================
+# Analytics Tools - Black-Scholes Pricing, Greeks, and Scenario Analysis
+# =============================================================================
+
+
+def _years_to_expiry(expiry_date: str) -> float:
+    """Convert expiry date string to years remaining.
+
+    Args:
+        expiry_date: Expiration date in YYYY-MM-DD format.
+
+    Returns:
+        Time to expiry in fractional years (floored at 0).
+    """
+    expiry = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+    days = (expiry - date.today()).days
+    return max(days / 365.25, 0.0)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Compute Option Greeks",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def options_compute_greeks_tool(
+    underlying_price: float,
+    strike: float,
+    expiry_date: str,
+    option_type: str,
+    volatility: float,
+    risk_free_rate: float = 0.045,
+) -> dict[str, Any]:
+    """Compute Black-Scholes price, Greeks, and breakeven for an option.
+
+    Use for hypothetical contracts or when you need Greeks computation
+    without a market data lookup.
+
+    Args:
+        underlying_price: Current price of the underlying asset.
+        strike: Option strike price.
+        expiry_date: Expiration date (YYYY-MM-DD).
+        option_type: 'call' or 'put'.
+        volatility: Implied volatility (annualized, e.g. 0.30 for 30%).
+        risk_free_rate: Risk-free interest rate (default 4.5%).
+
+    Returns:
+        Dict with price, greeks, breakeven, and implied_volatility.
+    """
+    try:
+        time_to_expiry = _years_to_expiry(expiry_date)
+        price = bs_price(
+            underlying_price, strike, time_to_expiry, risk_free_rate, volatility, option_type
+        )
+        greeks = bs_greeks(
+            underlying_price, strike, time_to_expiry, risk_free_rate, volatility, option_type
+        )
+        be = breakeven_at_expiry(strike, price, option_type, "long")
+
+        return {
+            "price": round(price, 4),
+            "greeks": {k: round(v, 6) for k, v in greeks.items()},
+            "breakeven": round(be, 4),
+            "implied_volatility": volatility,
+        }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "options_compute_greeks_tool",
+                "underlying_price": underlying_price,
+                "strike": strike,
+                "option_type": option_type,
+            },
+        )
+        return format_api_error(e, "PricingEngine")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Option Scenario Analysis",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def options_scenario_analysis_tool(
+    underlying_price: float,
+    strike: float,
+    expiry_date: str,
+    option_type: str,
+    direction: str,
+    quantity: int,
+    entry_premium: float,
+    implied_volatility: float,
+    risk_free_rate: float = 0.045,
+    contract_multiplier: int = 100,
+) -> dict[str, Any]:
+    """Run P&L scenario analysis across spot-price and volatility changes.
+
+    Use when a user asks "what happens if price drops 5%" or wants to see
+    P&L scenarios across different price and volatility movements.
+
+    Args:
+        underlying_price: Current price of the underlying asset.
+        strike: Option strike price.
+        expiry_date: Expiration date (YYYY-MM-DD).
+        option_type: 'call' or 'put'.
+        direction: 'long' or 'short'.
+        quantity: Number of contracts (each = 100 shares by default).
+        entry_premium: Premium paid (long) or received (short) per share.
+        implied_volatility: Current IV (annualized, e.g. 0.30 for 30%).
+        risk_free_rate: Risk-free interest rate (default 4.5%).
+        contract_multiplier: Shares per contract (default 100 for equity options).
+
+    Returns:
+        Dict with spot_changes, vol_changes, pnl_grid, max_profit, max_loss.
+    """
+    try:
+        time_to_expiry = _years_to_expiry(expiry_date)
+        result = position_pnl_scenarios(
+            current_price=underlying_price,
+            strike=strike,
+            expiry_years=time_to_expiry,
+            option_type=option_type,
+            direction=direction,
+            quantity=quantity,
+            entry_premium=entry_premium,
+            iv=implied_volatility,
+            risk_free_rate=risk_free_rate,
+            contract_multiplier=contract_multiplier,
+        )
+        return dict(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "options_scenario_analysis_tool",
+                "underlying_price": underlying_price,
+                "strike": strike,
+                "option_type": option_type,
+            },
+        )
+        return format_api_error(e, "PricingEngine")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Option Position Risk Profile",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def options_position_risk_profile_tool(
+    contracts_json: str,
+) -> dict[str, Any]:
+    """Compute aggregate risk profile for a multi-leg options position.
+
+    Use for spreads, straddles, iron condors, collars, and other multi-leg
+    strategies. Each contract in the JSON list must specify:
+    underlying_price, strike, expiry_date, option_type, direction,
+    quantity (number of contracts, each = 100 shares by default),
+    entry_premium (per share), iv, risk_free_rate.
+    Optional: contract_multiplier (default 100 for standard equity options).
+
+    Args:
+        contracts_json: JSON string encoding a list of contract dicts.
+
+    Returns:
+        Dict with net_greeks, max_profit, max_loss, breakevens.
+    """
+    try:
+        raw_contracts: list[dict[str, Any]] = json.loads(contracts_json)
+
+        # Convert expiry_date -> expiry_years for each contract
+        contracts: list[dict[str, Any]] = []
+        for raw in raw_contracts:
+            expiry_years = _years_to_expiry(str(raw["expiry_date"]))
+            contracts.append(
+                {
+                    "underlying_price": raw["underlying_price"],
+                    "strike": raw["strike"],
+                    "expiry_years": expiry_years,
+                    "option_type": raw["option_type"],
+                    "direction": raw["direction"],
+                    "quantity": raw["quantity"],
+                    "entry_premium": raw["entry_premium"],
+                    "iv": raw["iv"],
+                    "risk_free_rate": raw.get("risk_free_rate", 0.045),
+                    "contract_multiplier": raw.get("contract_multiplier", 100),
+                }
+            )
+
+        result = position_risk_profile(contracts)
+        return dict(result)
+    except json.JSONDecodeError as e:
+        return {
+            "isError": True,
+            "error": f"Invalid JSON in contracts_json: {e}",
+            "error_type": "JSONDecodeError",
+        }
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={"tool": "options_position_risk_profile_tool"},
+        )
+        return format_api_error(e, "PricingEngine")
 
 
 async def main() -> None:
