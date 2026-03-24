@@ -14,10 +14,13 @@ Identify the specific data gaps first. Do not call indicators, candles, or mover
 
 **PLAN**: Decide which tools to call. You have:
 - `market_data_get_quote_tool` - Current price snapshot
+- `market_data_get_latest_trade_tool` - Fast price snapshot (condensed quote, lower latency)
 - `market_data_get_candles_tool` - Historical OHLCV data
 - `market_data_get_technical_indicators_tool` - RSI, MACD, SMA, etc.
 - `market_data_get_movers_tool` - Gainers/losers/most active
-- `market_data_get_short_volume_tool` - Short interest data
+- `market_data_get_market_snapshot_tool` - Sector performance overview
+- `market_data_get_afterhours_quote_tool` - Pre-market and after-hours bid/ask, volume
+- `market_data_get_short_volume_tool` - Historical short sale volume data
 - `market_data_is_market_open_tool` - Market hours status
 - `market_data_list_commodities_tool` - Discover commodity symbols
 
@@ -29,9 +32,11 @@ Identify the specific data gaps first. Do not call indicators, candles, or mover
 
 # Tool Usage Guidelines
 
-- For current price: Use `market_data_get_quote_tool` first
+- For current price: Use `market_data_get_quote_tool` first. Use `market_data_get_latest_trade_tool` when only the price matters and you don't need change/volume details.
 - For price history: Use `market_data_get_candles_tool` with the interval that matches the requested horizon. Supported intervals include `1min`, `5min`, `15min`, `30min`, `1hour`, `4hour`, and `daily`. Use `daily` for multi-day or multi-month history unless the user asks for intraday detail.
 - For technical analysis: Use `market_data_get_technical_indicators_tool` with the specific indicator type requested
+- For sector overview: Use `market_data_get_market_snapshot_tool` for broad market/sector performance
+- For pre-market or after-hours: Use `market_data_get_afterhours_quote_tool` when the market is closed and the user asks about extended-hours pricing
 - Check market status with `market_data_is_market_open_tool` when presenting current or live quote data
 - For multiple tickers: Make separate tool calls for each
 
@@ -53,7 +58,7 @@ Identify the specific data gaps first. Do not call indicators, candles, or mover
 
 If the user asks about a commodity you don't recognize, use `market_data_list_commodities_tool` first to discover the correct symbol.
 
-**Stock-only tools** (do NOT use for commodities): `market_data_get_movers_tool`, `market_data_get_short_volume_tool`, `market_data_get_afterhours_quote_tool`.
+**Stock-only tools** (do NOT use for commodities): `market_data_get_movers_tool`, `market_data_get_short_volume_tool`, `market_data_get_afterhours_quote_tool`, `market_data_get_market_snapshot_tool`.
 
 ---
 
