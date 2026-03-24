@@ -1,5 +1,7 @@
 """FMP (Financial Modeling Prep) API client for portfolio-server."""
 
+import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -147,6 +149,9 @@ class FMPClient:
             ttl_hours=settings.economic_indicators_cache_ttl_hours
         )
         self._etf_cache = ETFHoldingsCache(ttl_hours=settings.etf_holdings_cache_ttl_hours)
+        # Company profile cache: {symbol: (data, timestamp_epoch)}
+        self._company_profile_cache: dict[str, tuple[dict[str, Any], float]] = {}
+        self._company_profile_ttl = 24 * 3600.0  # 24 hours in seconds
 
     async def __aenter__(self) -> "FMPClient":
         """Async context manager entry."""
@@ -430,7 +435,7 @@ class FMPClient:
         return FALLBACK_INFLATION
 
     async def get_company_profile(self, symbol: str) -> dict[str, Any] | None:
-        """Get company profile (for sector information).
+        """Get company profile (for sector information). Uses 24h cache.
 
         Args:
             symbol: Stock ticker symbol.
@@ -439,8 +444,164 @@ class FMPClient:
             Company profile dict or None if unavailable.
 
         """
+        # Check cache first
+        cached = self._company_profile_cache.get(symbol)
+        if cached is not None:
+            data, cached_at = cached
+            if time.monotonic() - cached_at < self._company_profile_ttl:
+                logger.info("company_profile_cache_hit", symbol=symbol)
+                return data
+
         try:
             data = await self._get("profile", {"symbol": symbol})
+
+            if not data or not isinstance(data, list) or len(data) == 0:
+                return None
+
+            result = cast(dict[str, Any], data[0])
+            # Cache the result
+            self._company_profile_cache[symbol] = (result, time.monotonic())
+            return result
+
+        except Exception as e:
+            log_error(logger, e, context={"symbol": symbol, "operation": "get_company_profile"})
+            return None
+
+    async def get_company_profiles_batch(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        """Get company profiles for multiple symbols in parallel.
+
+        Uses cached values where available, fetches uncached in parallel.
+
+        Args:
+            symbols: List of stock ticker symbols.
+
+        Returns:
+            Map of symbol to company profile dict.
+
+        """
+        results: dict[str, dict[str, Any]] = {}
+        to_fetch: list[str] = []
+
+        # Check cache first for each symbol
+        for symbol in symbols:
+            cached = self._company_profile_cache.get(symbol)
+            if cached is not None:
+                data, cached_at = cached
+                if time.monotonic() - cached_at < self._company_profile_ttl:
+                    results[symbol] = data
+                    continue
+            to_fetch.append(symbol)
+
+        if to_fetch:
+            logger.info(
+                "company_profiles_batch_fetch",
+                cached=len(results),
+                fetching=len(to_fetch),
+            )
+            tasks = [self.get_company_profile(s) for s in to_fetch]
+            fetched: list[dict[str, Any] | None | BaseException] = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
+            for symbol, raw_result in zip(to_fetch, fetched, strict=True):
+                if isinstance(raw_result, BaseException):
+                    logger.warning(
+                        "company_profile_fetch_failed",
+                        symbol=symbol,
+                        error=str(raw_result),
+                    )
+                elif raw_result is not None:
+                    results[symbol] = raw_result
+
+        return results
+
+    # ─────────────────────────────────────────────────────────────────
+    # Historical Prices
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_historical_prices(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+    ) -> list[dict[str, Any]]:
+        """Get historical daily prices for a symbol.
+
+        Args:
+            symbol: Ticker symbol.
+            from_date: Start date (YYYY-MM-DD).
+            to_date: End date (YYYY-MM-DD).
+
+        Returns:
+            List of price dicts with date, close, and OHLCV fields.
+            Sorted by date ascending.
+
+        Raises:
+            httpx.HTTPError: If request fails.
+
+        """
+        data = await self._get(
+            "historical-price-eod/full",
+            {"symbol": symbol, "from": from_date, "to": to_date},
+        )
+
+        if not data or not isinstance(data, list):
+            return []
+
+        # FMP returns newest first; sort ascending by date
+        data.sort(key=lambda d: d.get("date", ""))
+        return cast(list[dict[str, Any]], data)
+
+    async def get_historical_prices_multi(
+        self,
+        symbols: list[str],
+        from_date: str,
+        to_date: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Get historical prices for multiple symbols in parallel.
+
+        Args:
+            symbols: List of ticker symbols.
+            from_date: Start date (YYYY-MM-DD).
+            to_date: End date (YYYY-MM-DD).
+
+        Returns:
+            Map of symbol to price data list. Symbols that failed are omitted.
+
+        """
+        tasks = [self.get_historical_prices(s, from_date, to_date) for s in symbols]
+        results_raw: list[list[dict[str, Any]] | BaseException] = await asyncio.gather(
+            *tasks, return_exceptions=True
+        )
+
+        results: dict[str, list[dict[str, Any]]] = {}
+        for symbol, raw_result in zip(symbols, results_raw, strict=True):
+            if isinstance(raw_result, BaseException):
+                logger.warning(
+                    "historical_prices_fetch_failed",
+                    symbol=symbol,
+                    error=str(raw_result),
+                )
+            elif raw_result:
+                results[symbol] = raw_result
+
+        return results
+
+    # ─────────────────────────────────────────────────────────────────
+    # Quotes
+    # ─────────────────────────────────────────────────────────────────
+
+    async def get_quote(self, symbol: str) -> dict[str, Any] | None:
+        """Get current quote for a symbol.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            Quote dict with price, volume, etc. or None if unavailable.
+
+        """
+        try:
+            data = await self._get("quote", {"symbol": symbol})
 
             if not data or not isinstance(data, list) or len(data) == 0:
                 return None
@@ -448,8 +609,36 @@ class FMPClient:
             return cast(dict[str, Any], data[0])
 
         except Exception as e:
-            log_error(logger, e, context={"symbol": symbol, "operation": "get_company_profile"})
+            log_error(logger, e, context={"symbol": symbol, "operation": "get_quote"})
             return None
+
+    async def get_quotes_batch(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        """Get current quotes for multiple symbols in parallel.
+
+        Args:
+            symbols: List of ticker symbols.
+
+        Returns:
+            Map of symbol to quote dict. Symbols that failed are omitted.
+
+        """
+        tasks = [self.get_quote(s) for s in symbols]
+        results_raw: list[dict[str, Any] | None | BaseException] = await asyncio.gather(
+            *tasks, return_exceptions=True
+        )
+
+        results: dict[str, dict[str, Any]] = {}
+        for symbol, raw_result in zip(symbols, results_raw, strict=True):
+            if isinstance(raw_result, BaseException):
+                logger.warning(
+                    "quote_fetch_failed",
+                    symbol=symbol,
+                    error=str(raw_result),
+                )
+            elif raw_result is not None:
+                results[symbol] = raw_result
+
+        return results
 
     # ─────────────────────────────────────────────────────────────────
     # Health Check
