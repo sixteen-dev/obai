@@ -336,6 +336,36 @@ class FMPClient:
         self._filings_cache[cache_key] = result
         return result
 
+    async def get_insider_trading_statistics(
+        self, symbol: str, limit: int = 4
+    ) -> list[dict[str, Any]]:
+        """Get aggregated insider trading statistics by quarter.
+
+        Args:
+            symbol: Stock ticker symbol
+            limit: Number of most recent quarters to return (default: 4)
+
+        Returns:
+            List of quarterly insider trading statistics, most recent first
+        """
+        cache_key = f"insider-stats:{symbol.upper()}:{limit}"
+        if cache_key in self._filings_cache:
+            logger.debug("cache_hit", endpoint="insider-trading-statistics", symbol=symbol)
+            return self._filings_cache[cache_key]
+
+        data = await self._get("insider-trading/statistics", {"symbol": symbol})
+
+        # API returns all quarters — sort by year/quarter descending and limit
+        sorted_data = sorted(
+            data,
+            key=lambda q: (q.get("year", 0), q.get("quarter", 0)),
+            reverse=True,
+        )
+        result = sorted_data[:limit]
+
+        self._filings_cache[cache_key] = result
+        return result
+
     async def get_revenue_product_segmentation(
         self, symbol: str, period: str = "annual"
     ) -> list[dict[str, Any]]:

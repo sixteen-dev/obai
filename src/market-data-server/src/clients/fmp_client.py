@@ -169,17 +169,15 @@ class FMPClient:
     async def get_afterhours_quote(self, symbol: str) -> list[dict[str, Any]]:
         """Get after-hours quote for a symbol.
 
-        NOTE: This endpoint may not be available in the new FMP API.
-        Will attempt to use the old endpoint and may return errors.
+        Requires FMP Professional plan or higher.
 
         Args:
             symbol: Stock ticker symbol
 
         Returns:
-            List with after-hours quote data
+            List with after-hours bid/ask prices, volume, and trends
         """
-        # This endpoint may no longer exist in new FMP API
-        data: list[dict[str, Any]] = await self._get("pre-post-market", {"symbol": symbol})
+        data: list[dict[str, Any]] = await self._get("aftermarket-quote", {"symbol": symbol})
         return data
 
     async def is_market_open(self) -> list[dict[str, Any]]:
@@ -235,6 +233,15 @@ class FMPClient:
         data: list[dict[str, Any]] = await self._get(
             f"technical-indicators/{indicator_lower}", params
         )
+        return data
+
+    async def get_commodities_list(self) -> list[dict[str, Any]]:
+        """Get list of available commodity symbols.
+
+        Returns:
+            List of commodities with symbol and name
+        """
+        data: list[dict[str, Any]] = await self._get("commodities-list")
         return data
 
     async def health_check(self, timeout: float = 5.0) -> bool:
