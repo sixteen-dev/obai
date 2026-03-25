@@ -1,9 +1,5 @@
 language: en-US
-tone_instructions: >
-  Be direct and concise. Only flag issues that could cause bugs, security
-  vulnerabilities, data corruption, or architectural rot. Do not suggest
-  stylistic improvements, naming changes, or "nice to have" refactors.
-  If you are unsure whether something is a real issue, do not comment on it.
+tone_instructions: "Direct and concise. Only flag bugs, security issues, data corruption, or architectural problems. No style nits or refactoring suggestions."
 
 reviews:
   profile: assertive

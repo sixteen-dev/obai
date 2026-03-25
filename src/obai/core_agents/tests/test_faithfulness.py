@@ -1,12 +1,12 @@
 """Unit tests for faithfulness and completeness scorers.
 
-All tests mock litellm to avoid real API calls.
+All tests mock structured_completion to avoid real API calls.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -247,7 +247,7 @@ class TestMatchNumber:
         assert result.source_tool == "get_quote"
 
     def test_within_tolerance(self) -> None:
-        """Match within price tolerance (±$0.01)."""
+        """Match within price tolerance (+-$0.01)."""
         extracted = ExtractedNumber(
             value=182.50,
             raw_text="$182.50",
@@ -259,7 +259,7 @@ class TestMatchNumber:
         assert result.matched is True
 
     def test_percent_conversion(self) -> None:
-        """Match 2.3% in response against 0.023 in API (×100 conversion)."""
+        """Match 2.3% in response against 0.023 in API (x100 conversion)."""
         extracted = ExtractedNumber(
             value=2.3,
             raw_text="2.3%",
@@ -330,26 +330,8 @@ class TestScoreNumeric:
 
 
 # ---------------------------------------------------------------------------
-# Async scorer tests (mocked litellm)
+# Async scorer tests (mocked structured_completion)
 # ---------------------------------------------------------------------------
-
-
-def _mock_faithfulness_response(judgment: FaithfulnessJudgment) -> MagicMock:
-    """Create mock litellm response for faithfulness judge."""
-    response = MagicMock()
-    choice = MagicMock()
-    choice.message.content = judgment.model_dump_json()
-    response.choices = [choice]
-    return response
-
-
-def _mock_completeness_response(judgment: CompletenessJudgment) -> MagicMock:
-    """Create mock litellm response for completeness judge."""
-    response = MagicMock()
-    choice = MagicMock()
-    choice.message.content = judgment.model_dump_json()
-    response.choices = [choice]
-    return response
 
 
 SAMPLE_OUTPUT: dict[str, Any] = {
@@ -364,24 +346,24 @@ SAMPLE_OUTPUT: dict[str, Any] = {
     "tool_outputs": "get_quote: price=182.50",
 }
 
+_SC_PATH = "evaluation.scorers.faithfulness.structured_completion"
+
 
 class TestFaithfulnessScorerAsync:
-    """Test FaithfulnessScorer with mocked litellm."""
+    """Test FaithfulnessScorer with mocked structured_completion."""
 
     @pytest.mark.asyncio
     async def test_full_flow_pass(self) -> None:
-        """Both numeric and semantic pass → faithfulness_pass=True."""
+        """Both numeric and semantic pass -> faithfulness_pass=True."""
         judgment = FaithfulnessJudgment(
             faithful=True,
             unfaithful_claims=[],
             score=0.95,
             reasoning="All good.",
         )
-        mock_resp = _mock_faithfulness_response(judgment)
         scorer = FaithfulnessScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["faithfulness_pass"] is True
@@ -390,7 +372,7 @@ class TestFaithfulnessScorerAsync:
 
     @pytest.mark.asyncio
     async def test_numeric_only_fail(self) -> None:
-        """Numeric fails but semantic passes → faithfulness_pass=True.
+        """Numeric fails but semantic passes -> faithfulness_pass=True.
 
         Semantic judge is authoritative for pass/fail (it can handle derived
         values that deterministic numeric matching can't).
@@ -401,7 +383,6 @@ class TestFaithfulnessScorerAsync:
             score=0.9,
             reasoning="Semantically fine.",
         )
-        mock_resp = _mock_faithfulness_response(judgment)
 
         # Response has a number ($999.99) not in tool outputs
         bad_output = {
@@ -410,8 +391,7 @@ class TestFaithfulnessScorerAsync:
         }
         scorer = FaithfulnessScorer(model_id="test/model", numeric_threshold=0.9)
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=bad_output, query="AAPL price?")
 
         assert result["numeric_pass"] is False
@@ -420,7 +400,7 @@ class TestFaithfulnessScorerAsync:
 
     @pytest.mark.asyncio
     async def test_semantic_only_fail(self) -> None:
-        """Numeric passes but semantic fails → faithfulness_pass=False."""
+        """Numeric passes but semantic fails -> faithfulness_pass=False."""
         judgment = FaithfulnessJudgment(
             faithful=False,
             unfaithful_claims=[
@@ -433,11 +413,9 @@ class TestFaithfulnessScorerAsync:
             score=0.4,
             reasoning="Directional claim unsupported.",
         )
-        mock_resp = _mock_faithfulness_response(judgment)
         scorer = FaithfulnessScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["numeric_pass"] is True
@@ -458,11 +436,10 @@ class TestFaithfulnessScorerAsync:
 
     @pytest.mark.asyncio
     async def test_llm_error_degradation(self) -> None:
-        """LLM failure → faithfulness_pass=False with error key."""
+        """LLM failure -> faithfulness_pass=False with error key."""
         scorer = FaithfulnessScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=RuntimeError("API down"))
+        with patch(_SC_PATH, new_callable=AsyncMock, side_effect=RuntimeError("API down")):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["faithfulness_pass"] is False
@@ -470,22 +447,20 @@ class TestFaithfulnessScorerAsync:
 
 
 class TestCompletenessScorerAsync:
-    """Test CompletenessScorer with mocked litellm."""
+    """Test CompletenessScorer with mocked structured_completion."""
 
     @pytest.mark.asyncio
     async def test_complete_pass(self) -> None:
-        """Full coverage → completeness_pass=True."""
+        """Full coverage -> completeness_pass=True."""
         judgment = CompletenessJudgment(
             complete=True,
             omitted_data=[],
             coverage_score=0.95,
             reasoning="All relevant data included.",
         )
-        mock_resp = _mock_completeness_response(judgment)
         scorer = CompletenessScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["completeness_pass"] is True
@@ -512,14 +487,12 @@ class TestCompletenessScorerAsync:
             coverage_score=0.8,
             reasoning="Missed the price.",
         )
-        mock_resp = _mock_completeness_response(judgment)
         scorer = CompletenessScorer(model_id="test/model", coverage_threshold=0.7)
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
-        # Coverage score (0.8) exceeds threshold (0.7) → passes
+        # Coverage score (0.8) exceeds threshold (0.7) -> passes
         assert result["completeness_pass"] is True
         assert result["omitted_high_severity"] == 1
 
@@ -539,11 +512,9 @@ class TestCompletenessScorerAsync:
             coverage_score=0.85,
             reasoning="Minor context omitted.",
         )
-        mock_resp = _mock_completeness_response(judgment)
         scorer = CompletenessScorer(model_id="test/model", coverage_threshold=0.7)
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["completeness_pass"] is True
@@ -552,11 +523,10 @@ class TestCompletenessScorerAsync:
 
     @pytest.mark.asyncio
     async def test_llm_error_degradation(self) -> None:
-        """LLM failure → completeness_pass=False with error key."""
+        """LLM failure -> completeness_pass=False with error key."""
         scorer = CompletenessScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=RuntimeError("API down"))
+        with patch(_SC_PATH, new_callable=AsyncMock, side_effect=RuntimeError("API down")):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="AAPL price?")
 
         assert result["completeness_pass"] is False
@@ -578,11 +548,9 @@ class TestCompletenessScorerAsync:
             coverage_score=0.5,
             reasoning="Low coverage.",
         )
-        mock_resp = _mock_completeness_response(judgment)
         scorer = CompletenessScorer(model_id="test/model", coverage_threshold=0.7)
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment):
             result = await scorer.score(output=SAMPLE_OUTPUT, query="test")
 
         assert result["completeness_pass"] is False
@@ -597,7 +565,6 @@ class TestCompletenessScorerAsync:
             coverage_score=1.0,
             reasoning="ok",
         )
-        mock_resp = _mock_completeness_response(judgment)
         scorer = CompletenessScorer(model_id="test/model")
         output = {
             "response": "AAPL is at $182",
@@ -605,11 +572,10 @@ class TestCompletenessScorerAsync:
             "tool_outputs": "get_quote: price=182.50",
         }
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment) as mock_sc:
             await scorer.score(output=output, query="price?")
-            call_args = mock_litellm.acompletion.call_args
-            user_msg = call_args.kwargs["messages"][1]["content"]
+            call_args = mock_sc.call_args
+            user_msg = call_args.kwargs["user"]
             assert "price=182.50" in user_msg
 
 
@@ -656,7 +622,7 @@ class TestMatchNumberEdgeCases:
     """Additional edge cases for _match_number tolerance."""
 
     def test_percent_within_tolerance_boundary(self) -> None:
-        """2.3% should match 0.0224 (diff=0.06 after ×100 conversion)."""
+        """2.3% should match 0.0224 (diff=0.06 after x100 conversion)."""
         extracted = ExtractedNumber(
             value=2.3,
             raw_text="2.3%",
@@ -698,7 +664,6 @@ class TestFaithfulnessScorerEdgeCases:
             score=1.0,
             reasoning="ok",
         )
-        mock_resp = _mock_faithfulness_response(judgment)
         scorer = FaithfulnessScorer(model_id="test/model")
         output = {
             "response": "AAPL is at $182",
@@ -706,9 +671,8 @@ class TestFaithfulnessScorerEdgeCases:
             "tool_outputs": "get_quote: price=182.50",
         }
 
-        with patch("evaluation.scorers.faithfulness.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=judgment) as mock_sc:
             await scorer.score(output=output, query="price?")
-            call_args = mock_litellm.acompletion.call_args
-            user_msg = call_args.kwargs["messages"][1]["content"]
+            call_args = mock_sc.call_args
+            user_msg = call_args.kwargs["user"]
             assert "price=182.50" in user_msg

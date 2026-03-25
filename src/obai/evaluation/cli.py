@@ -610,10 +610,6 @@ def print_eval_results(results: dict[str, Any], verbose: bool = False) -> None:
                 color = "green" if eff >= 0.8 else "yellow"
                 status = f"[{color}]{eff:.2f}[/{color}]"
                 details = f"calls={score_data.get('total_calls', 0)}"
-            elif "hallucination_free" in score_data:
-                passed = score_data.get("hallucination_free", False)
-                status = "[green]✓[/green]" if passed else "[red]✗[/red]"
-                details = score_data.get("reason", "")[:50]
             elif "relevant" in score_data:
                 score_val = score_data.get("score", 0)
                 passed = score_data.get("relevant", False)
@@ -694,7 +690,6 @@ _SCORER_PASS_KEYS: dict[str, str] = {
     "StrategyContractScorer": "contract_pass",
     "StrategyGroundingScorer": "grounding_pass",
     "StrategyDecisionScorer": "strategy_decision_pass",
-    "HallucinationScorer": "hallucination_free",
     "AnswerRelevanceScorer": "relevant",
     "TaskCompletionScorer": "task_completed",
     "ToolCorrectnessScorer": "tools_correct",
@@ -1086,8 +1081,8 @@ def evaluate_cmd(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
     model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
     judge_model: Annotated[
-        str, typer.Option("--judge", "-j", help="Model for LLM-based scorers")
-    ] = "anthropic/claude-sonnet-4-5-20250929",
+        str | None, typer.Option("--judge", "-j", help="Model for LLM-based scorers")
+    ] = None,
     no_builtin: Annotated[
         bool, typer.Option("--no-builtin", help="Skip Opik built-in scorers")
     ] = False,
@@ -1278,8 +1273,8 @@ def experiment_cmd(
         ),
     ] = None,
     judge_model: Annotated[
-        str, typer.Option("--judge", "-j", help="Model for LLM-based scorers")
-    ] = "anthropic/claude-sonnet-4-5-20250929",
+        str | None, typer.Option("--judge", "-j", help="Model for LLM-based scorers")
+    ] = None,
     no_builtin: Annotated[
         bool, typer.Option("--no-builtin", help="Skip LLM-based scorers (faster)")
     ] = False,
