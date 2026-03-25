@@ -11,18 +11,18 @@
 OBaI/
 ├── core_agents/                   # Core agent system
 │   ├── central_hub_agent.py     # Routes queries to specialists
-│   ├── market_data_agent.py     # Quotes, prices, technicals
+│   ├── market_data_agent.py     # Quotes, prices, technicals, intraday
 │   ├── fundamentals_agent.py    # Financials, ratios, estimates
 │   ├── events_news_agent.py     # News, earnings, dividends
 │   ├── options_agent.py         # Options chains, Greeks
 │   ├── screener_agent.py        # Stock screening, ticker lookup
 │   ├── portfolio_agent.py       # Portfolio parsing, risk prefs, ETF holdings
+│   ├── strategy_agent.py       # Backtesting, strategy design, optimization
 │   ├── mcp/                     # MCP client integration
 │   │   ├── client.py            # HTTP client for MCP servers
 │   │   └── tool_converter.py   # MCP tools → Agent SDK format
 │   ├── prompts/                 # Agent instruction files (markdown)
 │   ├── tracing/                 # Opik tracing (opik_init.py)
-│   ├── telemetry/               # DynamoDB telemetry
 │   ├── config.py                # Pydantic settings
 │   ├── prompt_loader.py         # Load prompts from files
 │   └── tests/                   # Unit tests
@@ -31,7 +31,7 @@ OBaI/
 │   ├── cli.py                   # Typer CLI (query, evaluate, list-tests)
 │   ├── eval_runner.py           # Evaluation orchestration + YAML loader
 │   ├── test_cases/
-│   │   └── suite.yaml           # 22 test cases (categories A-D)
+│   │   └── suite.yaml           # 139 test cases (categories A-E, G)
 │   ├── trace/                   # Trace capture
 │   │   ├── capture.py           # TraceCapture class
 │   │   └── types.py             # Pydantic trace models
@@ -57,16 +57,16 @@ OBaI/
 
 ```bash
 # Using Docker Compose (recommended)
-cd dev/
 docker compose up -d
 
 # Or start individually
-cd src/servers/fundamentals-server && uv run fastmcp run server.py   # :8001
-cd src/servers/market-data-server && uv run fastmcp run server.py    # :8002
-cd src/servers/events-news-server && uv run fastmcp run server.py    # :8003
-cd src/servers/options-server && uv run fastmcp run server.py        # :8004
-cd src/servers/screening-server && uv run fastmcp run server.py      # :8005
-cd src/servers/portfolio-server && uv run fastmcp run server.py      # :8006
+cd src/fundamentals-server && uv run fastmcp run server.py   # :8001
+cd src/market-data-server && uv run fastmcp run server.py    # :8002
+cd src/events-news-server && uv run fastmcp run server.py    # :8003
+cd src/options-server && uv run fastmcp run server.py        # :8004
+cd src/screening-server && uv run fastmcp run server.py      # :8005
+cd src/portfolio-server && uv run fastmcp run server.py      # :8006
+cd src/backtest-server && uv run fastmcp run server.py       # :8007
 ```
 
 ### 2. Set Environment Variables
@@ -79,6 +79,7 @@ export MCP_EVENTS_NEWS_URL=http://localhost:8003/mcp
 export MCP_OPTIONS_URL=http://localhost:8004/mcp
 export MCP_SCREENER_URL=http://localhost:8005/mcp
 export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
+export MCP_BACKTEST_URL=http://localhost:8007/mcp
 ```
 
 See `clients/cli/.env.example` for all available options.
@@ -134,76 +135,22 @@ uv run python test_connection.py
 
 ## Agent Architecture
 
-```mermaid
-flowchart TD
-    subgraph Input
-        A[User Input]
-    end
-
-    subgraph Guardrails
-        B{Input Guardrail<br/>gpt-5-mini<br/>Valid financial query?}
-    end
-
-    subgraph Rejection
-        C[Reject Query]
-        D[User - rejected]
-    end
-
-    subgraph Processing
-        E[(Session<br/>memory/context)]
-        F[Central Hub Agent<br/>gpt-5.1]
-    end
-
-    subgraph Specialists
-        G[Market Data<br/>Agent]
-        H[Fundamentals<br/>Agent]
-        I[Events/News<br/>Agent]
-        J[Options<br/>Agent]
-        K[Screener<br/>Agent]
-        P[Portfolio<br/>Agent]
-    end
-
-    subgraph MCP[MCP Servers]
-        G1[MCP :8002]
-        H1[MCP :8001]
-        I1[MCP :8003]
-        J1[MCP :8004]
-        K1[MCP :8005]
-        P1[MCP :8006]
-    end
-
-    subgraph Output
-        L[No Output Guardrail yet]
-        M[User Response]
-    end
-
-    A --> B
-    B -->|NO| C --> D
-    B -->|YES| E --> F
-    F --> G & H & I & J & K & P
-    G --> G1
-    H --> H1
-    I --> I1
-    J --> J1
-    K --> K1
-    P --> P1
-    G1 & H1 & I1 & J1 & K1 & P1 --> F
-    F --> L --> M
-```
+![OBaI Architecture](../../docs/architecture.svg)
 
 ### Key Components
 
-**Input Guardrail**: Validates queries before processing. Rejects non-financial questions to save API costs.
+**Input Guardrail** (gpt-4o-mini): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub**: Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-5.1): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
-**Specialists** (6 agents, each with dedicated MCP server):
-1. **Market Data Agent** (:8002): Real-time quotes, historical prices, technical indicators
+**Specialists** (7 agents, each with dedicated MCP server):
+1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
 2. **Fundamentals Agent** (:8001): Financial statements, ratios, analyst estimates
 3. **Events/News Agent** (:8003): News articles, earnings calendar, dividends
 4. **Options Agent** (:8004): Options chains, Greeks, strike selection
 5. **Screener Agent** (:8005): Stock screening, ticker lookup
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
+7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.1 for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)
@@ -242,6 +189,7 @@ export SPECIALIST_MODEL=gpt-5-mini    # Cost-effective for tools
 Per-agent overrides:
 ```bash
 export MARKET_DATA_MODEL=gpt-5-mini         # Override for specific agent
+export STRATEGY_MODEL=gpt-5.1               # Strategy uses orchestrator model by default
 ```
 
 ### Prompts
@@ -295,10 +243,10 @@ uv run python -m evaluation query "What is AAPL trading at?" --verbose
 # Evaluate with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite (22 cases from YAML)
+# Run the full test suite (139 cases from YAML)
 uv run python -m evaluation evaluate --suite
 
-# Run a single category (A=single-agent, B=multi, C=guardrails, D=errors)
+# Run a single category
 uv run python -m evaluation evaluate --suite --category A
 
 # Run guardrail tests only
@@ -329,14 +277,16 @@ uv run python -m evaluation list-tests --category B
 
 ### Test Suite
 
-Test cases are defined in `evaluation/test_cases/suite.yaml` (22 cases across 4 categories):
+Test cases are defined in `evaluation/test_cases/suite.yaml` (139 cases across 6 categories):
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| A | 7 | Single-agent queries (price, fundamentals, news, options, portfolio) |
-| B | 7 | Multi-agent with sequencing (ticker→price, screen→analyze) |
-| C | 5 | Guardrail tests (3 reject, 2 accept) |
-| D | 3 | Error handling (invalid symbol, timeout, malformed) |
+| A | 29 | Single-agent queries (price, fundamentals, news, options, portfolio, strategy) |
+| B | 28 | Multi-agent with sequencing (ticker→price, screen→analyze, backtest flows) |
+| C | 8 | Guardrail tests (reject non-financial, accept valid) |
+| D | 10 | Error handling (invalid symbol, timeout, malformed) |
+| E | 34 | Strategy & backtesting (intraday, daily, multi-indicator, optimization) |
+| G | 30 | Advanced capabilities (portfolio risk, options analytics, cross-domain) |
 
 Suite runs print an aggregate summary with per-category pass/fail stats and failure details.
 
@@ -400,6 +350,10 @@ npx @modelcontextprotocol/inspector
 
 **Agents-as-Tools**: Central Hub calls specialists as tools (not handoffs). Hub maintains full control over orchestration and response synthesis.
 
+**DuckDB Storage**: Backtest server uses embedded DuckDB for OHLCV data storage (replaced Parquet-per-symbol), with incremental updates and concurrent read/write support.
+
+**Intraday Support**: Market Data Agent and Strategy Agent support intraday timeframes (5min, 15min, 1hour) in addition to daily data. Intraday data retention: 2 years for 5min/15min, 5 years for 1hour.
+
 ---
 
-**Last Updated**: 2026-02-17
+**Last Updated**: 2026-03-24
