@@ -52,12 +52,11 @@ class TestStrategyPrompt:
         assert "Iteration" in prompt
         assert "train" in prompt.lower()
 
-    def test_prompt_lists_supported_indicators(self) -> None:
-        """Strategy prompt should list available indicators."""
+    def test_prompt_references_indicator_discovery(self) -> None:
+        """Strategy prompt should reference the indicator discovery tool."""
         prompt = load_prompt("strategy")
-        assert "SMA" in prompt
-        assert "RSI" in prompt
-        assert "MACD" in prompt
+        assert "backtest_get_supported_indicators_tool" in prompt
+        assert "Supported Indicators" in prompt
 
     def test_prompt_lists_tools(self) -> None:
         """Strategy prompt should describe available MCP tools."""

@@ -17,11 +17,11 @@ import re
 from json import JSONDecodeError, loads
 from typing import Any
 
-import litellm
 import opik
 from pydantic import BaseModel, Field
 
 from evaluation.metrics.sequencing import validate_sequence
+from evaluation.scorers._llm_client import DEFAULT_JUDGE_MODEL, structured_completion
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +582,7 @@ _STRATEGY_DECISION_USER_TEMPLATE = """\
 async def strategy_decision_scorer(
     output: dict[str, Any],
     query: str,
-    model_id: str = "anthropic/claude-sonnet-4-5-20250929",
+    model_id: str = DEFAULT_JUDGE_MODEL,
     thresholds: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """LLM judge for strategy decision quality on completed artifacts."""
@@ -612,17 +612,13 @@ async def strategy_decision_scorer(
     )
 
     try:
-        llm_response = await litellm.acompletion(
+        judgment = await structured_completion(
             model=model_id,
-            messages=[
-                {"role": "system", "content": _STRATEGY_DECISION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=StrategyDecisionJudgment,
+            system=_STRATEGY_DECISION_SYSTEM_PROMPT,
+            user=user_prompt,
+            response_model=StrategyDecisionJudgment,
             temperature=0.0,
         )
-        content = llm_response.choices[0].message.content
-        judgment = StrategyDecisionJudgment.model_validate_json(content)
     except Exception as e:
         err = str(e)
         if "401" in err or "authentication" in err.lower() or "bearer" in err.lower():
@@ -760,7 +756,7 @@ class StrategyDecisionScorer:
 
     def __init__(
         self,
-        model_id: str = "anthropic/claude-sonnet-4-5-20250929",
+        model_id: str = DEFAULT_JUDGE_MODEL,
         thresholds: dict[str, int] | None = None,
     ) -> None:
         """Initialize with judge model and decision thresholds."""

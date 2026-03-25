@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from litellm.llms.anthropic.common_utils import AnthropicError
+from openai import APIStatusError
 
+from evaluation.scorers._llm_client import DEFAULT_JUDGE_MODEL
 from evaluation.scorers.builtin import get_builtin_scorers
 from evaluation.scorers.custom import (
     EfficiencyScorer,
@@ -259,13 +260,13 @@ class OBaIEvaluator:
     def __init__(
         self,
         use_builtin_scorers: bool = True,
-        judge_model: str = "anthropic/claude-sonnet-4-5-20250929",
+        judge_model: str = DEFAULT_JUDGE_MODEL,
     ) -> None:
         """Initialize the evaluator.
 
         Args:
             use_builtin_scorers: Include Opik built-in scorers.
-            judge_model: LiteLLM model ID for LLM-based scorers.
+            judge_model: Anthropic model ID for LLM-based scorers.
         """
         self.use_builtin_scorers = use_builtin_scorers
         self.judge_model = judge_model
@@ -282,9 +283,9 @@ class OBaIEvaluator:
         """
         scorers: list[Any] = []
 
-        # Built-in Opik scorers (LLM-based)
+        # Built-in Opik scorers (LLM-based, use Haiku by default)
         if self.use_builtin_scorers:
-            scorers.extend(get_builtin_scorers(self.judge_model))
+            scorers.extend(get_builtin_scorers())
 
         # Tool orchestration (always)
         if test_case.expected_tools:
@@ -385,8 +386,8 @@ class OBaIEvaluator:
                     score_result = scorer.score(scorer_input)
 
                 results["scores"][scorer_name] = score_result
-            except AnthropicError as e:
-                logger.error("Anthropic API error — aborting evaluation: %s", e)
+            except APIStatusError as e:
+                logger.error("API error — aborting evaluation: %s", e)
                 results["scores"][scorer_name] = {"error": str(e)}
                 results["aborted"] = True
                 results["abort_reason"] = str(e)
