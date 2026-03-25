@@ -32,7 +32,7 @@ flowchart TB
 
     subgraph hub ["Central Hub · Orchestrator"]
         direction LR
-        Guard["Input Guardrails"]
+        Guard["Input Guardrails\ngpt-4o-mini"]
         Router["Parallel Router"]
         Synth["Response Synthesizer"]
     end
@@ -56,7 +56,7 @@ flowchart TB
         S4[":8004\nMassive.com"]
         S5[":8005\nFMP"]
         S6[":8006\nFMP"]
-        S7[":8007\nFMP + Polars"]
+        S7[":8007\nFMP + DuckDB"]
     end
 
     User --> Guard --> Router
@@ -202,12 +202,12 @@ obai status
 | Server | Port | Data Source | Key Capabilities |
 |--------|------|-------------|-----------------|
 | **fundamentals-server** | 8001 | FMP + Qdrant | Company financials, ratios, SEC filings, insider trades, vector search over financial education PDFs |
-| **market-data-server** | 8002 | FMP | Real-time/historical prices, technical indicators |
+| **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday data (5min/15min/1hr), technical indicators |
 | **events-news-server** | 8003 | FMP + Tavily | Earnings calendar, dividends, AI-powered news search |
 | **options-server** | 8004 | Massive.com | Options chains, Greeks, implied volatility, open interest |
 | **screening-server** | 8005 | FMP | Stock screening with financial filters, ticker discovery |
 | **portfolio-server** | 8006 | FMP | Portfolio parsing, risk analysis, ETF holdings, treasury rates |
-| **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, train/test split |
+| **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, DuckDB storage, daily + intraday (5min/15min/1hr), train/test split |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -220,7 +220,7 @@ The Strategy Agent is OBaI's quantitative researcher. Unlike other specialists t
 **How it works:** You describe a hypothesis ("momentum strategy for AAPL and MSFT") and the agent:
 
 1. Converts your idea into a structured strategy JSON (indicators, entry/exit rules, position sizing, risk management)
-2. Runs a backtest via the backtest-server (Polars + polars-talib engine)
+2. Runs a backtest via the backtest-server (Polars + polars-talib engine, DuckDB storage)
 3. Analyzes results (Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor)
 4. Iterates 3-5 times — adding filters, tuning parameters, refining exits
 5. Validates the final candidate on out-of-sample data (train/test split)
@@ -299,7 +299,7 @@ uv run python -m evaluation query "What is AAPL trading at?" --verbose
 # Run evaluation with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite (categorized: A/B/C/D)
+# Run the full test suite (139 cases, categories: A/B/C/D/E/G)
 uv run python -m evaluation evaluate --suite
 
 # Fast mode — skip LLM judge, just faithfulness + completeness
@@ -429,6 +429,8 @@ skills/obai/SKILL.md
 - [x] Opik tracing and custom evaluation scorers
 - [x] Input guardrails for non-financial query filtering
 - [x] Qdrant vector search over financial education PDFs
+- [x] DuckDB storage for backtest OHLCV data (replaced Parquet-per-symbol)
+- [x] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine and market data
 
 ### Next
 
@@ -436,7 +438,6 @@ skills/obai/SKILL.md
 - [ ] Polymarket prediction market analysis
 - [ ] Crypto market analysis
 - [ ] Auto-trading integration
-- [ ] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine
 - [ ] Semantic caching via LangCache (Redis)
 - [ ] Web client
 
