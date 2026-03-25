@@ -45,7 +45,6 @@ _EXTRACTOR_KEYS: dict[str, str] = {
     "quality_pass": "quality_pass",
     "efficiency_pass": "efficiency_pass",
     "efficiency_score": "efficiency_score",
-    "hallucination_pass": "hallucination_pass",
     "relevance_score": "relevance_score",
     "task_completion_pass": "task_completion_pass",
     "tool_correctness_pass": "tool_correctness_pass",
@@ -61,7 +60,6 @@ _SCORER_PASS_FIELDS: dict[str, str] = {
     "SequenceScorer": "correct_sequence",
     "ResponseQualityScorer": "quality_pass",
     "EfficiencyScorer": "within_budget",
-    "HallucinationScorer": "hallucination_free",
     "AnswerRelevanceScorer": "relevant",
     "TaskCompletionScorer": "task_completed",
     "ToolCorrectnessScorer": "tools_correct",
@@ -86,7 +84,6 @@ _PASS_FIELD_TO_EXTRACTOR: dict[str, str] = {
     "correct_sequence": "sequence_pass",
     "quality_pass": "quality_pass",
     "within_budget": "efficiency_pass",
-    "hallucination_free": "hallucination_pass",
     "relevant": "relevance_score",
     "task_completed": "task_completion_pass",
     "tools_correct": "tool_correctness_pass",
@@ -373,7 +370,7 @@ def make_verbose_experiment_task(
 def run_evaluate_as_experiment(
     query_runner: QueryRunner,
     test_cases: list[TestCase],
-    judge_model: str = "anthropic/claude-sonnet-4-5-20250929",
+    judge_model: str | None = None,
     no_builtin: bool = False,
     dataset_name: str = "obai-eval-suite",
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -430,7 +427,7 @@ def _run_single_experiment(
     dataset: opik.api_objects.dataset.dataset.Dataset,
     test_case_map: dict[str, TestCase],
     experiment_name: str | None,
-    judge_model: str,
+    judge_model: str | None,
     no_builtin: bool,
 ) -> str:
     """Run a single Opik experiment against a prepared dataset.
@@ -440,7 +437,7 @@ def _run_single_experiment(
         dataset: Opik dataset with test cases.
         test_case_map: Mapping of test case ID to TestCase.
         experiment_name: Name for this experiment.
-        judge_model: LiteLLM model ID for LLM-based scorers.
+        judge_model: Anthropic model ID for LLM-based scorers (None = use config).
         no_builtin: Skip Opik built-in (LLM-based) scorers.
 
     Returns:
@@ -513,7 +510,7 @@ def run_experiment(
     smoke: bool = False,
     ids: list[str] | None = None,
     limit: int | None = None,
-    judge_model: str = "anthropic/claude-sonnet-4-5-20250929",
+    judge_model: str | None = None,
     no_builtin: bool = False,
     dataset_name: str = "obai-eval-suite",
     compare_orchestrator: str | None = None,

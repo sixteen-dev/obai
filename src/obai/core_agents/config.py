@@ -208,6 +208,16 @@ class AgentConfig(BaseSettings):
         description="Run faithfulness and completeness scoring on every query in TUI/CLI",
     )
 
+    # Evaluation Judge Models
+    eval_judge_model: str = Field(
+        default="claude-sonnet-4-5",
+        description="Anthropic model for strong scorers (Faithfulness, Completeness, LLMJudge)",
+    )
+    eval_builtin_model: str = Field(
+        default="anthropic/claude-haiku-4-5-20251001",
+        description="LiteLLM model ID for Opik built-in scorers (AnswerRelevance, TaskCompletion)",
+    )
+
     # Logging
     log_level: str = Field(
         default="INFO",

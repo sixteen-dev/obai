@@ -105,6 +105,9 @@ disallow_any_unimported = false
 asyncio_mode = "auto"
 testpaths = ["core_agents/tests"]
 
+[tool.uv]
+override-dependencies = ["litellm==1.72.2"]
+
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",

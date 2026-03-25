@@ -4,7 +4,6 @@ This module provides both Opik built-in metrics and custom OBaI-specific
 scorers for evaluating multi-agent financial research queries.
 
 Built-in scorers (from Opik):
-    - HallucinationScorer: Detects hallucinated facts in responses
     - AnswerRelevanceScorer: Rates response relevancy to query
     - TaskCompletionScorer: Assesses whether agent completed the task
     - ToolCorrectnessScorer: Assesses whether tools were used correctly
@@ -26,7 +25,6 @@ Ground-truth verification scorers:
 
 from evaluation.scorers.builtin import (
     AnswerRelevanceScorer,
-    HallucinationScorer,
     TaskCompletionScorer,
     ToolCorrectnessScorer,
 )
@@ -45,7 +43,6 @@ from evaluation.scorers.llm_judge import LLMJudgeScorer
 
 __all__ = [
     # Built-in Opik scorers (class wrappers)
-    "HallucinationScorer",
     "AnswerRelevanceScorer",
     "TaskCompletionScorer",
     "ToolCorrectnessScorer",

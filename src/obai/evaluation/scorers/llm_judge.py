@@ -1,7 +1,7 @@
 """LLM-as-judge rubric scorer for multi-dimensional evaluation.
 
 Evaluates agent responses across 5 quality dimensions (1-5 scale each)
-using litellm.acompletion() with Pydantic structured output.
+using AsyncOpenAI (Anthropic endpoint) with Pydantic structured output.
 
 Dimensions:
     - Factual Accuracy: Are stated facts correct and grounded in tool outputs?
@@ -17,9 +17,10 @@ import json
 import logging
 from typing import Any
 
-import litellm
 import opik
 from pydantic import BaseModel, Field
+
+from evaluation.scorers._llm_client import DEFAULT_JUDGE_MODEL, structured_completion
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ Score each dimension 1-5 with reasoning."""
 class DimensionScore(BaseModel):
     """Score for a single evaluation dimension."""
 
-    score: int = Field(description="Score from 1 to 5")
+    score: int = Field(ge=1, le=5, description="Score from 1 to 5")
     reasoning: str
 
 
@@ -203,7 +204,7 @@ def _build_error_result(error_msg: str) -> dict[str, Any]:
 async def llm_judge_rubric_scorer(
     output: dict[str, Any],
     query: str,
-    model_id: str = "anthropic/claude-sonnet-4-5-20250929",
+    model_id: str = DEFAULT_JUDGE_MODEL,
     thresholds: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Score agent output using an LLM judge across 5 rubric dimensions.
@@ -211,7 +212,7 @@ async def llm_judge_rubric_scorer(
     Args:
         output: Model output dict from trace_to_scorer_input().
         query: Original user query.
-        model_id: LiteLLM model ID for the judge.
+        model_id: Anthropic model ID for the judge.
         thresholds: Minimum score per dimension (default: 3 for all).
 
     Returns:
@@ -246,18 +247,13 @@ async def llm_judge_rubric_scorer(
     )
 
     try:
-        llm_response = await litellm.acompletion(
+        rubric = await structured_completion(
             model=model_id,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=RubricResponse,
+            system=SYSTEM_PROMPT,
+            user=user_prompt,
+            response_model=RubricResponse,
             temperature=0.0,
         )
-
-        content = llm_response.choices[0].message.content
-        rubric = RubricResponse.model_validate_json(content)
         return _build_success_result(rubric, effective_thresholds)
 
     except Exception as e:
@@ -276,7 +272,7 @@ class LLMJudgeScorer:
     but with an async score() method since it calls an LLM.
 
     Example:
-        >>> scorer = LLMJudgeScorer(model_id="anthropic/claude-sonnet-4-5-20250929")
+        >>> scorer = LLMJudgeScorer(model_id="claude-sonnet-4-5")
         >>> result = await scorer.score(output=trace_output, query="AAPL price?")
         >>> result["rubric_pass"]
         True
@@ -284,13 +280,13 @@ class LLMJudgeScorer:
 
     def __init__(
         self,
-        model_id: str = "anthropic/claude-sonnet-4-5-20250929",
+        model_id: str = DEFAULT_JUDGE_MODEL,
         thresholds: dict[str, int] | None = None,
     ) -> None:
         """Initialize with judge model and thresholds.
 
         Args:
-            model_id: LiteLLM model ID for the judge.
+            model_id: Anthropic model ID for the judge.
             thresholds: Minimum score per dimension to pass.
         """
         self.model_id = model_id

@@ -6,7 +6,7 @@ what the MCP APIs returned (two-phase: deterministic numeric + LLM semantic).
 CompletenessScorer verifies the agent used all relevant data from tool
 outputs to answer the query.
 
-Requires: opik, litellm (both from tracing optional dep)
+Requires: opik, openai (AsyncOpenAI pointed at Anthropic's API)
 """
 
 from __future__ import annotations
@@ -17,9 +17,10 @@ import logging
 import re
 from typing import Any, Literal
 
-import litellm
 import opik
 from pydantic import BaseModel, Field
+
+from evaluation.scorers._llm_client import DEFAULT_JUDGE_MODEL, structured_completion
 
 logger = logging.getLogger(__name__)
 
@@ -553,7 +554,7 @@ async def _faithfulness_llm_judge(
         response: Agent's response text.
         query: User's query.
         tool_outputs: Tool outputs text.
-        model_id: LiteLLM model ID.
+        model_id: Anthropic model ID.
 
     Returns:
         FaithfulnessJudgment or None on error.
@@ -565,16 +566,12 @@ async def _faithfulness_llm_judge(
     )
 
     try:
-        llm_response = await litellm.acompletion(
+        return await structured_completion(
             model=model_id,
-            messages=[
-                {"role": "system", "content": FAITHFULNESS_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=FaithfulnessJudgment,
+            system=FAITHFULNESS_SYSTEM_PROMPT,
+            user=user_prompt,
+            response_model=FaithfulnessJudgment,
         )
-        content = llm_response.choices[0].message.content
-        return FaithfulnessJudgment.model_validate_json(content)
     except Exception as e:
         err = str(e)
         if "401" in err or "authentication" in err.lower() or "bearer" in err.lower():
@@ -596,7 +593,7 @@ async def _completeness_llm_judge(
         response: Agent's response text.
         query: User's query.
         tool_outputs: Tool outputs text.
-        model_id: LiteLLM model ID.
+        model_id: Anthropic model ID.
 
     Returns:
         CompletenessJudgment or None on error.
@@ -608,16 +605,12 @@ async def _completeness_llm_judge(
     )
 
     try:
-        llm_response = await litellm.acompletion(
+        return await structured_completion(
             model=model_id,
-            messages=[
-                {"role": "system", "content": COMPLETENESS_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=CompletenessJudgment,
+            system=COMPLETENESS_SYSTEM_PROMPT,
+            user=user_prompt,
+            response_model=CompletenessJudgment,
         )
-        content = llm_response.choices[0].message.content
-        return CompletenessJudgment.model_validate_json(content)
     except Exception as e:
         err = str(e)
         if "401" in err or "authentication" in err.lower() or "bearer" in err.lower():
@@ -739,14 +732,14 @@ class FaithfulnessScorer:
 
     def __init__(
         self,
-        model_id: str = "openai/gpt-5-mini",
+        model_id: str = DEFAULT_JUDGE_MODEL,
         numeric_threshold: float = 0.9,
         skip_llm: bool = False,
     ) -> None:
         """Initialize faithfulness scorer.
 
         Args:
-            model_id: LiteLLM model ID for the LLM judge phase.
+            model_id: Anthropic model ID for the LLM judge phase.
             numeric_threshold: Minimum numeric accuracy to pass (0.0-1.0).
             skip_llm: If True, only run deterministic phase (faster).
         """
@@ -828,11 +821,10 @@ class FaithfulnessScorer:
                 result["semantic_score"] = judgment.score
                 result["semantic_reasoning"] = judgment.reasoning
                 result["unfaithful_claims"] = [c.model_dump() for c in judgment.unfaithful_claims]
-                # Semantic judge is authoritative for pass/fail.
-                # Numeric accuracy is diagnostic only — it can't handle
-                # derived values (growth rates, annualized stats) that the
-                # agent correctly computes from raw tool data.
-                result["faithfulness_pass"] = judgment.faithful
+                # Use the continuous score for pass/fail — the boolean
+                # `faithful` field can contradict the score (e.g. score=1.0
+                # but faithful=False), so the score is more reliable.
+                result["faithfulness_pass"] = judgment.score >= 0.8
             else:
                 result["semantic_faithful"] = None
                 result["semantic_score"] = None
@@ -859,13 +851,13 @@ class CompletenessScorer:
 
     def __init__(
         self,
-        model_id: str = "openai/gpt-5-mini",
+        model_id: str = DEFAULT_JUDGE_MODEL,
         coverage_threshold: float = 0.7,
     ) -> None:
         """Initialize completeness scorer.
 
         Args:
-            model_id: LiteLLM model ID for the judge.
+            model_id: Anthropic model ID for the judge.
             coverage_threshold: Minimum coverage score to pass (0.0-1.0).
         """
         self.model_id = model_id

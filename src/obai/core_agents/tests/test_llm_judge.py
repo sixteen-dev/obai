@@ -1,11 +1,11 @@
 """Unit tests for the LLM-judge rubric scorer.
 
-All tests mock litellm to avoid real API calls.
+All tests mock structured_completion to avoid real API calls.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -203,27 +203,19 @@ class TestBuildErrorResult:
 
 
 # ---------------------------------------------------------------------------
-# Async scorer tests (mocked litellm)
+# Async scorer tests (mocked structured_completion)
 # ---------------------------------------------------------------------------
 
-
-def _mock_llm_response(rubric: RubricResponse) -> MagicMock:
-    """Create a mock litellm response containing rubric JSON."""
-    response = MagicMock()
-    choice = MagicMock()
-    choice.message.content = rubric.model_dump_json()
-    response.choices = [choice]
-    return response
+_SC_PATH = "evaluation.scorers.llm_judge.structured_completion"
 
 
 class TestLLMJudgeScorerAsync:
-    """Test the full async flow with mocked litellm."""
+    """Test the full async flow with mocked structured_completion."""
 
     @pytest.mark.asyncio
     async def test_full_flow(self):
         """Verify end-to-end scorer with mocked LLM returns correct scores."""
         rubric = _make_rubric()
-        mock_response = _mock_llm_response(rubric)
 
         sample_output = {
             "response": "AAPL is trading at $150",
@@ -238,9 +230,7 @@ class TestLLMJudgeScorerAsync:
             "tool_outputs": "get_quote: AAPL price is $150",
         }
 
-        with patch("evaluation.scorers.llm_judge.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=rubric):
             result = await llm_judge_rubric_scorer(
                 output=sample_output,
                 query="What is AAPL trading at?",
@@ -255,13 +245,10 @@ class TestLLMJudgeScorerAsync:
     async def test_class_wrapper(self):
         """Verify LLMJudgeScorer class delegates to the opik-tracked scorer correctly."""
         rubric = _make_rubric({"completeness": 5, "clarity": 5})
-        mock_response = _mock_llm_response(rubric)
 
         scorer = LLMJudgeScorer(model_id="test/model")
 
-        with patch("evaluation.scorers.llm_judge.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=rubric):
             result = await scorer.score(
                 output={"response": "test", "tool_calls": [], "tool_outputs": ""},
                 query="test query",
@@ -274,7 +261,6 @@ class TestLLMJudgeScorerAsync:
     async def test_truncates_long_tool_outputs(self):
         """Verify tool_outputs exceeding 4000 chars are truncated in prompt."""
         rubric = _make_rubric()
-        mock_response = _mock_llm_response(rubric)
 
         long_output = {
             "response": "test",
@@ -282,16 +268,14 @@ class TestLLMJudgeScorerAsync:
             "tool_outputs": "x" * 10000,
         }
 
-        with patch("evaluation.scorers.llm_judge.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-
+        with patch(_SC_PATH, new_callable=AsyncMock, return_value=rubric) as mock_sc:
             await llm_judge_rubric_scorer(
                 output=long_output,
                 query="test",
             )
 
-            call_args = mock_litellm.acompletion.call_args
-            user_msg = call_args.kwargs["messages"][1]["content"]
+            call_args = mock_sc.call_args
+            user_msg = call_args.kwargs["user"]
             assert "...(truncated)" in user_msg
 
 
@@ -307,9 +291,7 @@ class TestLLMJudgeScorerError:
             "tool_outputs": "",
         }
 
-        with patch("evaluation.scorers.llm_judge.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=RuntimeError("API down"))
-
+        with patch(_SC_PATH, new_callable=AsyncMock, side_effect=RuntimeError("API down")):
             result = await llm_judge_rubric_scorer(
                 output=sample_output,
                 query="test",
@@ -327,9 +309,7 @@ class TestLLMJudgeScorerError:
         """Verify LLMJudgeScorer class handles LLM errors gracefully."""
         scorer = LLMJudgeScorer()
 
-        with patch("evaluation.scorers.llm_judge.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=ValueError("bad response"))
-
+        with patch(_SC_PATH, new_callable=AsyncMock, side_effect=ValueError("bad response")):
             result = await scorer.score(
                 output={"response": "", "tool_calls": [], "tool_outputs": ""},
             )
