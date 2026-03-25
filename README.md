@@ -26,86 +26,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    User(["🔍 Natural Language Query"])
-
-    subgraph hub ["Central Hub · Orchestrator"]
-        direction LR
-        Guard["Input Guardrails\ngpt-4o-mini"]
-        Router["Parallel Router"]
-        Synth["Response Synthesizer"]
-    end
-
-    subgraph agents ["Specialist Agents · gpt-5-mini"]
-        direction LR
-        A1["Fundamentals"]
-        A2["Market Data"]
-        A3["Events / News"]
-        A4["Options"]
-        A5["Screening"]
-        A6["Portfolio"]
-        A7["Strategy 💡"]
-    end
-
-    subgraph mcp ["MCP Servers · FastMCP · Docker"]
-        direction LR
-        S1[":8001\nFMP + Qdrant"]
-        S2[":8002\nFMP"]
-        S3[":8003\nFMP + Tavily"]
-        S4[":8004\nMassive.com"]
-        S5[":8005\nFMP"]
-        S6[":8006\nFMP"]
-        S7[":8007\nFMP + DuckDB"]
-    end
-
-    User --> Guard --> Router
-
-    Router -->|parallel| A1 & A2 & A3 & A4 & A5 & A6 & A7
-
-    A1 -->|streamable-http| S1
-    A2 -->|streamable-http| S2
-    A3 -->|streamable-http| S3
-    A4 -->|streamable-http| S4
-    A5 -->|streamable-http| S5
-    A6 -->|streamable-http| S6
-    A7 -->|streamable-http| S7
-
-    A1 & A2 & A3 & A4 & A5 & A6 & A7 --> Synth
-    Synth --> Response(["📊 Synthesized Answer"])
-
-    Opik(["Opik · :5173\nTraces · Spans · Eval Scores"])
-    Router -.->|trace| Opik
-    Synth -.->|score| Opik
-
-    style hub fill:#1a1a2e,stroke:#F6B93B,stroke-width:2px,color:#E6EDF3
-    style agents fill:#16213e,stroke:#A8D8EA,stroke-width:1px,color:#E6EDF3
-    style mcp fill:#0f3460,stroke:#53a8b6,stroke-width:1px,color:#E6EDF3
-
-    style Guard fill:#2d2d44,stroke:#F6B93B,color:#E6EDF3
-    style Router fill:#2d2d44,stroke:#F6B93B,color:#E6EDF3
-    style Synth fill:#2d2d44,stroke:#F6B93B,color:#E6EDF3
-
-    style A1 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A2 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A3 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A4 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A5 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A6 fill:#1e3a5f,stroke:#A8D8EA,color:#E6EDF3
-    style A7 fill:#1e3a5f,stroke:#F6B93B,color:#E6EDF3
-
-    style S1 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S2 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S3 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S4 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S5 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S6 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-    style S7 fill:#0a2647,stroke:#53a8b6,color:#E6EDF3
-
-    style User fill:#F6B93B,stroke:#1a1a2e,color:#1a1a2e,stroke-width:2px
-    style Response fill:#F6B93B,stroke:#1a1a2e,color:#1a1a2e,stroke-width:2px
-    style Opik fill:#2d1a1a,stroke:#e74c3c,stroke-dasharray:5 5,color:#E6EDF3
-```
+![OBaI Architecture](docs/architecture.svg)
 
 The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`.
 
@@ -402,13 +323,13 @@ uv run pytest
 
 ---
 
-## Agent Skill
+## Agent Skills
 
-OBaI ships with an [agent skill](skills/obai/SKILL.md) that lets any AI agent autonomously query financial data. The agent runs `obai query` commands directly — no manual CLI usage needed. Ask a financial question and the agent executes the query, manages sessions, parses the JSON response, and presents the answer.
+OBaI ships with two agent skills that let any AI agent autonomously interact with the system:
 
-```
-skills/obai/SKILL.md
-```
+**[OBaI Query Skill](skills/obai/SKILL.md)** — Read-only financial research. The agent runs `obai query` commands directly, manages sessions, parses JSON responses, and presents answers. Ask any financial question and it routes to the right specialist automatically.
+
+**[AutoTrader Skill](skills/autotrader/SKILL.md)** — Autonomous paper trading bot on Alpaca. Combines OBaI analysis (read-only) with Alpaca execution (trades) to manage a stock portfolio. Evaluates strategy signals against deployed strategies, executes trades with built-in risk checks (position sizing, exposure limits, daily loss caps), and maintains a trading journal. Requires `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 
 ---
 
@@ -431,13 +352,13 @@ skills/obai/SKILL.md
 - [x] Qdrant vector search over financial education PDFs
 - [x] DuckDB storage for backtest OHLCV data (replaced Parquet-per-symbol)
 - [x] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine and market data
+- [x] AutoTrader skill — autonomous paper trading on Alpaca with risk management
 
 ### Next
 
 - [ ] Options strategy analysis and backtesting
 - [ ] Polymarket prediction market analysis
 - [ ] Crypto market analysis
-- [ ] Auto-trading integration
 - [ ] Semantic caching via LangCache (Redis)
 - [ ] Web client
 
