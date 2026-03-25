@@ -17,10 +17,11 @@ from opik.evaluation.metrics import (
     AgentTaskCompletionJudge,
     AgentToolCorrectnessJudge,
     AnswerRelevance,
-    Hallucination,
 )
 
 logger = logging.getLogger(__name__)
+
+BUILTIN_JUDGE_MODEL = "anthropic/claude-haiku-4-5-20251001"
 
 
 def _format_agent_trace(output: dict[str, Any], query: str) -> str:
@@ -55,46 +56,6 @@ def _format_agent_trace(output: dict[str, Any], query: str) -> str:
     return "\n".join(parts)
 
 
-class HallucinationScorer:
-    """Detect hallucinated facts not grounded in tool outputs.
-
-    Uses Opik's Hallucination metric (LLM judge). Score of 0 means
-    no hallucination detected, 1 means hallucination detected.
-
-    Args:
-        model_id: LiteLLM model ID for the judge.
-    """
-
-    def __init__(self, model_id: str = "openai/gpt-4o-mini") -> None:
-        """Initialize with judge model."""
-        self._metric = Hallucination(model=model_id)
-
-    def score(self, output: dict[str, Any], query: str = "") -> dict[str, Any]:
-        """Score agent output for hallucination.
-
-        Args:
-            output: Model output with 'response' and 'tool_outputs' keys.
-            query: Original user query.
-
-        Returns:
-            Dict with hallucination_free bool, score float, and reason.
-        """
-        context = output.get("tool_outputs", "")
-        if len(context) > 4000:
-            context = context[:4000] + "\n[truncated]"
-        result = self._metric.score(
-            input=query,
-            output=output.get("response", ""),
-            context=[context],
-        )
-        # Opik: 0 = no hallucination, 1 = hallucination
-        return {
-            "hallucination_free": result.value == 0,
-            "score": result.value,
-            "reason": result.reason or "",
-        }
-
-
 class AnswerRelevanceScorer:
     """Rate response relevancy to the original query.
 
@@ -105,7 +66,7 @@ class AnswerRelevanceScorer:
         model_id: LiteLLM model ID for the judge.
     """
 
-    def __init__(self, model_id: str = "openai/gpt-4o-mini") -> None:
+    def __init__(self, model_id: str = BUILTIN_JUDGE_MODEL) -> None:
         """Initialize with judge model."""
         self._metric = AnswerRelevance(model=model_id, require_context=False)
 
@@ -141,7 +102,7 @@ class TaskCompletionScorer:
         model_id: LiteLLM model ID for the judge.
     """
 
-    def __init__(self, model_id: str = "anthropic/claude-sonnet-4-5-20250929") -> None:
+    def __init__(self, model_id: str = BUILTIN_JUDGE_MODEL) -> None:
         """Initialize with judge model."""
         self._metric = AgentTaskCompletionJudge(model=model_id)
 
@@ -176,7 +137,7 @@ class ToolCorrectnessScorer:
         model_id: LiteLLM model ID for the judge.
     """
 
-    def __init__(self, model_id: str = "anthropic/claude-sonnet-4-5-20250929") -> None:
+    def __init__(self, model_id: str = BUILTIN_JUDGE_MODEL) -> None:
         """Initialize with judge model."""
         self._metric = AgentToolCorrectnessJudge(model=model_id)
 
@@ -200,7 +161,7 @@ class ToolCorrectnessScorer:
         }
 
 
-def get_builtin_scorers(model_id: str = "openai/gpt-4o-mini") -> list[Any]:
+def get_builtin_scorers(model_id: str = BUILTIN_JUDGE_MODEL) -> list[Any]:
     """Get all relevant built-in Opik scorers for OBaI evaluation.
 
     Args:
@@ -210,7 +171,6 @@ def get_builtin_scorers(model_id: str = "openai/gpt-4o-mini") -> list[Any]:
         List of configured scorer instances.
     """
     return [
-        HallucinationScorer(model_id),
         AnswerRelevanceScorer(model_id),
         TaskCompletionScorer(model_id),
         ToolCorrectnessScorer(model_id),
