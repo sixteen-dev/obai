@@ -1,0 +1,34 @@
+language: en-US
+reviews:
+  profile: assertive
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+  request_changes_workflow: true
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Focus reviews on:
+        - Security vulnerabilities (injection, secrets exposure, auth bypass, SSRF)
+        - Correctness and functional bugs
+        - Edge cases and error handling gaps
+        - Race conditions and concurrency issues
+        - Data validation at system boundaries
+        - Architectural violations (wrong layer, circular deps, tight coupling)
+        - Breaking changes to public interfaces
+
+        Do NOT comment on:
+        - Code style, formatting, or naming conventions (ruff handles this)
+        - Missing docstrings or type hints (mypy --strict handles this)
+        - Import ordering
+        - Minor refactoring suggestions or "could be cleaner" comments
+        - Adding logging or comments
+        - Test coverage suggestions unless a critical path is untested
+  tools:
+    ruff:
+      enabled: false
+    mypy:
+      enabled: false
+chat:
+  auto_reply: true
