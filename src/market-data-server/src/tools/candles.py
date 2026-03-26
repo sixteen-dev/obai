@@ -10,6 +10,28 @@ from ..response_filters import filter_candles
 logger = get_logger(__name__)
 
 
+def _extract_candles_list(raw_data: Any) -> list[dict[str, Any]]:
+    """Extract the candles list from FMP daily endpoint response.
+
+    FMP's historical-price-eod/full returns {"symbol": "...", "historical": [...]}.
+    This extracts the list so pagination and filtering work consistently.
+
+    Args:
+        raw_data: Raw response from FMP daily endpoint.
+
+    Returns:
+        List of candle dicts.
+    """
+    if isinstance(raw_data, list):
+        return raw_data
+    if isinstance(raw_data, dict):
+        historical = raw_data.get("historical")
+        if isinstance(historical, list):
+            return historical
+    logger.warning("unexpected_daily_response_format", data_type=type(raw_data).__name__)
+    return []
+
+
 async def get_candles(
     symbol: str,
     interval: Literal["1min", "5min", "15min", "30min", "1hour", "4hour", "daily"],
@@ -37,31 +59,21 @@ async def get_candles(
     try:
         settings = get_settings()
         async with FMPClient(settings) as client:
-            all_data: Any
             if interval == "daily":
-                all_data = await client.get_historical_daily(symbol, from_date, to_date)
+                raw_data = await client.get_historical_daily(symbol, from_date, to_date)
+                # FMP daily endpoint returns {"symbol": "...", "historical": [...]}
+                # Extract the candles list for consistent pagination
+                candles = _extract_candles_list(raw_data)
             else:
-                all_data = await client.get_historical_intraday(
-                    symbol, interval, from_date, to_date
-                )
+                candles = await client.get_historical_intraday(symbol, interval, from_date, to_date)
 
-            # Apply pagination to the data
-            if isinstance(all_data, list):
-                total_count = len(all_data)
-                paginated_data = all_data[offset : offset + limit]
-                has_more = len(all_data) > offset + limit
-            else:
-                # If data is not a list, return as-is (no pagination)
-                total_count = 1
-                paginated_data = all_data
-                has_more = False
+            # Apply pagination
+            total_count = len(candles)
+            paginated_data = candles[offset : offset + limit]
+            has_more = total_count > offset + limit
 
-            # Filter candles data (OHLCV is all essential, but apply filter for consistency)
-            filtered_data = (
-                filter_candles(paginated_data)
-                if isinstance(paginated_data, list)
-                else paginated_data
-            )
+            # Filter candles data
+            filtered_data = filter_candles(paginated_data)
 
             return {
                 "symbol": symbol,
@@ -72,7 +84,7 @@ async def get_candles(
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
-                    "returned": len(paginated_data) if isinstance(paginated_data, list) else 1,
+                    "returned": len(paginated_data),
                     "total_count": total_count,
                     "has_more": has_more,
                     "next_offset": offset + limit if has_more else None,
