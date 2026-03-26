@@ -25,11 +25,18 @@ jobs:
         run: uv python install 3.12
 
       - name: Run uv audit
-        # continue-on-error: 2 unfixable transitive vulns (onnx GHSA-hqmj-h5c6-369m,
-        # pygments GHSA-5239-wwwm-4pmq) have no patches available yet.
-        # Remove continue-on-error once upstream fixes land.
-        continue-on-error: true
-        run: uv audit
+        id: audit
+        run: |
+          if uv audit 2>&1 | tee /tmp/audit.txt; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warn on unfixable vulnerabilities
+        if: steps.audit.outputs.status == 'fail'
+        run: |
+          echo "::warning::uv audit found vulnerabilities (some may be unfixable upstream). See step output above."
 
   gitleaks:
     name: Secret Detection (Gitleaks)
