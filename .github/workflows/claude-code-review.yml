@@ -37,7 +37,7 @@ jobs:
             actions: read
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          review_instructions: |
+          prompt: |
             You are reviewing a financial trading platform with multi-agent AI (OpenAI Agent SDK),
             MCP servers (FastMCP), and Alpaca brokerage integration. Bugs here can cause real money
             loss or data corruption. Be direct and assertive.
@@ -64,4 +64,5 @@ jobs:
             - Adding comments or logging
             - Test coverage unless a critical money/security path is untested
             - Performance unless it's an actual bottleneck (not theoretical)
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
