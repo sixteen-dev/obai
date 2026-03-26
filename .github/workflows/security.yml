@@ -25,6 +25,8 @@ jobs:
         run: uv python install 3.12
 
       - name: Run uv audit
+        # Known unfixable transitive vulns: onnx (GHSA-hqmj-h5c6-369m), pygments (GHSA-5239-wwwm-4pmq)
+        # This job is non-required in branch protection until upstream patches land.
         run: uv audit
 
   gitleaks:
