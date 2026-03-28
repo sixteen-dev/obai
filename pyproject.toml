@@ -41,6 +41,9 @@ dev = [
     # MCP evaluation tools (for .claude/skills/mcp-builder/scripts/)
     "anthropic>=0.40.0",
 
+    # Security: GHSA-gc5v-m9x4-r6x2 (insecure temp file fix)
+    "requests>=2.33.0",
+
     # Type stubs
     "types-aiofiles>=24.1.0",
     "types-requests>=2.32.0",
@@ -59,6 +62,13 @@ test = [
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.1",
+]
+
+[tool.uv]
+# Pin transitive deps to patched versions where fixes exist
+constraint-dependencies = [
+    "pypdf>=6.9.2",       # GHSA-87mj-5ggw-8qc3: infinite loop fix
+    "requests>=2.33.0",   # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
 ]
 
 # Tool configurations for the entire monorepo

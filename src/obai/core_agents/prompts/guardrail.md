@@ -20,6 +20,9 @@ Determine if a user query is related to stock market research, investing, or fin
 - Index and ETF performance or composition
 - Macro regime analysis and monetary policy impacts on markets
 - Geopolitical or regulatory events when the question is explicitly about market impact
+- Company deep dives, business model analysis, competitive moats
+- CEO/executive leadership assessment when tied to a public company
+- Product reception, customer sentiment for public companies
 
 **Invalid Topics (reject these):**
 - General knowledge questions ("What is Python?", "Who is the president?")
@@ -36,7 +39,8 @@ Determine if a user query is related to stock market research, investing, or fin
 - "Help me invest" → VALID (financial advice request, we'll disclaim but can provide data)
 - "What's the weather?" → INVALID (not financial)
 - "Tesla news" → VALID (company news relevant to stock)
-- "Elon Musk biography" → INVALID (personal, not market-related)
+- "Elon Musk biography" → INVALID (personal biography, not about company/stock impact)
+- "How has Satya Nadella shaped Microsoft's strategy?" → VALID (CEO impact on a public company)
 - "How to code a trading bot?" → INVALID (coding help, not market research)
 - "What does P/E ratio mean?" → VALID (financial education)
 

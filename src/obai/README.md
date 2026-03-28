@@ -18,6 +18,7 @@ OBaI/
 │   ├── screener_agent.py        # Stock screening, ticker lookup
 │   ├── portfolio_agent.py       # Portfolio parsing, risk prefs, ETF holdings
 │   ├── strategy_agent.py       # Backtesting, strategy design, optimization
+│   ├── research_agent.py       # Qualitative research via Exa semantic search
 │   ├── mcp/                     # MCP client integration
 │   │   ├── client.py            # HTTP client for MCP servers
 │   │   └── tool_converter.py   # MCP tools → Agent SDK format
@@ -67,6 +68,7 @@ cd src/options-server && uv run fastmcp run server.py        # :8004
 cd src/screening-server && uv run fastmcp run server.py      # :8005
 cd src/portfolio-server && uv run fastmcp run server.py      # :8006
 cd src/backtest-server && uv run fastmcp run server.py       # :8007
+cd src/research-server && uv run fastmcp run server.py       # :8008
 ```
 
 ### 2. Set Environment Variables
@@ -80,6 +82,8 @@ export MCP_OPTIONS_URL=http://localhost:8004/mcp
 export MCP_SCREENER_URL=http://localhost:8005/mcp
 export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
 export MCP_BACKTEST_URL=http://localhost:8007/mcp
+export MCP_RESEARCH_URL=http://localhost:8008/mcp
+export EXA_API_KEY=...                                    # research-server
 ```
 
 See `clients/cli/.env.example` for all available options.
@@ -143,7 +147,7 @@ uv run python test_connection.py
 
 **Central Hub** (gpt-5.1): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
-**Specialists** (7 agents, each with dedicated MCP server):
+**Specialists** (8 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
 2. **Fundamentals Agent** (:8001): Financial statements, ratios, analyst estimates
 3. **Events/News Agent** (:8003): News articles, earnings calendar, dividends
@@ -151,6 +155,7 @@ uv run python test_connection.py
 5. **Screener Agent** (:8005): Stock screening, ticker lookup
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
 7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.1 for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
+8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)
@@ -356,4 +361,4 @@ npx @modelcontextprotocol/inspector
 
 ---
 
-**Last Updated**: 2026-03-24
+**Last Updated**: 2026-03-27

@@ -178,10 +178,12 @@ class FMPClient:
         Returns:
             List of earnings records (past and future) for the symbol
         """
-        cache_key = f"earnings:{symbol.upper()}:{limit}"
+        cache_key = f"earnings:{symbol.upper()}"
         if cache_key in self._earnings_cache:
-            logger.debug("cache_hit", endpoint="earnings", symbol=symbol)
-            return self._earnings_cache[cache_key]
+            cached = self._earnings_cache[cache_key]
+            if len(cached) >= limit:
+                logger.debug("cache_hit", endpoint="earnings", symbol=symbol)
+                return cached[:limit]
 
         params: dict[str, Any] = {"symbol": symbol, "limit": limit}
         data: list[dict[str, Any]] = await self._get("earnings", params)

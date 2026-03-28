@@ -1,0 +1,69 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, ready_for_review, reopened]
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    if: |
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@970cf56ff574f7f75cfb3b2394c8b723c3410247 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
+          additional_permissions: |
+            actions: read
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          prompt: |
+            You are reviewing a financial trading platform with multi-agent AI (OpenAI Agent SDK),
+            MCP servers (FastMCP), and Alpaca brokerage integration. Bugs here can cause real money
+            loss or data corruption. Be direct and assertive.
+
+            Only report issues you can tie to a concrete file and line in the PR diff.
+            For each finding, include severity (P0-P3), the concrete impact, and the smallest safe fix.
+            If evidence is incomplete, call that out and do not speculate.
+
+            FOCUS ON (flag these aggressively):
+            - Security: secrets in code/logs, injection, auth bypass, SSRF, unsafe deserialization
+            - Correctness: wrong logic, off-by-one, float precision for money, silent data loss
+            - Edge cases: empty responses, None where not expected, API timeouts, partial failures
+            - Concurrency: race conditions, shared mutable state, async pitfalls
+            - Error handling: bare except, swallowed exceptions, missing error propagation
+            - Breaking changes: public API signatures, config schema, protocol changes
+            - MCP servers: unvalidated external API responses, API keys in logs, missing rate limits
+            - Agent layer: session/state leaking between users, prompt injection via user input,
+              tool call results trusted without validation, circular agent dependencies
+
+            DO NOT COMMENT ON (handled by CI tooling — ruff, mypy --strict):
+            - Code style, formatting, naming, import ordering
+            - Type hints, docstrings
+            - "Could be cleaner" or "consider refactoring" suggestions
+            - Adding comments or logging
+            - Test coverage unless a critical money/security path is untested
+            - Performance unless it's an actual bottleneck (not theoretical)
+
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}

@@ -175,9 +175,10 @@ check_key() {
 }
 
 check_key "OPENAI_API_KEY"    "required" "needed for Agent SDK (all agents)"
-check_key "FMP_API_KEY"       "required" "needed for 6 of 7 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
+check_key "FMP_API_KEY"       "required" "needed for 6 of 8 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
 check_key "MASSIVE_API_KEY"   "optional" "needed for options-server only"
 check_key "TAVILY_API_KEY"    "optional" "needed for events-news-server AI search"
+check_key "EXA_API_KEY"       "optional" "needed for research-server (Exa semantic search)"
 check_key "ANTHROPIC_API_KEY" "optional" "needed for LLM-judge evaluation scorers"
 
 if [ "$missing_required" -gt 0 ]; then
@@ -258,7 +259,7 @@ fi
 if [ "$SKIP_MCP" = false ]; then
     step "5/7 Building and starting MCP servers"
 
-    info "Building 7 MCP server images (this may take a few minutes on first run)..."
+    info "Building 8 MCP server images (this may take a few minutes on first run)..."
     docker compose -f "$REPO_ROOT/docker-compose.yml" build
 
     info "Starting MCP servers..."
@@ -283,6 +284,7 @@ if [ "$SKIP_MCP" = false ]; then
         "screening:8005"
         "portfolio:8006"
         "backtest:8007"
+        "research:8008"
     )
 
     for entry in "${servers[@]}"; do
@@ -399,6 +401,7 @@ if [ "$SKIP_MCP" = false ]; then
     echo "    screening       http://localhost:8005/mcp"
     echo "    portfolio       http://localhost:8006/mcp"
     echo "    backtest        http://localhost:8007/mcp"
+    echo "    research        http://localhost:8008/mcp"
 fi
 
 echo ""
