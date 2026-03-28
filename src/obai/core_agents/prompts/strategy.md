@@ -255,8 +255,9 @@ Use these defaults only for non-critical fields when the user and hub did not pr
   - Always report the actual `train_end_date` used.
 - Benchmark:
   - Use the user-specified benchmark if provided.
-  - Otherwise use the standard broad-market default benchmark.
-  - If the strategy is explicitly sector-specific and a natural liquid benchmark exists, you may use that benchmark instead, but state it explicitly.
+  - Otherwise use SPY (or the user's `default_benchmark` from preferences if injected by the hub).
+  - Never benchmark a strategy against a symbol it already trades — that measures nothing.
+  - If the strategy is explicitly sector-specific and a natural liquid sector ETF benchmark exists, you may use that instead, but state it explicitly.
 - Position direction:
   - Default to long-only unless the user explicitly requests short or long/short.
 - Risk seed:
@@ -444,9 +445,9 @@ This is a shape template, not a recommended parameter set.
     "logic": "<AND_or_OR>",
     "conditions": [
       {
-        "left": { "indicator": "<indicator_or_output_ref>" },
+        "left": { "<operand_type>": "<value>" },
         "operator": "<supported_operator>",
-        "right": { "constant": "<number_or_indicator_ref>" }
+        "right": { "<operand_type>": "<value>" }
       }
     ]
   },
@@ -463,7 +464,6 @@ This is a shape template, not a recommended parameter set.
   "risk_management": {
     "stop_loss_pct": "<number_or_null>",
     "take_profit_pct": "<number_or_null>",
-    "trailing_stop_pct": "<number_or_null>",
     "close_eod": "<true_or_false>",
     "no_entry_after": "<HH:MM_or_null>"
   }
@@ -478,7 +478,41 @@ Field rules:
 - `timeframe` defaults to `"daily"` if omitted. Supported: `daily`, `1hour`, `15min`, `5min`.
 - `close_eod` forces position close at session end. Use `true` for day trading strategies.
 - `no_entry_after` prevents new entries after a time (e.g., `"15:30"`). Recommended for day trading.
-- Condition operands can be: `{"indicator": "..."}`, `{"constant": N}`, `{"time_of_day": "current"}`, or `{"time": "HH:MM"}`. Time operands pair with `after_time`/`before_time` operators.
+
+### Condition Operands
+
+Each `left` and `right` in a condition is an **operand** — exactly one of these four types:
+
+| Operand type | JSON format | Use for |
+|---|---|---|
+| indicator | `{"indicator": "..."}` | Computed indicator columns OR raw OHLCV columns (`close`, `open`, `high`, `low`, `volume`) |
+| constant | `{"constant": N}` | Fixed numeric thresholds |
+| time_of_day | `{"time_of_day": "current"}` | Current bar's time. Only valid value is `"current"`. **Intraday only — errors on daily.** |
+| time | `{"time": "HH:MM"}` | Fixed time value (pairs with `after_time`/`before_time`). **Intraday only — errors on daily.** |
+
+**Both `left` and `right` can be any operand type.** The most common patterns:
+
+Shape examples only — not recommended parameters:
+
+**Indicator vs constant** (threshold check):
+```json
+{"left": {"indicator": "<indicator_id>"}, "operator": "less_than", "right": {"constant": "<threshold>"}}
+```
+
+**Indicator vs indicator** (compare price to a computed indicator, or two indicators to each other):
+```json
+{"left": {"indicator": "close"}, "operator": "greater_than", "right": {"indicator": "<trend_indicator_id>"}}
+```
+```json
+{"left": {"indicator": "<fast_indicator_id>"}, "operator": "crosses_above", "right": {"indicator": "<slow_indicator_id>"}}
+```
+
+**Time filter** (intraday session window):
+```json
+{"left": {"time_of_day": "current"}, "operator": "after_time", "right": {"time": "<HH:MM>"}}
+```
+
+**Common mistake**: When the intent is "price above moving average," use indicator vs indicator (`close > <ma_id>`), NOT indicator vs constant (`<ma_id> < 0`). Raw OHLCV columns (`close`, `open`, `high`, `low`) are valid indicator references.
 
 ## Supported Indicators
 

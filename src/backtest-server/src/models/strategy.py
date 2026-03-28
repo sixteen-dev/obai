@@ -329,9 +329,21 @@ class RiskManagement:
 
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
-    trailing_stop_pct: float | None = None
     close_eod: bool = False  # Phase 3.4: force close at session end
     no_entry_after: str | None = None  # Phase 3.4: "15:30" — no new entries after
+
+
+@dataclass
+class ExecutionConfig:
+    """Execution cost parameters for backtesting.
+
+    Controls slippage, commissions, and starting capital.
+    Defaults match prior hardcoded values for backward compatibility.
+    """
+
+    slippage_pct: float = 0.1
+    commission_pct: float = 0.1
+    initial_capital: float = 100_000.0
 
 
 _MIN_BACKTEST_DAYS = 30
@@ -422,6 +434,7 @@ class StrategyDefinition:
     exit_rules: RuleSet
     position_sizing: PositionSizing = field(default_factory=PositionSizing)
     risk_management: RiskManagement = field(default_factory=RiskManagement)
+    execution_config: ExecutionConfig = field(default_factory=ExecutionConfig)
 
     def validate(self) -> list[str]:
         """Validate entire strategy, return list of errors."""
@@ -508,9 +521,13 @@ class StrategyDefinition:
             "risk_management": {
                 "stop_loss_pct": self.risk_management.stop_loss_pct,
                 "take_profit_pct": self.risk_management.take_profit_pct,
-                "trailing_stop_pct": self.risk_management.trailing_stop_pct,
                 "close_eod": self.risk_management.close_eod,
                 "no_entry_after": self.risk_management.no_entry_after,
+            },
+            "execution_config": {
+                "slippage_pct": self.execution_config.slippage_pct,
+                "commission_pct": self.execution_config.commission_pct,
+                "initial_capital": self.execution_config.initial_capital,
             },
         }
 
@@ -535,6 +552,7 @@ class StrategyDefinition:
 
         sizing_data = data.get("position_sizing", {})
         risk_data = data.get("risk_management", {})
+        exec_data = data.get("execution_config", {})
 
         strategy = cls(
             name=data.get("name", ""),
@@ -560,9 +578,13 @@ class StrategyDefinition:
             risk_management=RiskManagement(
                 stop_loss_pct=risk_data.get("stop_loss_pct"),
                 take_profit_pct=risk_data.get("take_profit_pct"),
-                trailing_stop_pct=risk_data.get("trailing_stop_pct"),
                 close_eod=risk_data.get("close_eod", False),
                 no_entry_after=risk_data.get("no_entry_after"),
+            ),
+            execution_config=ExecutionConfig(
+                slippage_pct=exec_data.get("slippage_pct", 0.1),
+                commission_pct=exec_data.get("commission_pct", 0.1),
+                initial_capital=exec_data.get("initial_capital", 100_000.0),
             ),
         )
 

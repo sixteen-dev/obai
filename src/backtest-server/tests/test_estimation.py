@@ -74,8 +74,8 @@ def _mock_estimation_deps() -> Any:  # noqa: ANN401
     mock_downloader.count_stale.return_value = 0
 
     with (
-        patch("src.server._settings", mock_settings),
-        patch("src.server._downloader", mock_downloader),
+        patch("src.server._state.settings", mock_settings),
+        patch("src.server._state.downloader", mock_downloader),
     ):
         yield {
             "settings": mock_settings,
