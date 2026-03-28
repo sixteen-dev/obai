@@ -10,6 +10,7 @@ Architecture:
     - Events/News Agent: News, earnings, and dividend calendars
     - Options Agent: Options chains and Greeks analysis (Massive)
     - Screener Agent: Stock screening and ticker discovery
+    - Research Agent: Deep company research via Exa semantic search
 """
 
 from .base_agent import BaseAgent
@@ -19,6 +20,7 @@ from .events_news_agent import EventsNewsAgent, create_events_news_agent
 from .fundamentals_agent import FundamentalsAgent, create_fundamentals_agent
 from .market_data_agent import MarketDataAgent, create_market_data_agent
 from .options_agent import OptionsAgent, create_options_agent
+from .research_agent import ResearchAgent, create_research_agent
 from .screener_agent import ScreenerAgent, create_screener_agent
 
 __version__ = "0.1.0"
@@ -35,6 +37,7 @@ __all__ = [
     "MarketDataAgent",
     "EventsNewsAgent",
     "OptionsAgent",
+    "ResearchAgent",
     "ScreenerAgent",
     # Central Hub
     "CentralHubAgent",
@@ -43,6 +46,7 @@ __all__ = [
     "create_market_data_agent",
     "create_events_news_agent",
     "create_options_agent",
+    "create_research_agent",
     "create_screener_agent",
     "create_central_hub",
 ]

@@ -27,6 +27,7 @@ PROMPT_NAMES = [
     "market_data",
     "options",
     "portfolio",
+    "research",
     "screener",
     "strategy",
 ]
