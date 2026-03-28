@@ -24,7 +24,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ## Architecture
 
-![OBaI Architecture](docs/architecture.svg)
+![OBaI Architecture](docs/architecture.svg?v=2)
 
 The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search — company profiles, leadership, product sentiment, and competitive landscape.
 
