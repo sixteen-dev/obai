@@ -137,6 +137,10 @@ class AgentConfig(BaseSettings):
         default="gpt-5.1",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
+    research_model: str | None = Field(
+        default=None,
+        description="Override model for research agent (uses specialist_model if None)",
+    )
 
     # Guardrails
     enable_guardrails: bool = Field(
@@ -172,6 +176,10 @@ class AgentConfig(BaseSettings):
     mcp_backtest_url: str = Field(
         default="http://localhost:8007/mcp",
         description="Backtest strategy MCP server URL",
+    )
+    mcp_research_url: str = Field(
+        default="http://localhost:8008/mcp",
+        description="Research MCP server URL",
     )
 
     # MCP Client Settings

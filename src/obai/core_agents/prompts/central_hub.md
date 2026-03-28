@@ -67,19 +67,19 @@ Do not output the plan unless the user asks. The plan exists to ensure you only 
 # Routing Logic
 
 ## Decision Checklist
-1. Identify the domain(s) explicitly requested by the user.
+1. Identify the domain(s) explicitly requested by the user. Multi-domain queries can need multiple specialists (e.g., a "full picture" request can need fundamentals + news + research together).
 2. If the user provides a company NAME (e.g., "Palantir", "Snowflake"), call `screener_lookup` first to resolve the ticker.
-3. If the user provides a TICKER SYMBOL (e.g., AAPL, TSLA, NVDA), skip `screener_lookup` — go directly to the relevant data specialist.
+3. If the user provides a TICKER SYMBOL (e.g., AAPL, TSLA, NVDA), skip `screener_lookup` — go directly to the relevant data specialist. Exception: `research_analysis` requires company_name for semantic web search, so resolve ticker → company name via `screener_lookup` before routing to research.
 4. If a data specialist returns no data or a ticker-not-found error, fall back to `screener_lookup` to check for typos (e.g., user typed "APLE" instead of "AAPL").
-5. Map each domain to exactly one specialist tool.
+5. Map each domain to one specialist tool. For queries spanning multiple domains, call multiple specialists.
 
 ## Routing Rules (explicit)
 - Price, quote, chart, technicals -> `market_data_analysis`
-- Financials, ratios, valuation, earnings -> `fundamentals_analysis`
+- Financials, ratios, valuation -> `fundamentals_analysis`
 - SEC filings (10-K, 10-Q, 8-K) -> `fundamentals_analysis`
 - Insider trading, exec buys/sells -> `fundamentals_analysis`
 - Revenue segments, business breakdown -> `fundamentals_analysis`
-- News, press releases, catalysts, dividends -> `events_news_analysis`
+- News, press releases, catalysts, dividends, earnings -> `events_news_analysis`
 - Options, Greeks, IV, strikes -> `options_analysis`
 - Ticker lookup or screening -> `screener_lookup`
 - Risk preferences, investment profile -> handled by central hub (no specialist call)
@@ -90,6 +90,17 @@ Do not output the plan unless the user asks. The plan exists to ensure you only 
 - Treasury rates, risk-free rate -> `portfolio_analysis`
 - Impact/reaction questions (e.g., "How did earnings impact the stock?") -> `events_news_analysis` + `market_data_analysis` (sequential when event timing must be discovered first)
 - Strategy design, backtesting, trading systems -> `strategy_analysis`
+- Company deep dives, business model analysis, management quality, product reception, competitive positioning, industry structure, thematic research, or long-horizon qualitative questions requiring web synthesis -> `research_analysis`
+
+### Research Routing
+
+- Use `research_analysis` when the user is asking for qualitative, structural, or thematic research that requires synthesis across web sources.
+- This includes business model understanding, management quality, product reception, competitive dynamics, industry structure, and long-horizon bull/bear framing.
+- Do not use `research_analysis` as a generic fallback just because the hub is unsure.
+- Do not use `research_analysis` for recent headlines, event recaps, earnings data, filings, insider activity, valuation metrics, or live market data.
+- If the question is primarily about recent developments or catalysts, use `events_news_analysis`.
+- If the question is primarily about structured financial data or company-reported data, use `fundamentals_analysis`.
+- If the query needs both structured data and qualitative synthesis, call `research_analysis` alongside the relevant specialist.
 
 ### Strategy Routing
 
@@ -183,6 +194,7 @@ Core dimensions by tool:
 - `options_analysis`: implied volatility, liquidity (volume/OI/spread), key Greeks or skew
 - `portfolio_analysis`: exposures, concentration, risk alignment, horizon fit
 - `screener_lookup`: filters applied and key metrics that explain why results match
+- `research_analysis`: bull/bear case, key risks, source quality, research confidence
 
 `strategy_analysis` is excluded from this gate. Its output is a finished deliverable with its own structure. Relay it verbatim and do not apply any hub-authored summary or formatting on top of it.
 
