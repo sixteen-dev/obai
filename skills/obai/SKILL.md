@@ -1,6 +1,6 @@
 ---
 name: obai
-description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, portfolio risk, screening, dividends, SEC filings, insider trades, backtesting strategies, commodity or futures prices, company research, competitive analysis, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
+description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, portfolio risk, screening, dividends, SEC filings, insider trades, backtesting strategies, commodity or futures prices, company deep dives, competitive positioning, management quality, product sentiment, thematic research, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
 ---
 
 # OBaI CLI — Agent Execution Guide
@@ -138,7 +138,7 @@ Route awareness helps you understand the response, but you don't need to pick ag
 | **Screening** | Stock screening with filters |
 | **Portfolio** | Portfolio analysis, ETF holdings, risk metrics, sector/asset class allocation, treasury rates |
 | **Strategy** | Backtest design and iteration (daily and intraday), walk-forward robustness validation, shared-capital portfolio backtesting |
-| **Research** | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape |
+| **Research** | Company deep dives, business model analysis, management quality, product sentiment, competitive dynamics, industry structure, thematic research via Exa semantic web search |
 
 Multi-domain queries (e.g., "Compare AAPL earnings with options flow") automatically dispatch to multiple agents in parallel.
 
@@ -191,6 +191,8 @@ uv run python -m evaluation evaluate --suite --category A
 | `STRATEGY_MODEL` | `gpt-5.1` | Strategy agent model |
 | `EXA_API_KEY` | optional | Exa API key for research server |
 | `ENABLE_GUARDRAILS` | `true` | Block non-financial queries |
+| `RESEARCH_MODEL` | `gpt-5-mini` | Research agent model |
 | `ENABLE_INLINE_SCORING` | `true` | Score every query for faithfulness |
 | `MCP_TIMEOUT` | `30` | Request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
+| `EXA_API_KEY` | optional | Exa API key for research agent web search |
