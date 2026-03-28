@@ -26,7 +26,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search — company profiles, leadership, product sentiment, and competitive landscape.
 
 ---
 
@@ -37,6 +37,7 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 | **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 7 servers. |
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
+| **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |
 
 FMP is the backbone -- it is not free, but a single subscription powers almost the entire system.
 
@@ -58,6 +59,7 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 | `FMP_API_KEY` | Financial Modeling Prep | ~$19/mo | fundamentals, market-data, events-news, screening, portfolio, backtest servers |
 | `MASSIVE_API_KEY` | Massive.com | Free tier | options-server only |
 | `TAVILY_API_KEY` | Tavily | Free tier | events-news-server (AI search) |
+| `EXA_API_KEY` | Exa | Free tier | research-server (semantic search) |
 | `ANTHROPIC_API_KEY` | Anthropic | Pay-per-use | *Optional* -- LLM-judge cross-family evaluation only |
 
 ---
@@ -73,6 +75,7 @@ export OPENAI_API_KEY=sk-proj-...
 export FMP_API_KEY=...
 export MASSIVE_API_KEY=...     # optional
 export TAVILY_API_KEY=...      # optional
+export EXA_API_KEY=...         # optional
 
 # One-shot setup: checks prereqs, starts Docker services, installs CLI
 ./setup.sh
@@ -86,7 +89,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 7 MCP servers (Docker Compose)
+5. Builds and starts all 8 MCP servers (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Configures Opik SDK for local tracing
 
@@ -127,6 +130,7 @@ obai status
 | **screening-server** | 8005 | FMP | Stock screening with financial filters, ticker discovery |
 | **portfolio-server** | 8006 | FMP | Portfolio parsing, risk analysis, ETF holdings, treasury rates |
 | **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, DuckDB storage, daily + intraday (5min/15min/1hr), train/test split |
+| **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -255,7 +259,7 @@ Key environment variables (all have sensible defaults):
 | `MCP_TIMEOUT` | `30` | MCP request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
-Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`.
+Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`.
 
 ---
 
@@ -264,7 +268,7 @@ Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS
 ```
 obai/
 ├── setup.sh                        # One-shot setup script
-├── docker-compose.yml              # All 7 MCP servers
+├── docker-compose.yml              # All 8 MCP servers
 ├── pyproject.toml                  # Monorepo dev tooling config
 ├── infra/
 │   └── opik/                       # Opik tracing stack (Docker Compose)
@@ -276,6 +280,7 @@ obai/
 │   ├── screening-server/           # MCP server — stock screening
 │   ├── portfolio-server/           # MCP server — portfolio analysis, ETF holdings
 │   ├── backtest-server/            # MCP server — strategy backtesting
+│   ├── research-server/            # MCP server — qualitative research (Exa)
 │   └── obai/                       # Core application
 │       ├── pyproject.toml          # OBaI package config
 │       ├── core_agents/            # Agent definitions + orchestration
@@ -284,7 +289,7 @@ obai/
 │       │   ├── config.py
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
-│       │   └── *_agent.py          # 7 specialist agents
+│       │   └── *_agent.py          # 8 specialist agents
 │       ├── clients/
 │       │   └── cli/                # CLI + TUI clients
 │       │       ├── chat.py         # Headless CLI (obai query/chat/status)
@@ -348,6 +353,7 @@ OBaI ships with two agent skills that let any AI agent autonomously interact wit
 - [x] Opik tracing and custom evaluation scorers
 - [x] Input guardrails for non-financial query filtering
 - [x] Qdrant vector search over financial education PDFs
+- [x] Research server — deep qualitative analysis via Exa semantic search
 - [x] DuckDB storage for backtest OHLCV data (replaced Parquet-per-symbol)
 - [x] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine and market data
 - [x] AutoTrader skill — autonomous paper trading on Alpaca with risk management
