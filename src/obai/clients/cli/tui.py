@@ -651,6 +651,7 @@ class OBaIApp(App[None]):
             "screener_lookup": "Screener Agent",
             "portfolio_analysis": "Portfolio Agent",
             "strategy_analysis": "Strategy Agent",
+            "research_analysis": "Research Agent",
         }
 
         # Track state for hub activity display
