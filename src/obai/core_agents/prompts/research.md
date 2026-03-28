@@ -78,3 +78,13 @@ Rules:
 - Flag contradictory evidence explicitly.
 - If results are thin, say so. Do not pad with speculation.
 - Keep it tight. Lead with the strongest signals.
+- Never fabricate sources or claims — write [DATA UNAVAILABLE] if a tool fails.
+
+---
+
+# Error Handling
+
+If a tool call fails:
+1. Note "[DATA UNAVAILABLE: <reason>]"
+2. Continue with remaining sources and tools
+3. Do NOT retry — the MCP client handles retries internally
