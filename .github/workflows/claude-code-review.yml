@@ -36,16 +36,26 @@ jobs:
           show_full_output: true
           additional_permissions: |
             actions: read
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(gh pr comment:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),WebFetch,mcp__github_inline_comment__create_inline_comment"
+            --max-turns 15
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             You are reviewing a financial trading platform with multi-agent AI (OpenAI Agent SDK),
             MCP servers (FastMCP), and Alpaca brokerage integration. Bugs here can cause real money
             loss or data corruption. Be direct and assertive.
 
+            Start by running `gh pr diff ${{ github.event.pull_request.number }}` to get the full diff.
+            Then review every changed file.
+
+            For each finding, post an inline comment using `mcp__github_inline_comment__create_inline_comment`
+            with `confirmed: true`. Include severity (P0-P3), the concrete impact, and the smallest safe fix.
             Only report issues you can tie to a concrete file and line in the PR diff.
-            For each finding, include severity (P0-P3), the concrete impact, and the smallest safe fix.
             If evidence is incomplete, call that out and do not speculate.
+
+            After inline comments, post a summary using `gh pr comment`.
 
             FOCUS ON (flag these aggressively):
             - Security: secrets in code/logs, injection, auth bypass, SSRF, unsafe deserialization
@@ -65,5 +75,3 @@ jobs:
             - Adding comments or logging
             - Test coverage unless a critical money/security path is untested
             - Performance unless it's an actual bottleneck (not theoretical)
-
-            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
