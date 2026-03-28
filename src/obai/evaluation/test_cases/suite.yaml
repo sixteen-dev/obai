@@ -1,8 +1,9 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 139 test cases across 6 active categories (A-E, G; F pending).
+# 165 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
+# Category H: Deep company research — Exa-powered research agent queries.
 #   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
 #
 # Usage:
@@ -1083,6 +1084,182 @@ test_cases:
     expected_tools: [portfolio_analysis, events_news_analysis]
     description: Concentrated single-stock portfolio risk + catalyst awareness — retail investor reality check
 
+
+  # ─────────────────────────────────────────────
+  # Category H: Deep Company Research (Exa)
+  # ─────────────────────────────────────────────
+  # Tests the research agent's routing, web intelligence gathering,
+  # bull/bear synthesis, freshness awareness, and boundary with other agents.
+
+  # --- H1-H5: Single-tool research (baseline) ---
+
+  - id: H1
+    query: "Give me a deep dive on Palantir — what exactly do they do and where are they headed?"
+    category: H
+    query_type: company_profile
+    expected_tools: [screener_lookup, research_analysis]
+    expected_sequence: [screener_lookup, research_analysis]
+    description: Company profile via name — requires ticker resolution first
+    smoke: true
+
+  - id: H2
+    query: "Assess Tim Cook's leadership at Apple (AAPL). Focus on strategic decisions, execution quality, and whether he strengthened the business over time."
+    category: H
+    query_type: leadership
+    expected_tools: [research_analysis]
+    description: Leadership research with company and ticker already specified
+
+  - id: H3
+    query: "How are Tesla customers receiving the Cybertruck? Focus on owner feedback, reviews, and forums rather than headlines."
+    category: H
+    query_type: product_sentiment
+    expected_tools: [screener_lookup, research_analysis]
+    description: Product sentiment — needs ticker resolution for Tesla
+    smoke: true
+
+  - id: H4
+    query: "Who are CrowdStrike's main competitors, and what does broader qualitative research say about how they stack up on market share and product strength?"
+    category: H
+    query_type: competitive_landscape
+    expected_tools: [screener_lookup, research_analysis]
+    description: Competitive landscape — needs name-to-ticker resolution
+
+  - id: H5
+    query: "Using broader qualitative research rather than headline recaps, what does the GLP-1 obesity drug market look like in terms of competition, adoption, and long-term risks?"
+    category: H
+    query_type: general_research
+    expected_tools: [research_analysis]
+    description: Thematic qualitative research — no single company anchor
+
+  # --- H6-H10: Multi-agent research (research + other specialists) ---
+
+  - id: H6
+    query: "I'm considering a position in Palantir (PLTR). Give me the full picture — financials, recent news, and what broader qualitative research says about its government vs commercial mix."
+    category: H
+    query_type: full_picture
+    expected_tools: [fundamentals_analysis, events_news_analysis, research_analysis]
+    description: Full picture — research + fundamentals + news coordination
+    smoke: true
+
+  - id: H7
+    query: "Nvidia (NVDA) is trading at 35x forward earnings. Is that justified given its competitive position and product pipeline?"
+    category: H
+    query_type: valuation_plus_research
+    expected_tools: [fundamentals_analysis, research_analysis]
+    description: Valuation question needs both structured financials and web research
+
+  - id: H8
+    query: "AMD (AMD) just reported earnings. Beyond the headline reaction, how is it positioned versus Nvidia (NVDA) in the data center GPU market?"
+    category: H
+    query_type: event_plus_competitive
+    expected_tools: [events_news_analysis, research_analysis]
+    description: Recent event plus competitive research — tests recency awareness
+
+  - id: H9
+    query: "I own Meta Platforms (META). Focus on broader qualitative research: what is user reception for Quest headsets, and does outside research suggest the metaverse strategy is working?"
+    category: H
+    query_type: product_plus_leadership
+    expected_tools: [research_analysis]
+    description: Product reception + strategy assessment in a single research query
+
+  - id: H10
+    query: "Give me the stock-performance context for Snowflake (SNOW) this quarter, then assess from broader qualitative research whether its product is losing ground to Databricks."
+    category: H
+    query_type: competitive_plus_price
+    expected_tools: [market_data_analysis, research_analysis]
+    expected_sequence: [market_data_analysis, research_analysis]
+    description: Market context first, then qualitative competitive research
+
+  # --- H11-H14: Timeframe sensitivity ---
+
+  - id: H11
+    query: "How has Satya Nadella transformed Microsoft (MSFT) over the past decade?"
+    category: H
+    query_type: leadership_long_horizon
+    expected_tools: [research_analysis]
+    description: Long time horizon — agent should widen the search window
+
+  - id: H12
+    query: "Using broader qualitative research rather than headline recaps, what do supplier reports, industry commentary, and other non-news sources suggest about Boeing's (BA) quality culture right now?"
+    category: H
+    query_type: recent_research
+    expected_tools: [research_analysis]
+    description: Recent qualitative research with explicit non-headline framing
+
+  - id: H13
+    query: "Research Rivian for me from a business model, competitive position, and demand perspective."
+    category: H
+    query_type: vague_research
+    expected_tools: [screener_lookup, research_analysis]
+    description: Vague query — agent should still produce a useful company profile
+
+  - id: H14
+    query: "What's the bull and bear case for Coinbase (COIN)?"
+    category: H
+    query_type: bull_bear
+    expected_tools: [research_analysis]
+    description: Explicit bull/bear request — maps directly to research output format
+    smoke: true
+
+  # --- H15-H18: Boundary tests — should NOT route to research ---
+
+  - id: H15
+    query: "What were AAPL's earnings last quarter?"
+    category: H
+    query_type: earnings_not_research
+    expected_tools: [events_news_analysis]
+    description: Earnings data — should route to events_news, NOT research
+
+  - id: H16
+    query: "Show me insider trades for MSFT in the last 90 days."
+    category: H
+    query_type: insider_not_research
+    expected_tools: [fundamentals_analysis]
+    description: Insider data — should route to fundamentals, NOT research
+
+  - id: H17
+    query: "What's TSLA trading at?"
+    category: H
+    query_type: price_not_research
+    expected_tools: [market_data_analysis]
+    description: Simple price query — should NOT trigger research agent
+
+  - id: H18
+    query: "Any breaking news on Nvidia today?"
+    category: H
+    query_type: news_not_research
+    expected_tools: [events_news_analysis]
+    description: Breaking news — should route to events_news, NOT research
+
+  # --- H19-H22: Advisor-grade research scenarios ---
+
+  - id: H19
+    query: "I'm building a position in cybersecurity. Compare CrowdStrike (CRWD), Palo Alto Networks (PANW), and Zscaler (ZS) on product moat and customer retention."
+    category: H
+    query_type: multi_company_competitive
+    expected_tools: [research_analysis]
+    description: Multi-company competitive comparison in single research call
+
+  - id: H20
+    query: "My client wants exposure to AI infrastructure but is worried about concentration risk in NVDA. Find second-tier plays, then assess their business quality using fundamentals plus broader qualitative research."
+    category: H
+    query_type: thematic_research
+    expected_tools: [screener_lookup, fundamentals_analysis, research_analysis]
+    description: Thematic screening plus fundamentals and qualitative research
+
+  - id: H21
+    query: "Uber's CEO turned the company profitable. Is that sustainable — cost cuts or actual growth?"
+    category: H
+    query_type: leadership_plus_fundamentals
+    expected_tools: [fundamentals_analysis, events_news_analysis]
+    description: Profitability sustainability — financials for margin trends, news for context
+
+  - id: H22
+    query: "ARM Holdings (ARM) has a licensing model that looks strong on paper. Is it defensible long-term against RISC-V and x86 based on broader qualitative research?"
+    category: H
+    query_type: competitive_moat_research
+    expected_tools: [research_analysis]
+    description: Deep competitive moat analysis — tests structural vs recent data
 
   # ─────────────────────────────────────────────
   # Category F: Session/Context (Multi-Turn)

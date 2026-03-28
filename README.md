@@ -2,23 +2,21 @@
   <img src="assets/banner.png" alt="OBaI - Multi-agent AI for stock market research" width="600" />
   <br/>
   <strong>Multi-agent AI system for stock market research, powered by GPT and real-time FMP custom MCP servers.</strong>
+  <br/>
+  <sub>pronounced <i>"oww-bee"</i></sub>
 </div>
 
 ---
 
 ## Quick Demo
 
-```
-> Compare AAPL and MSFT earnings with current options flow
-
-OBaI routes your query to multiple specialist agents in parallel:
-
-  Hub ──┬── Fundamentals Agent ── earnings data (AAPL, MSFT)
-        ├── Events/News Agent ── recent earnings announcements
-        └── Options Agent ── options flow, IV, Greeks
-
-The Hub synthesizes all specialist outputs into a single, comprehensive response.
-```
+<div align="center">
+  <sub><i>"I want to fade the opening spike on NVDA. Backtest a 5-min mean-reversion on the first hour — enter when RSI(14) drops below 25 after 9:45, exit on RSI crossing back above 50, flat by close. Tight stop, 1.5% max. Last year of data."</i></sub>
+  <br/><br/>
+  <a href="https://youtu.be/62E0JBasyCQ">
+    <img src="https://img.youtube.com/vi/62E0JBasyCQ/maxresdefault.jpg" alt="OBaI Demo" width="720" />
+  </a>
+</div>
 
 The Central Hub understands your intent, dispatches to the right specialists simultaneously (agents-as-tools pattern, not handoffs), and merges everything into one coherent answer.
 

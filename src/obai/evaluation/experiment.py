@@ -198,6 +198,7 @@ def build_experiment_config() -> dict[str, Any]:
         "options",
         "screener",
         "portfolio",
+        "research",
         "strategy",
     ]:
         override = getattr(config, f"{agent_type}_model", None)

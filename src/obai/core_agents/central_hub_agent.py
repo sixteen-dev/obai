@@ -55,6 +55,7 @@ from .portfolio_agent import PortfolioAgent
 from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
+from .research_agent import ResearchAgent
 from .screener_agent import ScreenerAgent
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
@@ -534,6 +535,7 @@ class CentralHubAgent:
         self.screener_agent: ScreenerAgent | None = None
         self.portfolio_agent: PortfolioAgent | None = None
         self.strategy_agent: StrategyAgent | None = None
+        self.research_agent: ResearchAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -600,6 +602,19 @@ class CentralHubAgent:
             await self.strategy_agent.initialize()
             self._initialized_agents.append(self.strategy_agent)
             logger.info("✓ Strategy Agent initialized")
+
+            try:
+                self.research_agent = ResearchAgent()
+                await self.research_agent.initialize()
+                self._initialized_agents.append(self.research_agent)
+                logger.info("✓ Research Agent initialized")
+            except Exception:
+                logger.warning(
+                    "Research Agent unavailable — research_analysis tool disabled. "
+                    "Other agents unaffected.",
+                    exc_info=True,
+                )
+                self.research_agent = None
 
             # Central hub uses dedicated model (needs strong reasoning)
             model = self.config.orchestrator_model
@@ -727,6 +742,25 @@ class CentralHubAgent:
             if self.strategy_agent and self.strategy_agent.agent:
                 specialist_tools.append(self._build_strategy_tool())
 
+            if self.research_agent and self.research_agent.agent:
+                specialist_tools.append(
+                    self.research_agent.agent.as_tool(
+                        tool_name="research_analysis",
+                        tool_description=(
+                            "Deep company and thematic research via web sources. "
+                            "Use for qualitative, structural, or long-horizon questions "
+                            "requiring synthesis across multiple non-news sources, "
+                            "including business model analysis, leadership quality, "
+                            "product sentiment, competitive dynamics, and industry "
+                            "structure. Not for breaking news, earnings data, SEC "
+                            "filings, insider activity, valuation metrics, or live "
+                            "market data. Resolve company_name first when only a ticker "
+                            "is provided."
+                        ),
+                        on_stream=_create_stream_handler("research_analysis", "Research Agent"),
+                    )
+                )
+
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
             specialist_tools.append(set_preferences)
@@ -772,6 +806,7 @@ class CentralHubAgent:
         self.screener_agent = None
         self.portfolio_agent = None
         self.strategy_agent = None
+        self.research_agent = None
         self.agent = None
         self._initialized = False
 
@@ -890,6 +925,7 @@ class CentralHubAgent:
             "screener": self.screener_agent,
             "portfolio": self.portfolio_agent,
             "strategy": self.strategy_agent,
+            "research": self.research_agent,
         }
 
         if specialist_name not in specialists:

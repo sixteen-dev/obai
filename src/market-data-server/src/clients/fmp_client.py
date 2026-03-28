@@ -10,6 +10,14 @@ from ..logging_config import get_logger, log_api_call, log_error
 logger = get_logger(__name__)
 
 
+class FMPAPIError(Exception):
+    """Raised when FMP returns HTTP 200 with an error body."""
+
+    def __init__(self, message: str, endpoint: str) -> None:
+        self.endpoint = endpoint
+        super().__init__(f"FMP API error on /{endpoint}: {message}")
+
+
 class FMPClient:
     """Client for Financial Modeling Prep API - Market Data endpoints."""
 
@@ -47,7 +55,8 @@ class FMPClient:
             JSON response data
 
         Raises:
-            httpx.HTTPError: On API request failure
+            httpx.HTTPError: On API request failure.
+            FMPAPIError: When FMP returns 200 OK with an error body.
         """
         url = f"{self.base_url}/{endpoint}"
         query_params = {**(params or {}), "apikey": self.api_key}
@@ -57,7 +66,15 @@ class FMPClient:
         try:
             response = await self.client.get(url, params=query_params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+            # FMP returns 200 OK with error bodies instead of proper HTTP errors
+            if isinstance(data, dict) and "Error Message" in data:
+                msg = data["Error Message"]
+                logger.warning("fmp_api_error_in_body", endpoint=endpoint, error=msg)
+                raise FMPAPIError(msg, endpoint)
+
+            return data
         except httpx.HTTPError as e:
             log_error(logger, e, context={"endpoint": endpoint, "params": params})
             raise

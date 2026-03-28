@@ -64,6 +64,13 @@ test = [
     "pytest-mock>=3.14.1",
 ]
 
+[tool.uv]
+# Pin transitive deps to patched versions where fixes exist
+constraint-dependencies = [
+    "pypdf>=6.9.2",       # GHSA-87mj-5ggw-8qc3: infinite loop fix
+    "requests>=2.33.0",   # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
+]
+
 # Tool configurations for the entire monorepo
 [tool.pytest.ini_options]
 testpaths = [
