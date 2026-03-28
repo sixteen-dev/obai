@@ -41,6 +41,9 @@ dev = [
     # MCP evaluation tools (for .claude/skills/mcp-builder/scripts/)
     "anthropic>=0.40.0",
 
+    # Security: GHSA-gc5v-m9x4-r6x2 (insecure temp file fix)
+    "requests>=2.33.0",
+
     # Type stubs
     "types-aiofiles>=24.1.0",
     "types-requests>=2.32.0",
