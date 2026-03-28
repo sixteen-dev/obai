@@ -215,6 +215,30 @@ services:
       retries: 3
       start_period: 30s
 
+  research-server:
+    build:
+      context: ./src/research-server
+      dockerfile: Dockerfile
+    container_name: obai-research-server
+    ports:
+      - "8008:8008"
+    environment:
+      # API Keys (from host env)
+      - EXA_API_KEY=${EXA_API_KEY}
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8008
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8008/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   qdrant-data:
   backtest-data:
