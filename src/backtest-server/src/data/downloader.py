@@ -5,7 +5,8 @@ Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phase 2.3.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import asyncio
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -25,6 +26,7 @@ class DataDownloader:
         fmp_client: FMPClient,
         data_store: DataStore,
         freshness_hours: int = 24,
+        max_concurrent_downloads: int = 5,
     ) -> None:
         """Initialize downloader.
 
@@ -32,11 +34,13 @@ class DataDownloader:
             fmp_client: FMP API client for fetching data.
             data_store: DuckDB-backed data store.
             freshness_hours: Hours before data is considered stale.
+            max_concurrent_downloads: Max parallel FMP requests.
 
         """
         self.fmp_client = fmp_client
         self.data_store = data_store
         self.freshness_hours = freshness_hours
+        self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
     def _is_fresh(
         self,
@@ -60,7 +64,7 @@ class DataDownloader:
         last_mod = self.data_store.get_last_modified(symbol, timeframe=timeframe)
         if last_mod is None:
             return False
-        age = datetime.now().timestamp() - last_mod
+        age = datetime.now(UTC).timestamp() - last_mod
         if age >= (self.freshness_hours * 3600):
             return False
 
@@ -184,6 +188,10 @@ class DataDownloader:
     ) -> dict[str, pl.DataFrame]:
         """Ensure data exists for all symbols, downloading if needed.
 
+        Downloads are run concurrently with a semaphore to respect FMP rate
+        limits. Cached symbols are resolved immediately without consuming a
+        semaphore slot.
+
         Args:
             symbols: List of stock ticker symbols.
             start_date: Start date in YYYY-MM-DD format.
@@ -194,27 +202,27 @@ class DataDownloader:
             Dict mapping symbol → DataFrame.
 
         """
-        result: dict[str, pl.DataFrame] = {}
         dt_start = date.fromisoformat(start_date)
         dt_end = date.fromisoformat(end_date)
 
-        for symbol in symbols:
+        async def _fetch_one(symbol: str) -> tuple[str, pl.DataFrame]:
             if self._is_fresh(symbol, dt_start, dt_end, timeframe=timeframe):
                 cached = self.data_store.read_ohlcv(symbol, timeframe=timeframe)
                 if cached is not None:
-                    result[symbol] = _slice_date_range(cached, dt_start, dt_end)
                     logger.info("data_cache_hit", symbol=symbol, timeframe=timeframe)
-                    continue
+                    return symbol, _slice_date_range(cached, dt_start, dt_end)
 
-            full_df = await self.download_symbol(
-                symbol,
-                start_date,
-                end_date,
-                timeframe=timeframe,
-            )
-            result[symbol] = _slice_date_range(full_df, dt_start, dt_end)
+            async with self._semaphore:
+                full_df = await self.download_symbol(
+                    symbol,
+                    start_date,
+                    end_date,
+                    timeframe=timeframe,
+                )
+            return symbol, _slice_date_range(full_df, dt_start, dt_end)
 
-        return result
+        pairs = await asyncio.gather(*[_fetch_one(s) for s in symbols])
+        return dict(pairs)
 
     async def _fetch_from_fmp(
         self,

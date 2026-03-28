@@ -22,6 +22,7 @@ from .backtester import (
     compute_entry_fill,
     compute_exit_fill,
 )
+from .utils import date_to_str
 
 
 @dataclass
@@ -160,7 +161,7 @@ def run_portfolio_backtest(  # noqa: PLR0913
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
         )
-        equity = _compute_daily_equity(state, current_date, symbol_arrays)
+        equity = _compute_equity_from_state(state, current_date, symbol_arrays)
         state.equity_history.append(equity)
         daily_counts.append(state.position_count)
 
@@ -396,9 +397,9 @@ def _close_position(  # noqa: PLR0913
     trades.append(
         PortfolioTradeRecord(
             symbol=symbol,
-            entry_date=_date_to_str(lot.entry_date),
+            entry_date=date_to_str(lot.entry_date),
             entry_price=lot.entry_price,
-            exit_date=_date_to_str(exit_date),
+            exit_date=date_to_str(exit_date),
             exit_price=exit_price,
             shares=lot.shares,
             return_pct=return_pct,
@@ -499,7 +500,7 @@ def _collect_and_execute_entries(  # noqa: PLR0913
             signals_skipped.append(
                 {
                     "symbol": symbol,
-                    "date": _date_to_str(current_date),
+                    "date": date_to_str(current_date),
                     "reason": "insufficient_capital",
                 }
             )
@@ -605,25 +606,6 @@ def _build_date_union(
     return sorted(all_dates)
 
 
-def _compute_daily_equity(
-    state: PortfolioState,
-    current_date: date,
-    symbol_arrays: dict[str, _SymbolArrays],
-) -> float:
-    """Compute total equity: cash + mark-to-market positions.
-
-    Args:
-        state: Current portfolio state.
-        current_date: Date for mark-to-market.
-        symbol_arrays: Pre-extracted per-symbol arrays.
-
-    Returns:
-        Total portfolio equity.
-
-    """
-    return _compute_equity_from_state(state, current_date, symbol_arrays)
-
-
 def _compute_equity_from_state(
     state: PortfolioState,
     current_date: date,
@@ -669,21 +651,6 @@ def _extract_date(val: Any) -> date:
     if isinstance(val, date):
         return val
     return date.min
-
-
-def _date_to_str(val: Any) -> str:
-    """Convert a date value to ISO string.
-
-    Args:
-        val: Date or datetime value.
-
-    Returns:
-        ISO format string.
-
-    """
-    if isinstance(val, (date, datetime)):
-        return val.isoformat()
-    return str(val)
 
 
 def _compute_holding_days(entry_date: date, exit_date: Any) -> int:

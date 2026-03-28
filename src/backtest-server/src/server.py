@@ -22,11 +22,15 @@ from .config import Settings, load_settings
 from .data.db import DuckDBManager
 from .data.downloader import DataDownloader
 from .data.store import DataStore
-from .engine.backtester import BacktestConfig, run_backtest, run_multi_symbol_backtest
+from .engine.backtester import BacktestConfig, Trade, run_backtest, run_multi_symbol_backtest
 from .engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
 from .engine.indicators import INDICATOR_REGISTRY, compute_indicators, get_supported_indicators
-from .engine.metrics import _expected_trading_days, compute_metrics
-from .engine.portfolio_backtester import run_portfolio_backtest
+from .engine.metrics import (
+    _compute_portfolio_specific,
+    compute_metrics,
+    expected_trading_days,
+)
+from .engine.portfolio_backtester import PortfolioBacktestResult, run_portfolio_backtest
 from .engine.session import session_end as _session_end
 from .engine.signals import generate_signals
 from .engine.walk_forward import walk_forward_validate
@@ -44,49 +48,40 @@ logger = get_logger(__name__)
 
 mcp = FastMCP("backtest-server", version=__version__)
 
-# Global state
-_fmp_client: FMPClient | None = None
-_db_manager: DuckDBManager | None = None
-_data_store: DataStore | None = None
-_downloader: DataDownloader | None = None
-_cache: BacktestCache | None = None
-_job_store: JobStore | None = None
-_settings: Settings | None = None
+
+@dataclass
+class _ServerState:
+    """Server-wide singletons initialized during bootstrap."""
+
+    fmp_client: FMPClient | None = None
+    db_manager: DuckDBManager | None = None
+    data_store: DataStore | None = None
+    downloader: DataDownloader | None = None
+    cache: BacktestCache | None = None
+    job_store: JobStore | None = None
+    settings: Settings | None = None
+
+    def require(self, name: str) -> Any:
+        """Get a required component, raising if not initialized.
+
+        Args:
+            name: Attribute name on this dataclass.
+
+        Returns:
+            The initialized component.
+
+        Raises:
+            RuntimeError: If the component is None.
+
+        """
+        val = getattr(self, name)
+        if val is None:
+            msg = f"{name} not initialized — was bootstrap() called?"
+            raise RuntimeError(msg)
+        return val
 
 
-def _get_fmp_client() -> FMPClient:
-    if _fmp_client is None:
-        msg = "FMP client not initialized"
-        raise RuntimeError(msg)
-    return _fmp_client
-
-
-def _get_data_store() -> DataStore:
-    if _data_store is None:
-        msg = "Data store not initialized"
-        raise RuntimeError(msg)
-    return _data_store
-
-
-def _get_downloader() -> DataDownloader:
-    if _downloader is None:
-        msg = "Downloader not initialized"
-        raise RuntimeError(msg)
-    return _downloader
-
-
-def _get_cache() -> BacktestCache:
-    if _cache is None:
-        msg = "Cache not initialized"
-        raise RuntimeError(msg)
-    return _cache
-
-
-def _get_job_store() -> JobStore:
-    if _job_store is None:
-        msg = "Job store not initialized"
-        raise RuntimeError(msg)
-    return _job_store
+_state = _ServerState()
 
 
 # --- Tool 1: Run Strategy Backtest ---
@@ -124,11 +119,11 @@ async def backtest_run_strategy_tool(
     except (json.JSONDecodeError, ValueError, KeyError) as exc:
         return {"isError": True, "error": f"Invalid strategy: {exc}"}
 
-    cache = _get_cache()
+    cache: BacktestCache = _state.require("cache")
     cache_key = _build_cache_key(strategy)
     cached = cache.get(cache_key)
     if cached is not None:
-        result = cached.to_dict()
+        result: dict[str, Any] = cached.to_dict()
         result["cache_hit"] = True
         return result
 
@@ -143,8 +138,8 @@ async def backtest_run_strategy_tool(
 
     estimated = _estimate_runtime(strategy)
 
-    if async_mode is None and _settings is not None:
-        threshold = _settings.auto_async_threshold_seconds
+    if async_mode is None and _state.settings is not None:
+        threshold = _state.settings.auto_async_threshold_seconds
         logger.info(
             "auto_async_check",
             estimated=round(estimated, 2),
@@ -189,8 +184,8 @@ async def backtest_get_job_status_tool(
         Job status with result if completed.
 
     """
-    ttl = _settings.job_result_ttl_seconds if _settings else None
-    job = _get_job_store().get_job(job_id, ttl_seconds=ttl)
+    ttl = _state.settings.job_result_ttl_seconds if _state.settings else None
+    job = _state.require("job_store").get_job(job_id, ttl_seconds=ttl)
     if job is None:
         return {"isError": True, "error": f"Job not found: {job_id}"}
 
@@ -272,10 +267,9 @@ async def backtest_download_data_tool(
     if timeframe not in SUPPORTED_TIMEFRAMES:
         return {"isError": True, "error": f"Unsupported timeframe '{timeframe}'"}
 
-    downloader = _get_downloader()
-    results: dict[str, Any] = {}
+    downloader = _state.require("downloader")
 
-    for symbol in symbols:
+    async def _download_one(symbol: str) -> tuple[str, dict[str, Any]]:
         try:
             df = await downloader.download_symbol(
                 symbol,
@@ -283,17 +277,20 @@ async def backtest_download_data_tool(
                 end_date,
                 timeframe=timeframe,
             )
-            results[symbol] = {
+            return symbol, {
                 "rows": len(df),
                 "timeframe": timeframe,
                 "status": "downloaded",
             }
         except Exception as exc:
             logger.exception("download_failed", symbol=symbol)
-            results[symbol] = {
+            return symbol, {
                 "status": "error",
                 "error": format_api_error(exc),
             }
+
+    pairs = await asyncio.gather(*[_download_one(s) for s in symbols])
+    results = dict(pairs)
 
     return {"symbols": results}
 
@@ -326,7 +323,7 @@ async def backtest_list_available_data_tool(
         Available data per symbol with date ranges, grouped by timeframe.
 
     """
-    store = _get_data_store()
+    store = _state.require("data_store")
     timeframes = [timeframe] if timeframe else sorted(SUPPORTED_TIMEFRAMES)
 
     result: dict[str, Any] = {}
@@ -378,11 +375,13 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
         Storage status or prune results.
 
     """
-    store = _get_data_store()
+    store = _state.require("data_store")
 
     if action == "status":
         db_size = store.db.db_size_bytes()
-        max_size = _settings.max_db_size_gb * 1_073_741_824 if _settings else 5 * 1_073_741_824
+        settings = _state.settings
+        max_gb = settings.max_db_size_gb if settings else 5.0
+        max_size = max_gb * 1_073_741_824
         utilization = db_size / max_size if max_size > 0 else 0.0
 
         timeframe_stats: dict[str, Any] = {}
@@ -395,7 +394,7 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
 
         return {
             "db_size_mb": round(db_size / 1_048_576, 2),
-            "max_size_gb": _settings.max_db_size_gb if _settings else 5.0,
+            "max_size_gb": max_gb,
             "utilization_pct": round(utilization * 100, 1),
             "timeframes": timeframe_stats,
         }
@@ -552,27 +551,41 @@ async def backtest_compare_strategies_tool(
             "error": f"Maximum {max_compare} strategies for comparison",
         }
 
-    results: list[dict[str, Any]] = []
-    for strat_json in strategies_json:
+    # Parse all strategies, resolve cached vs uncached
+    cache = _state.require("cache")
+    indexed_results: dict[int, dict[str, Any]] = {}
+    pending: list[tuple[int, StrategyDefinition, str]] = []
+
+    for idx, strat_json in enumerate(strategies_json):
         try:
             strategy = StrategyDefinition.from_dict(json.loads(strat_json))
             strategy.validate()
         except (json.JSONDecodeError, ValueError, KeyError) as exc:
-            results.append({"isError": True, "error": str(exc)})
+            indexed_results[idx] = {"isError": True, "error": str(exc)}
             continue
 
-        cache = _get_cache()
         cache_key = _build_cache_key(strategy)
         cached = cache.get(cache_key)
-
         if cached is not None:
             entry = cached.to_dict()
             entry["cache_hit"] = True
-            results.append(entry)
+            indexed_results[idx] = entry
         else:
-            entry_result = await _run_sync_backtest(strategy, cache_key)
-            results.append(entry_result)
+            pending.append((idx, strategy, cache_key))
 
+    # Run uncached strategies concurrently
+    if pending:
+
+        async def _run_one(
+            i: int, strat: StrategyDefinition, key: str
+        ) -> tuple[int, dict[str, Any]]:
+            return i, await _run_sync_backtest(strat, key)
+
+        pairs = await asyncio.gather(*[_run_one(i, s, k) for i, s, k in pending])
+        for i, result in pairs:
+            indexed_results[i] = result
+
+    results = [indexed_results[i] for i in range(len(strategies_json))]
     return {"strategies": results, "count": len(results)}
 
 
@@ -601,7 +614,7 @@ async def backtest_clear_cache_tool(
         Number of cache entries cleared.
 
     """
-    cache = _get_cache()
+    cache = _state.require("cache")
 
     if strategy_json is not None:
         try:
@@ -671,7 +684,7 @@ def _submit_walk_forward_job(
         Job submission response with job_id and polling hints.
 
     """
-    job_store = _get_job_store()
+    job_store = _state.require("job_store")
     # Estimate: 2 backtests per window, ~5s each
     estimated = float(n_windows * 2 * 5)
 
@@ -687,7 +700,7 @@ def _submit_walk_forward_job(
             logger.exception("walk_forward_failed")
             return {"isError": True, "error": format_api_error(exc)}
 
-    ttl = _settings.job_result_ttl_seconds if _settings else 3600
+    ttl = _state.settings.job_result_ttl_seconds if _state.settings else 3600
     expires_at = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
 
     job_id = job_store.submit_job(
@@ -742,7 +755,7 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
 
 def _build_cache_key(strategy: StrategyDefinition) -> str:
     """Build cache key from strategy + data fingerprint."""
-    store = _get_data_store()
+    store = _state.require("data_store")
     symbols = strategy.universe.symbols
     timeframe = strategy.data_config.timeframe
     mtimes: dict[str, float] = {}
@@ -806,7 +819,7 @@ async def _run_sync_backtest(
         indicator_count=len(strategy.indicators),
     )
 
-    _get_cache().put(cache_key, result)
+    _state.require("cache").put(cache_key, result)
 
     output = result.to_dict()
     output["cache_hit"] = False
@@ -815,10 +828,8 @@ async def _run_sync_backtest(
 
     # Add portfolio-specific metrics when in portfolio mode
     if exec_result.portfolio_result is not None:
-        from .engine.metrics import _compute_portfolio_specific  # noqa: PLC0415
-
         output["portfolio_metrics"] = _compute_portfolio_specific(
-            exec_result.portfolio_result, 100_000.0
+            exec_result.portfolio_result, strategy.execution_config.initial_capital
         )
 
     # Surface critical warnings at top level so the agent can't miss them
@@ -847,23 +858,21 @@ def _compute_train_test_split(
     timeframe = strategy.data_config.timeframe
 
     # For intraday, convert split boundary to session close datetime
-    # so all bars on the split date are included in the train set
+    # so all bars on the split date are included in the train set.
+    # For daily, use the plain date object.
     if timeframe != "daily":
-        train_end_dt = _session_end(train_end).replace(tzinfo=None)
-        train_eq = equity_df.filter(pl.col("date") <= train_end_dt)
-        test_eq = equity_df.filter(pl.col("date") > train_end_dt)
+        split_boundary: date | datetime = _session_end(train_end).replace(tzinfo=None)
     else:
-        train_eq = equity_df.filter(pl.col("date") <= train_end)
-        test_eq = equity_df.filter(pl.col("date") > train_end)
+        split_boundary = train_end
+
+    train_eq = equity_df.filter(pl.col("date") <= split_boundary)
+    test_eq = equity_df.filter(pl.col("date") > split_boundary)
 
     if train_eq.is_empty() or test_eq.is_empty():
         return None
 
-    # Trade bucketing: for intraday, use the session-end datetime string
-    # so trades on the split date are correctly included in train set.
-    # ISO datetime strings ("2024-06-15T16:00:00") sort after date strings
-    # ("2024-06-15"), so we must use the same format as Trade.exit_date.
-    train_end_str = train_end_dt.isoformat() if timeframe != "daily" else train_end.isoformat()
+    # Trade bucketing uses ISO string comparison matching Trade.exit_date format
+    train_end_str = split_boundary.isoformat()
     train_trades = [t for t in trades if t.exit_date <= train_end_str]
     test_trades = [t for t in trades if t.exit_date > train_end_str]
 
@@ -916,7 +925,7 @@ def _check_data_coverage(
 
     """
     warnings: list[str] = []
-    expected_rows = _expected_trading_days(requested_start, requested_end, timeframe)
+    expected_rows = expected_trading_days(requested_start, requested_end, timeframe)
 
     if expected_rows <= 0:
         return warnings
@@ -953,19 +962,19 @@ def _check_data_coverage(
 class _ExecutionResult:
     """Internal result bundle from strategy execution."""
 
-    equity_df: Any
-    trades: list[Any]
+    equity_df: pl.DataFrame
+    trades: list[Trade]
     warnings: list[str]
-    benchmark_df: Any | None = None
-    symbol_dfs: dict[str, Any] = field(default_factory=dict)
-    portfolio_result: Any | None = None  # PortfolioBacktestResult when portfolio mode
+    benchmark_df: pl.DataFrame | None = None
+    symbol_dfs: dict[str, pl.DataFrame] = field(default_factory=dict)
+    portfolio_result: PortfolioBacktestResult | None = None
 
 
 async def _execute_strategy(
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
     """Execute a full strategy: download → indicators → signals → backtest."""
-    downloader = _get_downloader()
+    downloader = _state.require("downloader")
     timeframe = strategy.data_config.timeframe
     symbol_dfs = await downloader.ensure_data(
         symbols=strategy.universe.symbols,
@@ -999,9 +1008,10 @@ async def _execute_strategy(
         if benchmark_sym in bench_dfs:
             benchmark_df = bench_dfs[benchmark_sym]
 
+    exec_cfg = strategy.execution_config
     config = BacktestConfig(
-        slippage_pct=0.1,
-        commission_pct=0.1,
+        slippage_pct=exec_cfg.slippage_pct,
+        commission_pct=exec_cfg.commission_pct,
         timeframe=timeframe,
     )
 
@@ -1085,11 +1095,12 @@ def _run_portfolio_mode(
         ExecutionResult with portfolio backtest results.
 
     """
+    exec_cfg = strategy.execution_config
     portfolio_result = run_portfolio_backtest(
         signal_dfs=prepped,
-        initial_capital=100_000.0,
+        initial_capital=exec_cfg.initial_capital,
         position_sizing=strategy.position_sizing,
-        slippage_pct=0.1,
+        slippage_pct=exec_cfg.slippage_pct,
         commission_per_share=0.0,
         stop_loss_pct=strategy.risk_management.stop_loss_pct,
         take_profit_pct=strategy.risk_management.take_profit_pct,
@@ -1118,8 +1129,6 @@ def _run_portfolio_mode(
     )
 
     # Convert PortfolioTradeRecords to Trade objects for metrics
-    from .engine.backtester import Trade  # noqa: PLC0415
-
     trades = [
         Trade(
             symbol=r.symbol,
@@ -1161,7 +1170,7 @@ def _submit_async_backtest(
         Job submission response with polling hints.
 
     """
-    job_store = _get_job_store()
+    job_store = _state.require("job_store")
     estimated = _estimate_runtime(strategy)
 
     async def _run() -> dict[str, Any]:
@@ -1171,7 +1180,7 @@ def _submit_async_backtest(
             estimated_seconds=estimated,
         )
 
-    ttl = _settings.job_result_ttl_seconds if _settings else 3600
+    ttl = _state.settings.job_result_ttl_seconds if _state.settings else 3600
     expires_at = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
 
     job_id = job_store.submit_job(
@@ -1203,7 +1212,7 @@ def _estimate_runtime(strategy: StrategyDefinition) -> float:
         Estimated runtime in seconds.
 
     """
-    if _settings is None:
+    if _state.settings is None:
         # Fallback before bootstrap; shouldn't happen in production
         return float(len(strategy.universe.symbols) * 3)
 
@@ -1214,20 +1223,21 @@ def _estimate_runtime(strategy: StrategyDefinition) -> float:
 
     # Phase 4.2: multiply by bars-per-day for intraday
     bar_multiplier = BARS_PER_DAY.get(strategy.data_config.timeframe, 1)
-    base = symbol_count * year_span * bar_multiplier * _settings.estimate_symbol_year_weight
+    base = symbol_count * year_span * bar_multiplier * _state.settings.estimate_symbol_year_weight
 
     indicator_cost = (
         sum(_indicator_weight(ind) for ind in strategy.indicators)
-        * _settings.estimate_indicator_weight
+        * _state.settings.estimate_indicator_weight
     )
 
-    stale_count = _get_downloader().count_stale(
+    downloader: DataDownloader = _state.require("downloader")
+    stale_count = downloader.count_stale(
         strategy.universe.symbols,
         timeframe=strategy.data_config.timeframe,
     )
-    download_penalty = stale_count * _settings.estimate_download_penalty
+    download_penalty = stale_count * _state.settings.estimate_download_penalty
 
-    return base + indicator_cost + download_penalty
+    return float(base + indicator_cost + download_penalty)
 
 
 def _indicator_weight(ind: IndicatorConfig) -> float:
@@ -1280,33 +1290,31 @@ def bootstrap() -> Settings:
 
     Design doc: Phase 1.5 — DuckDBManager replaces direct Parquet DataStore.
     """
-    global _fmp_client, _db_manager, _data_store, _downloader, _cache, _job_store, _settings  # noqa: PLW0603
-
     logger.info("bootstrap_started", server="backtest-server")
     settings = load_settings()
     configure_logging(settings.log_level)
 
-    _settings = settings
-    _fmp_client = FMPClient(settings=settings)
+    _state.settings = settings
+    _state.fmp_client = FMPClient(settings=settings)
 
     # DuckDB-backed data store (Phase 1.2 + 1.3)
-    _db_manager = DuckDBManager(
+    _state.db_manager = DuckDBManager(
         db_path=settings.duckdb_path,
         memory_limit=settings.duckdb_memory_limit,
     )
-    _db_manager.connect()
-    _data_store = DataStore(db=_db_manager)
+    _state.db_manager.connect()
+    _state.data_store = DataStore(db=_state.db_manager)
 
-    _downloader = DataDownloader(
-        fmp_client=_fmp_client,
-        data_store=_data_store,
+    _state.downloader = DataDownloader(
+        fmp_client=_state.fmp_client,
+        data_store=_state.data_store,
         freshness_hours=settings.backtest_data_freshness_hours,
     )
-    _cache = BacktestCache(
+    _state.cache = BacktestCache(
         cache_dir=settings.backtest_cache_dir,
         ttl_hours=settings.backtest_cache_ttl_hours,
     )
-    _job_store = JobStore()
+    _state.job_store = JobStore()
 
     logger.info(
         "bootstrap_complete",
@@ -1340,8 +1348,8 @@ async def main() -> None:
         )
     finally:
         # Graceful shutdown: checkpoint and close DuckDB (Phase 1.2)
-        if _db_manager is not None:
-            _db_manager.close()
+        if _state.db_manager is not None:
+            _state.db_manager.close()
 
 
 if __name__ == "__main__":

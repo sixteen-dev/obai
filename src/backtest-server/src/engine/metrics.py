@@ -53,6 +53,7 @@ def compute_metrics(  # noqa: PLR0913
     requested_start: str = "",
     requested_end: str = "",
     timeframe: str = "daily",
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> BacktestResult:
     """Compute all performance and risk metrics from backtest results.
 
@@ -66,6 +67,7 @@ def compute_metrics(  # noqa: PLR0913
         requested_start: Requested start date (YYYY-MM-DD).
         requested_end: Requested end date (YYYY-MM-DD).
         timeframe: Bar timeframe for annualization (Phase 3.6).
+        risk_free_rate: Annual risk-free rate (default 0.0).
 
     Returns:
         BacktestResult with all metrics computed.
@@ -80,7 +82,7 @@ def compute_metrics(  # noqa: PLR0913
     dd = _compute_drawdown(equity, dates)
     cagr = _compute_cagr(equity, dates)
     trading = _compute_trading_stats(trades, timeframe=timeframe)
-    bench = _compute_bench_metrics(returns, dates, benchmark_df, bars_per_year)
+    bench = _compute_bench_metrics(returns, dates, benchmark_df, bars_per_year, risk_free_rate)
 
     result = _build_result(
         strategy_name,
@@ -94,6 +96,7 @@ def compute_metrics(  # noqa: PLR0913
         bench,
         bars_per_year,
         timeframe,
+        risk_free_rate,
     )
     result.data_quality = _compute_data_quality(
         symbol_dfs or {},
@@ -116,13 +119,14 @@ def _build_result(  # noqa: PLR0913
     bench: _BenchmarkStats,
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
     timeframe: str = "daily",
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> BacktestResult:
     """Build BacktestResult from computed components."""
     total_return = (
         float(equity[-1] / equity[0] - 1) * 100 if len(equity) >= MIN_DATA_POINTS else 0.0
     )
-    sharpe = _compute_sharpe(returns, bars_per_year)
-    sortino = _compute_sortino(returns, bars_per_year)
+    sharpe = _compute_sharpe(returns, bars_per_year, risk_free_rate)
+    sortino = _compute_sortino(returns, bars_per_year, risk_free_rate)
     calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
     volatility = _annualized_volatility(returns, bars_per_year)
     var_95 = float(np.percentile(returns, 5)) * 100 if len(returns) > 0 else 0.0
@@ -262,6 +266,7 @@ def _compute_bench_metrics(
     dates: list[Any],
     benchmark_df: pl.DataFrame | None,
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> _BenchmarkStats:
     """Compute benchmark-relative metrics."""
     empty = _BenchmarkStats("", 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -278,7 +283,7 @@ def _compute_bench_metrics(
     total = float(bench_eq[-1] / bench_eq[0] - 1) * 100
     cagr = _compute_cagr(bench_eq, dates)
     beta = _compute_beta(strat_r, bench_r)
-    alpha = _compute_alpha(strat_r, bench_r, beta, bars_per_year)
+    alpha = _compute_alpha(strat_r, bench_r, beta, bars_per_year, risk_free_rate)
     ir = _compute_information_ratio(strat_r, bench_r, bars_per_year)
 
     symbol = ""
@@ -353,6 +358,7 @@ def _compute_years(dates: list[Any]) -> float:
 def _compute_sharpe(
     returns: np.ndarray[Any, np.dtype[np.float64]],
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> float:
     """Compute annualized Sharpe ratio."""
     if len(returns) < MIN_DATA_POINTS:
@@ -360,7 +366,7 @@ def _compute_sharpe(
     std = float(np.std(returns, ddof=1))
     if std == 0:
         return 0.0
-    bar_rf = RISK_FREE_RATE / bars_per_year
+    bar_rf = risk_free_rate / bars_per_year
     excess = float(np.mean(returns)) - bar_rf
     return float(excess / std * np.sqrt(bars_per_year))
 
@@ -368,6 +374,7 @@ def _compute_sharpe(
 def _compute_sortino(
     returns: np.ndarray[Any, np.dtype[np.float64]],
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> float:
     """Compute annualized Sortino ratio.
 
@@ -382,7 +389,7 @@ def _compute_sortino(
     downside_std = float(np.std(negative, ddof=1))
     if downside_std == 0:
         return 0.0
-    bar_rf = RISK_FREE_RATE / bars_per_year
+    bar_rf = risk_free_rate / bars_per_year
     excess = float(np.mean(returns)) - bar_rf
     return float(excess / downside_std * np.sqrt(bars_per_year))
 
@@ -440,11 +447,12 @@ def _compute_alpha(
     benchmark: np.ndarray[Any, np.dtype[np.float64]],
     beta: float,
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> float:
     """Compute Jensen's alpha (annualized, percentage)."""
     strat_mean = float(np.mean(strategy))
     bench_mean = float(np.mean(benchmark))
-    bar_rf = RISK_FREE_RATE / bars_per_year
+    bar_rf = risk_free_rate / bars_per_year
     bar_alpha = strat_mean - (bar_rf + beta * (bench_mean - bar_rf))
     return float(bar_alpha * bars_per_year * 100)
 
@@ -509,7 +517,7 @@ def _compute_data_quality(
         total_rows += rows
 
         # Expected bars (trading days * bars per day)
-        expected = _expected_trading_days(requested_start, requested_end, timeframe)
+        expected = expected_trading_days(requested_start, requested_end, timeframe)
         total_expected += expected
 
         coverage = round(rows / expected * 100, 1) if expected > 0 else 0.0
@@ -555,7 +563,7 @@ def _compute_data_quality(
     }
 
 
-def _expected_trading_days(
+def expected_trading_days(
     start_str: str,
     end_str: str,
     timeframe: str = "daily",

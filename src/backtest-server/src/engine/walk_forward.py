@@ -6,6 +6,7 @@ to detect overfitting and measure strategy consistency.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -121,9 +122,13 @@ async def walk_forward_validate(
     windows = generate_windows(start_date, end_date, n_windows)
     start_time = time.monotonic()
 
-    window_results: list[WindowResult] = []
-
-    for idx, (train_start, train_end, test_start, test_end) in enumerate(windows):
+    async def _run_window(
+        idx: int,
+        train_start: str,
+        train_end: str,
+        test_start: str,
+        test_end: str,
+    ) -> WindowResult:
         logger.info(
             "walk_forward_window",
             window=idx + 1,
@@ -132,22 +137,15 @@ async def walk_forward_validate(
             test=f"{test_start} to {test_end}",
         )
 
-        # Run train period backtest
-        train_strategy = _modify_strategy_dates(
-            strategy_dict,
-            train_start,
-            train_end,
-        )
-        train_result = await run_backtest_fn(json.dumps(train_strategy))
-        train_metrics = _extract_metrics(train_result)
+        train_strategy = _modify_strategy_dates(strategy_dict, train_start, train_end)
+        test_strategy = _modify_strategy_dates(strategy_dict, test_start, test_end)
 
-        # Run test period backtest
-        test_strategy = _modify_strategy_dates(
-            strategy_dict,
-            test_start,
-            test_end,
+        # Train and test within a window are independent — run concurrently
+        train_result, test_result = await asyncio.gather(
+            run_backtest_fn(json.dumps(train_strategy)),
+            run_backtest_fn(json.dumps(test_strategy)),
         )
-        test_result = await run_backtest_fn(json.dumps(test_strategy))
+        train_metrics = _extract_metrics(train_result)
         test_metrics = _extract_metrics(test_result)
 
         if train_metrics.get("_failed") or test_metrics.get("_failed"):
@@ -160,17 +158,20 @@ async def walk_forward_validate(
                 test_error=test_metrics.get("error"),
             )
 
-        window_results.append(
-            WindowResult(
-                window_id=idx + 1,
-                train_start=train_start,
-                train_end=train_end,
-                test_start=test_start,
-                test_end=test_end,
-                train_metrics=train_metrics,
-                test_metrics=test_metrics,
-            )
+        return WindowResult(
+            window_id=idx + 1,
+            train_start=train_start,
+            train_end=train_end,
+            test_start=test_start,
+            test_end=test_end,
+            train_metrics=train_metrics,
+            test_metrics=test_metrics,
         )
+
+    # All windows are independent — run concurrently
+    window_results = list(
+        await asyncio.gather(*[_run_window(i, *w) for i, w in enumerate(windows)])
+    )
 
     elapsed = time.monotonic() - start_time
     return _compute_aggregates(window_results, elapsed)

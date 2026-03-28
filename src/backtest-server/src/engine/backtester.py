@@ -14,6 +14,7 @@ import polars as pl
 
 from ..models.strategy import PositionSizing, RiskManagement
 from .session import is_after_time, is_last_bar_of_session, parse_time_str
+from .utils import date_to_str
 
 # --- Shared pure functions (importable by portfolio backtester) ---
 
@@ -248,6 +249,8 @@ class _BacktestState:
     entry_price: float = 0.0
     entry_idx: int = 0
     last_price: float = 0.0
+    stop_level: float | None = None
+    tp_level: float | None = None
 
 
 def _check_entry(  # noqa: PLR0913
@@ -272,6 +275,10 @@ def _check_entry(  # noqa: PLR0913
     state.entry_idx = idx
     state.in_position = True
     state.last_price = state.entry_price
+    state.stop_level = state.entry_price * (1 - state.stop_loss / 100) if state.stop_loss else None
+    state.tp_level = (
+        state.entry_price * (1 + state.take_profit / 100) if state.take_profit else None
+    )
     # Entry-day PnL: entry_price → close[entry_day]
     day_pnl = (market.closes[idx] - state.entry_price) / state.entry_price
     equity[idx] += equity[idx - 1] * state.position_size * day_pnl
@@ -308,16 +315,12 @@ def _get_exit_reason(
     Stop checked first — conservative assumption (adverse scenario wins).
     """
     # Intrabar stop-loss check using low (worst case for longs)
-    if state.stop_loss:
-        hit, _ = check_intrabar_stop(state.entry_price, float(market.lows[idx]), state.stop_loss)
-        if hit:
-            return "stop_loss"
+    if state.stop_level is not None and float(market.lows[idx]) <= state.stop_level:
+        return "stop_loss"
 
     # Intrabar take-profit check using high (best case for longs)
-    if state.take_profit:
-        hit, _ = check_intrabar_tp(state.entry_price, float(market.highs[idx]), state.take_profit)
-        if hit:
-            return "take_profit"
+    if state.tp_level is not None and float(market.highs[idx]) >= state.tp_level:
+        return "take_profit"
 
     # Signal-based exit
     if market.exits[idx - 1]:
@@ -368,9 +371,9 @@ def _record_trade(  # noqa: PLR0913
     trades.append(
         Trade(
             symbol=cfg.symbol,
-            entry_date=_date_to_str(market.dates[state.entry_idx]),
+            entry_date=date_to_str(market.dates[state.entry_idx]),
             entry_price=state.entry_price,
-            exit_date=_date_to_str(market.dates[idx]),
+            exit_date=date_to_str(market.dates[idx]),
             exit_price=exit_price,
             return_pct=trade_return * 100,
             holding_days=holding_days,
@@ -382,7 +385,7 @@ def _record_trade(  # noqa: PLR0913
     state.in_position = False
 
 
-def _compute_exit_price(  # noqa: PLR0913
+def _compute_exit_price(
     state: _BacktestState,
     market: _MarketData,
     idx: int,
@@ -391,10 +394,11 @@ def _compute_exit_price(  # noqa: PLR0913
 ) -> float:
     """Compute fill price based on exit reason.
 
-    Design doc Phase 3.3 fill model table. Delegates to shared compute_exit_fill.
+    Uses precomputed stop/TP levels from state. Delegates to shared
+    compute_exit_fill for fill model logic.
 
     Args:
-        state: Current backtest state.
+        state: Current backtest state (with precomputed stop_level/tp_level).
         market: Market data arrays.
         idx: Current bar index.
         exit_reason: Why we're exiting.
@@ -404,20 +408,12 @@ def _compute_exit_price(  # noqa: PLR0913
         Fill price for the exit.
 
     """
-    stop_level: float | None = None
-    tp_level: float | None = None
-
-    if state.stop_loss:
-        stop_level = state.entry_price * (1 - state.stop_loss / 100)
-    if state.take_profit:
-        tp_level = state.entry_price * (1 + state.take_profit / 100)
-
     return compute_exit_fill(
         reason=exit_reason,
         open_price=float(market.opens[idx]),
         close_price=float(market.closes[idx]),
-        stop_level=stop_level,
-        tp_level=tp_level,
+        stop_level=state.stop_level,
+        tp_level=state.tp_level,
         slippage_pct=cfg.slippage_pct,
     )
 
@@ -521,12 +517,3 @@ def _combine_equity_curves(
             "equity",
         ),
     ).select(["date", "equity"])
-
-
-def _date_to_str(val: Any) -> str:
-    """Convert a date value to ISO string."""
-    if isinstance(val, datetime):
-        return val.isoformat()
-    if isinstance(val, date):
-        return val.isoformat()
-    return str(val)
