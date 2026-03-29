@@ -9,6 +9,7 @@ This agent specializes in:
 """
 
 from .base_agent import BaseAgent
+from .preferences import PreferencesStore
 
 
 class StrategyAgent(BaseAgent):
@@ -64,6 +65,11 @@ class StrategyAgent(BaseAgent):
         instead of specialist model.
         """
         return self.config.get_strategy_model()
+
+    def _get_prompt_kwargs(self) -> dict[str, str]:
+        """Inject user's initial_capital into strategy prompt."""
+        prefs = PreferencesStore().load()
+        return {"INITIAL_CAPITAL": str(int(prefs.initial_capital))}
 
 
 async def create_strategy_agent() -> StrategyAgent:

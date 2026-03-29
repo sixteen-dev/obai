@@ -946,7 +946,7 @@ class OBaIApp(App[None]):
 
         try:
             logger.info("Running FaithfulnessScorer.score()...")
-            scorer = FaithfulnessScorer()
+            scorer = FaithfulnessScorer(skip_llm=True)
             result = await scorer.score(output=scorer_input, query=query)
             logger.info("Faithfulness result: %s", result)
             summary.set_faithfulness(result)
