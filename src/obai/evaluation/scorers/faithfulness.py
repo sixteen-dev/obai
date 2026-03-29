@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re
 from typing import Any, Literal
 
@@ -565,6 +566,10 @@ async def _faithfulness_llm_judge(
         tool_outputs=tool_outputs,
     )
 
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        logger.debug("Faithfulness LLM judge skipped — ANTHROPIC_API_KEY not set")
+        return None
+
     try:
         return await structured_completion(
             model=model_id,
@@ -572,18 +577,8 @@ async def _faithfulness_llm_judge(
             user=user_prompt,
             response_model=FaithfulnessJudgment,
         )
-    except ValueError as e:
-        if "ANTHROPIC_API_KEY" in str(e):
-            logger.debug("Faithfulness LLM judge skipped — ANTHROPIC_API_KEY not set")
-        else:
-            logger.exception("Faithfulness LLM judge failed")
-        return None
-    except Exception as e:
-        err = str(e)
-        if "401" in err or "authentication" in err.lower() or "bearer" in err.lower():
-            logger.debug("Faithfulness judge auth failed — check ANTHROPIC_API_KEY")
-        else:
-            logger.exception("Faithfulness LLM judge failed")
+    except Exception:
+        logger.exception("Faithfulness LLM judge failed")
         return None
 
 
@@ -604,6 +599,10 @@ async def _completeness_llm_judge(
     Returns:
         CompletenessJudgment or None on error.
     """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        logger.debug("Completeness LLM judge skipped — ANTHROPIC_API_KEY not set")
+        return None
+
     user_prompt = COMPLETENESS_USER_TEMPLATE.format(
         query=query,
         response=response,
@@ -617,18 +616,8 @@ async def _completeness_llm_judge(
             user=user_prompt,
             response_model=CompletenessJudgment,
         )
-    except ValueError as e:
-        if "ANTHROPIC_API_KEY" in str(e):
-            logger.debug("Completeness LLM judge skipped — ANTHROPIC_API_KEY not set")
-        else:
-            logger.exception("Completeness LLM judge failed")
-        return None
-    except Exception as e:
-        err = str(e)
-        if "401" in err or "authentication" in err.lower() or "bearer" in err.lower():
-            logger.debug("Completeness judge auth failed — check ANTHROPIC_API_KEY")
-        else:
-            logger.exception("Completeness LLM judge failed")
+    except Exception:
+        logger.exception("Completeness LLM judge failed")
         return None
 
 
