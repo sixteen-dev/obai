@@ -1,9 +1,7 @@
 name: Claude Code Review
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch: # manually trigger only — disabled for solo dev
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
