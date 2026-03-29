@@ -99,6 +99,10 @@ class BaseAgent(ABC):
         """Get model for this agent. Override in subclasses for custom fallback."""
         return self.config.get_agent_model(self.agent_type)
 
+    def _get_prompt_kwargs(self) -> dict[str, str]:
+        """Extra template variables for prompt loading. Override in subclasses."""
+        return {}
+
     async def initialize(self) -> None:
         """Initialize agent by connecting to MCP server and loading tools.
 
@@ -135,7 +139,7 @@ class BaseAgent(ABC):
             logger.info(f"{self.agent_name} using model: {model}")
 
             # Load instructions from prompt file
-            instructions = load_prompt(self.agent_type)
+            instructions = load_prompt(self.agent_type, **self._get_prompt_kwargs())
 
             # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var)
             self.agent = Agent(

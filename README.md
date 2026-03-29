@@ -263,6 +263,44 @@ Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS
 
 ---
 
+## User Preferences
+
+OBaI stores personal preferences in `~/.obai/preferences.json`. These persist across sessions and are used by agents to tailor responses and backtests to your profile.
+
+| Preference | Default | Description |
+|------------|---------|-------------|
+| `risk_tolerance` | `moderate` | `conservative`, `moderate`, or `aggressive` |
+| `investment_horizon` | `medium` | `short` (<3yr), `medium` (3-10yr), or `long` (>10yr) |
+| `default_benchmark` | `SPY` | Benchmark symbol for comparisons |
+| `initial_capital` | `100000` | Starting capital for backtests |
+| `currency` | `USD` | Currency code |
+| `market` | `US` | Market scope |
+
+**Update via chat** — just tell OBaI in conversation:
+
+```
+> Set my initial capital to 50000
+> Change my risk tolerance to aggressive
+> What are my current preferences?
+```
+
+The agents use `get_preferences` and `set_preferences` tools automatically.
+
+**Update manually** — edit `~/.obai/preferences.json` directly:
+
+```json
+{
+  "risk_tolerance": "moderate",
+  "investment_horizon": "medium",
+  "default_benchmark": "SPY",
+  "initial_capital": 50000,
+  "currency": "USD",
+  "market": "US"
+}
+```
+
+---
+
 ## Project Structure
 
 ```

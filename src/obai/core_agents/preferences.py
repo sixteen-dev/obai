@@ -54,6 +54,7 @@ class UserPreferences(BaseModel, extra="forbid"):
     risk_tolerance: RiskTolerance = RiskTolerance.MODERATE
     investment_horizon: InvestmentHorizon = InvestmentHorizon.MEDIUM
     default_benchmark: str = "SPY"
+    initial_capital: float = 100_000.0
     currency: str = "USD"
     market: str = "US"
 
@@ -121,7 +122,8 @@ def get_preferences() -> str:
     """Get the user's saved investment preferences.
 
     Returns current risk tolerance, investment horizon, default benchmark,
-    currency, and market scope.  Preferences persist across sessions.
+    initial capital, currency, and market scope.  Preferences persist across
+    sessions.
 
     Returns:
         JSON string of current preferences.
@@ -135,6 +137,7 @@ def set_preferences(
     risk_tolerance: str | None = None,
     investment_horizon: str | None = None,
     default_benchmark: str | None = None,
+    initial_capital: float | None = None,
     currency: str | None = None,
     market: str | None = None,
     reset: bool = False,
@@ -148,6 +151,7 @@ def set_preferences(
         risk_tolerance: "conservative", "moderate", or "aggressive".
         investment_horizon: "short" (<3yr), "medium" (3-10yr), or "long" (>10yr).
         default_benchmark: Benchmark symbol (e.g. "SPY", "QQQ").
+        initial_capital: Starting capital for backtests (e.g. 50000, 100000).
         currency: Currency code (e.g. "USD", "EUR").
         market: Default market scope (e.g. "US", "global").
         reset: If true, reset all preferences to defaults first.
@@ -175,6 +179,11 @@ def set_preferences(
     if default_benchmark is not None:
         prefs.default_benchmark = default_benchmark.upper()
 
+    if initial_capital is not None:
+        if initial_capital <= 0:
+            return f"Invalid initial_capital: {initial_capital}. Must be positive."
+        prefs.initial_capital = initial_capital
+
     if currency is not None:
         prefs.currency = currency.upper()
 
@@ -189,6 +198,7 @@ def set_preferences(
             "risk_tolerance": risk_tolerance,
             "investment_horizon": investment_horizon,
             "default_benchmark": default_benchmark,
+            "initial_capital": initial_capital,
             "currency": currency,
             "market": market,
         }.items()

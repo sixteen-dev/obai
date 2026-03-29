@@ -22,11 +22,12 @@ class TestUserPreferences:
     """Test UserPreferences Pydantic model."""
 
     def test_defaults(self) -> None:
-        """Defaults match spec: moderate / medium / SPY / USD."""
+        """Defaults match spec: moderate / medium / SPY / 100k / USD."""
         prefs = UserPreferences()
         assert prefs.risk_tolerance == RiskTolerance.MODERATE
         assert prefs.investment_horizon == InvestmentHorizon.MEDIUM
         assert prefs.default_benchmark == "SPY"
+        assert prefs.initial_capital == 100_000.0
         assert prefs.currency == "USD"
 
     def test_json_round_trip(self) -> None:
@@ -35,6 +36,7 @@ class TestUserPreferences:
             risk_tolerance=RiskTolerance.AGGRESSIVE,
             investment_horizon=InvestmentHorizon.LONG,
             default_benchmark="QQQ",
+            initial_capital=50_000.0,
             currency="EUR",
         )
         raw = prefs.model_dump_json()

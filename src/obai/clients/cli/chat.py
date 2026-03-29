@@ -431,7 +431,7 @@ async def _run_query(  # noqa: PLR0912
         scorer_input = build_scorer_input(response_text, inner_outputs)
         if scorer_input:
             try:
-                faithfulness = await FaithfulnessScorer().score(
+                faithfulness = await FaithfulnessScorer(skip_llm=True).score(
                     output=scorer_input,
                     query=query,
                 )
@@ -500,12 +500,19 @@ def query(
         "-m",
         help="Override orchestrator model for this query",
     ),
+    scoring: bool = typer.Option(
+        False,
+        "--scoring",
+        help="Run faithfulness + completeness scoring on the response",
+    ),
 ) -> None:
     """Send a single query and stream the response."""
 
     async def _main() -> None:
         if model:
             get_config().orchestrator_model = model
+        if scoring:
+            get_config().enable_inline_scoring = True
         hub = await _init_hub()
         try:
             sid, session = _make_session(session_id)
@@ -531,12 +538,19 @@ def chat(
         "-m",
         help="Override orchestrator model",
     ),
+    scoring: bool = typer.Option(
+        False,
+        "--scoring",
+        help="Run faithfulness + completeness scoring on every response",
+    ),
 ) -> None:
     """Interactive REPL with conversation memory."""
 
     async def _main() -> None:
         if model:
             get_config().orchestrator_model = model
+        if scoring:
+            get_config().enable_inline_scoring = True
         typer.echo("OBaI Chat (type 'quit' to exit, 'clear' to reset, 'help' for commands)")
         hub = await _init_hub()
         typer.echo("Ready.\n")

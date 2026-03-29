@@ -213,6 +213,7 @@ if [ ! -f "$PREFS_FILE" ]; then
   "risk_tolerance": "moderate",
   "investment_horizon": "medium",
   "default_benchmark": "SPY",
+  "initial_capital": 100000,
   "currency": "USD",
   "market": "US"
 }
