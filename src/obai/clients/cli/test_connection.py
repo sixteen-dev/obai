@@ -94,6 +94,10 @@ async def main() -> None:
         ("Market Data Server", config.mcp_market_data_url),
         ("Events/News Server", config.mcp_events_news_url),
         ("Options Server", config.mcp_options_url),
+        ("Screening Server", config.mcp_screener_url),
+        ("Portfolio Server", config.mcp_portfolio_url),
+        ("Backtest Server", config.mcp_backtest_url),
+        ("Research Server", config.mcp_research_url),
     ]
 
     results = []

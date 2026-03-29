@@ -390,6 +390,10 @@ def test_connection() -> None:
                 ("Market Data", config.mcp_market_data_url),
                 ("Events/News", config.mcp_events_news_url),
                 ("Options", config.mcp_options_url),
+                ("Screening", config.mcp_screener_url),
+                ("Portfolio", config.mcp_portfolio_url),
+                ("Backtest", config.mcp_backtest_url),
+                ("Research", config.mcp_research_url),
             ]
 
             table = Table(title="MCP Server Status")

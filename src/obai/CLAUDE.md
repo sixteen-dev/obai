@@ -14,13 +14,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 2. **Multi-Agent Hierarchy**:
    - 1 Central Hub Agent (routes queries, synthesizes responses)
-   - 6 Specialist Agents (each connects to dedicated MCP server)
+   - 8 Specialist Agents (each connects to dedicated MCP server)
      - Market Data Agent → market-data-server (quotes, technicals)
      - Fundamentals Agent → fundamentals-server (financials, ratios)
      - Events/News Agent → events-news-server (news, earnings)
      - Options Agent → options-server (options chains, Greeks)
      - Screener Agent → screening-server (ticker lookup, screening)
      - Portfolio Agent → portfolio-server (positions, risk prefs, ETF holdings)
+     - Strategy Agent → backtest-server (backtesting, strategy design)
+     - Research Agent → research-server (semantic search, company research)
 
 3. **File-Based Prompts**: Agent instructions stored in `core_agents/prompts/*.md`
    - Allows prompt iteration without code changes
@@ -44,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 src/OBaI/                         # Bundled application root
 ├── core_agents/                       # Core agent system (importable package)
 │   ├── central_hub_agent.py      # Routes to specialists, synthesizes
-│   ├── {specialist}_agent.py     # 6 specialist agents
+│   ├── {specialist}_agent.py     # 8 specialist agents
 │   ├── guardrails.py            # Input validation (financial queries only)
 │   ├── config.py                # Pydantic settings
 │   ├── prompt_loader.py         # Load prompts from markdown files
@@ -68,7 +70,7 @@ src/OBaI/                         # Bundled application root
 
 ### MCP Servers (External Dependencies)
 
-Start all 6 MCP servers before running agents:
+Start all 8 MCP servers before running agents:
 
 ```bash
 # Terminal 1: Fundamentals (port 8001)
@@ -88,6 +90,12 @@ cd src/servers/screening-server && uv run fastmcp run server.py
 
 # Terminal 6: Portfolio (port 8006)
 cd src/servers/portfolio-server && uv run fastmcp run server.py
+
+# Terminal 7: Backtest/Strategy (port 8007)
+cd src/servers/backtest-server && uv run fastmcp run server.py
+
+# Terminal 8: Research (port 8008)
+cd src/servers/research-server && uv run fastmcp run server.py
 ```
 
 ### Agent System
@@ -119,6 +127,8 @@ export MCP_EVENTS_NEWS_URL=http://localhost:8003/mcp
 export MCP_OPTIONS_URL=http://localhost:8004/mcp
 export MCP_SCREENER_URL=http://localhost:8005/mcp
 export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
+export MCP_BACKTEST_URL=http://localhost:8007/mcp
+export MCP_RESEARCH_URL=http://localhost:8008/mcp
 export ANTHROPIC_API_KEY=sk-ant-...  # Required for evaluation (LLM-judge)
 
 # Test MCP connectivity
@@ -139,7 +149,7 @@ uv run python -m clients.cli.tui
 ### Testing Workflow
 
 ```bash
-# 1. Start all 6 MCP servers (see above)
+# 1. Start all 8 MCP servers (see above)
 # 2. Test connectivity
 python src/OBaI/clients/cli/test_connection.py
 
@@ -159,7 +169,7 @@ python src/OBaI/clients/cli/test_connection.py
 ```python
 from core_agents import create_central_hub
 
-# Initialize all 7 agents (central hub + 6 specialists)
+# Initialize all 9 agents (central hub + 8 specialists)
 hub = await create_central_hub()
 
 # Use with Agent SDK Runner + Session
@@ -242,6 +252,8 @@ MCP_EVENTS_NEWS_URL=http://localhost:8003/mcp
 MCP_OPTIONS_URL=http://localhost:8004/mcp
 MCP_SCREENER_URL=http://localhost:8005/mcp
 MCP_PORTFOLIO_URL=http://localhost:8006/mcp
+MCP_BACKTEST_URL=http://localhost:8007/mcp
+MCP_RESEARCH_URL=http://localhost:8008/mcp
 
 # Model Configuration
 ORCHESTRATOR_MODEL=gpt-5.1         # Default (needs strong reasoning)
@@ -390,9 +402,9 @@ instructions = load_prompt(
 <claude-mem-context>
 # Recent Activity
 
-### Mar 2, 2026
+### Mar 25, 2026
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #146 | 11:52 PM | 🔵 | OBaI Multi-Agent Financial Research System Structure Discovered | ~659 |
+| #247 | 8:28 PM | 🔵 | OBaI Project Packaging and Development Tooling Configuration | ~793 |
 </claude-mem-context>

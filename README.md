@@ -34,7 +34,7 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 
 | Provider | Cost | Coverage |
 |----------|------|----------|
-| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 7 servers. |
+| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 8 servers. |
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 | **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |

@@ -1056,7 +1056,7 @@ class CentralHubAgent:
 async def create_central_hub() -> CentralHubAgent:
     """Create and initialize a Central Hub Agent.
 
-    This will also initialize all 7 specialist agents:
+    This will also initialize all 8 specialist agents:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
@@ -1064,6 +1064,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Screener Agent (FMP)
     - Portfolio Agent (FMP)
     - Strategy Agent (backtest-server)
+    - Research Agent (Exa)
 
     Opik tracing is automatically initialized before agent creation
     if OPIK_ENABLED=true (default). Traces are sent to the Opik UI.
