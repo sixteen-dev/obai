@@ -4,6 +4,8 @@
   <strong>Multi-agent AI system for stock market research, powered by GPT and real-time FMP custom MCP servers.</strong>
   <br/>
   <sub>pronounced <i>"oww-bee"</i></sub>
+  <br/><br/>
+  <a href="https://medium.com/gopenai/i-built-a-wall-street-research-desk-with-ai-agents-32ac9e0221eb">Read the blog post →</a>
 </div>
 
 ---
