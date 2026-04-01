@@ -344,6 +344,8 @@ class ExecutionConfig:
     slippage_pct: float = 0.1
     commission_pct: float = 0.1
     initial_capital: float = 100_000.0
+    volume_scaled_slippage: bool = False
+    estimate_spread: bool = False
 
 
 _MIN_BACKTEST_DAYS = 30
@@ -528,6 +530,8 @@ class StrategyDefinition:
                 "slippage_pct": self.execution_config.slippage_pct,
                 "commission_pct": self.execution_config.commission_pct,
                 "initial_capital": self.execution_config.initial_capital,
+                "volume_scaled_slippage": self.execution_config.volume_scaled_slippage,
+                "estimate_spread": self.execution_config.estimate_spread,
             },
         }
 
@@ -585,6 +589,8 @@ class StrategyDefinition:
                 slippage_pct=exec_data.get("slippage_pct", 0.1),
                 commission_pct=exec_data.get("commission_pct", 0.1),
                 initial_capital=exec_data.get("initial_capital", 100_000.0),
+                volume_scaled_slippage=exec_data.get("volume_scaled_slippage", False),
+                estimate_spread=exec_data.get("estimate_spread", False),
             ),
         )
 

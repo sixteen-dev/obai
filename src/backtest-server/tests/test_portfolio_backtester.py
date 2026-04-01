@@ -18,6 +18,7 @@ def _make_signal_df(  # noqa: PLR0913
     start_date: date | None = None,
     highs: list[float] | None = None,
     lows: list[float] | None = None,
+    volumes: list[int] | None = None,
 ) -> pl.DataFrame:
     """Create a DataFrame with signals for testing."""
     n = len(prices)
@@ -30,6 +31,7 @@ def _make_signal_df(  # noqa: PLR0913
             "high": highs if highs else [p + 1.0 for p in prices],
             "low": lows if lows else [p - 1.0 for p in prices],
             "close": prices,
+            "volume": volumes if volumes else [1_000_000] * n,
             "entry_signal": entries,
             "exit_signal": exits,
         }
@@ -289,3 +291,101 @@ class TestCloseRemainingAtEnd:
         assert result.trades[0].exit_reason == "end_of_backtest"
         # Final equity should be all cash (no positions)
         assert result.equity_curve[-1] > 0
+
+
+class TestPortfolioCommissionApplied:
+    """Test that commission is actually applied in portfolio mode."""
+
+    def test_commission_reduces_portfolio_returns(self) -> None:
+        """Portfolio with commission should have lower final equity than without."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 110.0, 110.0, 110.0],
+            entries=[True, False, False, False, False],
+            exits=[False, False, True, False, False],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+        result_no_comm = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.0,
+            commission_pct=0.0,
+        )
+        result_with_comm = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.0,
+            commission_pct=0.5,
+        )
+        # Commission should reduce final equity
+        assert result_with_comm.equity_curve[-1] < result_no_comm.equity_curve[-1]
+
+
+class TestPortfolioVolumeScaledSlippage:
+    """Test volume-scaled slippage in portfolio backtest."""
+
+    def test_flags_off_matches_default(self) -> None:
+        """Explicit flags off should produce same result as default."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 110.0, 110.0, 110.0],
+            entries=[True, False, False, False, False],
+            exits=[False, False, True, False, False],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+        default = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.1,
+        )
+        flags_off = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.1,
+            volume_scaled_slippage=False,
+            spread_estimates=None,
+        )
+        assert default.equity_curve == flags_off.equity_curve
+
+    def test_volume_scaling_changes_results(self) -> None:
+        """Enabling volume scaling should change results vs flat."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 110.0, 110.0, 110.0],
+            entries=[True, False, False, False, False],
+            exits=[False, False, True, False, False],
+            volumes=[50_000] * 5,  # Moderate volume
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+        flat = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.1,
+            volume_scaled_slippage=False,
+        )
+        scaled = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.1,
+            volume_scaled_slippage=True,
+        )
+        # Results should differ when volume scaling is on
+        assert flat.equity_curve != scaled.equity_curve

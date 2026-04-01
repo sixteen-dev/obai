@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import numpy as np
 import polars as pl
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -22,7 +23,13 @@ from .config import Settings, load_settings
 from .data.db import DuckDBManager
 from .data.downloader import DataDownloader
 from .data.store import DataStore
-from .engine.backtester import BacktestConfig, Trade, run_backtest, run_multi_symbol_backtest
+from .engine.backtester import (
+    BacktestConfig,
+    Trade,
+    combine_equity_curves,
+    run_backtest,
+    run_multi_symbol_backtest,
+)
 from .engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
 from .engine.indicators import INDICATOR_REGISTRY, compute_indicators, get_supported_indicators
 from .engine.metrics import (
@@ -33,6 +40,7 @@ from .engine.metrics import (
 from .engine.portfolio_backtester import PortfolioBacktestResult, run_portfolio_backtest
 from .engine.session import session_end as _session_end
 from .engine.signals import generate_signals
+from .engine.spread import cs_window_for_timeframe, estimate_spread_corwin_schultz
 from .engine.walk_forward import walk_forward_validate
 from .jobs import JobStatus, JobStore
 from .logging_config import configure_logging, get_logger
@@ -970,7 +978,21 @@ class _ExecutionResult:
     portfolio_result: PortfolioBacktestResult | None = None
 
 
-async def _execute_strategy(
+def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
+    """Forward-fill interior NaN gaps in place. Leading NaNs become 0 (no cost).
+
+    Does NOT backfill leading NaNs with future values — that would introduce
+    look-ahead bias. Bars before the first valid estimate get spread_cost=0.
+    """
+    last_valid = 0.0
+    for i in range(len(arr)):
+        if np.isnan(arr[i]):
+            arr[i] = last_valid
+        else:
+            last_valid = float(arr[i])
+
+
+async def _execute_strategy(  # noqa: PLR0915
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
     """Execute a full strategy: download → indicators → signals → backtest."""
@@ -1013,6 +1035,7 @@ async def _execute_strategy(
         slippage_pct=exec_cfg.slippage_pct,
         commission_pct=exec_cfg.commission_pct,
         timeframe=timeframe,
+        volume_scaled_slippage=exec_cfg.volume_scaled_slippage,
     )
 
     all_warnings: list[str] = list(data_warnings)
@@ -1030,6 +1053,15 @@ async def _execute_strategy(
             strategy.entry_rules,
             strategy.exit_rules,
         )
+
+        if exec_cfg.estimate_spread:
+            highs = signaled["high"].to_numpy().astype(np.float64)
+            lows = signaled["low"].to_numpy().astype(np.float64)
+            window = cs_window_for_timeframe(timeframe)
+            spread_arr = estimate_spread_corwin_schultz(highs, lows, window=window)
+            _forward_fill_nan(spread_arr)
+            config.spread_estimates = spread_arr
+
         config.symbol = symbol
         eq, trades = run_backtest(
             signaled,
@@ -1060,12 +1092,46 @@ async def _execute_strategy(
     if strategy.position_sizing.allocation_mode == "portfolio":
         return _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs)
 
-    eq, trades = run_multi_symbol_backtest(
-        prepped,
-        strategy.position_sizing,
-        strategy.risk_management,
-        config,
-    )
+    # For multi-symbol independent mode, compute per-symbol spread estimates
+    # and run each symbol with its own config (spread_estimates is per-symbol)
+    if exec_cfg.estimate_spread:
+        all_trades: list[Trade] = []
+        equity_curves: list[pl.DataFrame] = []
+        window = cs_window_for_timeframe(timeframe)
+        for symbol, sym_df in prepped.items():
+            highs = sym_df["high"].to_numpy().astype(np.float64)
+            lows = sym_df["low"].to_numpy().astype(np.float64)
+            spread_arr = estimate_spread_corwin_schultz(highs, lows, window=window)
+            _forward_fill_nan(spread_arr)
+            sym_cfg = BacktestConfig(
+                symbol=symbol,
+                slippage_pct=config.slippage_pct,
+                commission_pct=config.commission_pct,
+                timeframe=config.timeframe,
+                volume_scaled_slippage=config.volume_scaled_slippage,
+                spread_estimates=spread_arr,
+            )
+            eq_curve, sym_trades = run_backtest(
+                sym_df,
+                strategy.position_sizing,
+                strategy.risk_management,
+                sym_cfg,
+            )
+            equity_curves.append(eq_curve.rename({"equity": f"equity_{symbol}"}))
+            all_trades.extend(sym_trades)
+
+        if not equity_curves:
+            eq = pl.DataFrame({"date": [], "equity": []})
+        else:
+            eq = combine_equity_curves(equity_curves)
+        trades = all_trades
+    else:
+        eq, trades = run_multi_symbol_backtest(
+            prepped,
+            strategy.position_sizing,
+            strategy.risk_management,
+            config,
+        )
     return _ExecutionResult(
         equity_df=eq,
         trades=trades,
@@ -1096,16 +1162,30 @@ def _run_portfolio_mode(
 
     """
     exec_cfg = strategy.execution_config
+
+    spread_ests: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None
+    if exec_cfg.estimate_spread:
+        spread_ests = {}
+        window = cs_window_for_timeframe(strategy.data_config.timeframe)
+        for sym, sym_df in prepped.items():
+            highs = sym_df["high"].to_numpy().astype(np.float64)
+            lows = sym_df["low"].to_numpy().astype(np.float64)
+            arr = estimate_spread_corwin_schultz(highs, lows, window=window)
+            _forward_fill_nan(arr)
+            spread_ests[sym] = arr
+
     portfolio_result = run_portfolio_backtest(
         signal_dfs=prepped,
         initial_capital=exec_cfg.initial_capital,
         position_sizing=strategy.position_sizing,
         slippage_pct=exec_cfg.slippage_pct,
-        commission_per_share=0.0,
+        commission_pct=exec_cfg.commission_pct,
         stop_loss_pct=strategy.risk_management.stop_loss_pct,
         take_profit_pct=strategy.risk_management.take_profit_pct,
         close_eod=strategy.risk_management.close_eod,
         timeframe=strategy.data_config.timeframe,
+        volume_scaled_slippage=exec_cfg.volume_scaled_slippage,
+        spread_estimates=spread_ests,
     )
 
     # Build equity DataFrame from portfolio result
@@ -1124,7 +1204,7 @@ def _run_portfolio_mode(
     equity_df = pl.DataFrame(
         {
             "date": eq_dates,
-            "equity": portfolio_result.equity_curve,
+            "equity": [float(v) for v in portfolio_result.equity_curve],
         }
     )
 

@@ -59,7 +59,7 @@ def allocate_capital(  # noqa: PLR0913
     max_position_pct: float,
     max_positions: int,
     current_position_count: int,
-    commission_per_share: float = 0.0,
+    commission_pct: float = 0.0,
 ) -> list[tuple[str, int, float]]:
     """Allocate available cash across competing entry signals.
 
@@ -75,7 +75,7 @@ def allocate_capital(  # noqa: PLR0913
         max_position_pct: Maximum position size as percentage of equity.
         max_positions: Maximum number of concurrent positions.
         current_position_count: Number of currently held positions.
-        commission_per_share: Per-share commission cost.
+        commission_pct: Commission as percentage of trade value (e.g. 0.1 for 0.1%).
 
     Returns:
         List of (symbol, shares, total_cost) tuples for allocations made.
@@ -89,6 +89,7 @@ def allocate_capital(  # noqa: PLR0913
 
     allocations: list[tuple[str, int, float]] = []
     remaining_cash = cash
+    commission_mult = 1 + commission_pct / 100
 
     for symbol, price, _ in sorted_signals[:available_slots]:
         if remaining_cash <= 0 or price <= 0:
@@ -106,12 +107,12 @@ def allocate_capital(  # noqa: PLR0913
         if shares <= 0:
             continue
 
-        total_cost = shares * price + shares * commission_per_share
+        total_cost = shares * price * commission_mult
         if total_cost > remaining_cash:
-            shares = _adjust_shares_for_cost(remaining_cash, price, commission_per_share)
+            shares = _adjust_shares_for_cost(remaining_cash, price, commission_pct)
             if shares <= 0:
                 continue
-            total_cost = shares * price + shares * commission_per_share
+            total_cost = shares * price * commission_mult
 
         allocations.append((symbol, shares, total_cost))
         remaining_cash -= total_cost
@@ -151,20 +152,20 @@ def _compute_dollar_allocation(
 def _adjust_shares_for_cost(
     remaining_cash: float,
     price: float,
-    commission_per_share: float,
+    commission_pct: float,
 ) -> int:
     """Reduce share count to fit within remaining cash including commission.
 
     Args:
         remaining_cash: Cash available.
         price: Price per share.
-        commission_per_share: Commission per share.
+        commission_pct: Commission as percentage of trade value.
 
     Returns:
         Adjusted number of shares (may be 0).
 
     """
-    effective_price = price + commission_per_share
+    effective_price = price * (1 + commission_pct / 100)
     if effective_price <= 0:
         return 0
     return int(remaining_cash // effective_price)

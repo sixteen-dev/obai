@@ -5,6 +5,7 @@ Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phases 3.2-3.5.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -16,21 +17,67 @@ from ..models.strategy import PositionSizing, RiskManagement
 from .session import is_after_time, is_last_bar_of_session, parse_time_str
 from .utils import date_to_str
 
+# --- Volume-scaled slippage constants ---
+
+REFERENCE_PARTICIPATION: float = 0.01
+MIN_SLIPPAGE_PCT: float = 0.005
+MAX_SLIPPAGE_PCT: float = 2.0
+
+
 # --- Shared pure functions (importable by portfolio backtester) ---
 
 
-def compute_entry_fill(open_price: float, slippage_pct: float) -> float:
+def _effective_slippage(
+    slippage_pct: float,
+    order_shares: float | None,
+    bar_volume: int | None,
+) -> float:
+    """Compute effective slippage, optionally scaled by participation rate.
+
+    Args:
+        slippage_pct: Base slippage percentage.
+        order_shares: Number of shares in the order (None to skip scaling).
+        bar_volume: Bar volume (None or 0 to skip scaling).
+
+    Returns:
+        Effective slippage percentage.
+
+    """
+    if order_shares is None or bar_volume is None or bar_volume <= 0:
+        return slippage_pct
+    if slippage_pct == 0.0:
+        return 0.0
+    participation = order_shares / bar_volume
+    scaled = slippage_pct * math.sqrt(participation / REFERENCE_PARTICIPATION)
+    return max(MIN_SLIPPAGE_PCT, min(scaled, MAX_SLIPPAGE_PCT))
+
+
+def compute_entry_fill(
+    open_price: float,
+    slippage_pct: float,
+    order_shares: float | None = None,
+    bar_volume: int | None = None,
+    spread_cost: float = 0.0,
+) -> float:
     """Compute fill price for entry (buy). Slippage makes it worse (higher).
+
+    When order_shares and bar_volume are provided, slippage scales with
+    the square root of participation rate (simplified Almgren-Chriss).
+    Otherwise falls back to flat slippage.
 
     Args:
         open_price: The bar's open price.
         slippage_pct: Slippage as a percentage (e.g. 0.1 for 0.1%).
+        order_shares: Number of shares in the order (enables volume scaling).
+        bar_volume: Bar volume for participation rate computation.
+        spread_cost: Half-spread as a fraction of price (added to fill).
 
     Returns:
         Adjusted fill price.
 
     """
-    return open_price * (1 + slippage_pct / 100)
+    effective = _effective_slippage(slippage_pct, order_shares, bar_volume)
+    return open_price * (1 + effective / 100) + open_price * spread_cost
 
 
 def compute_exit_fill(  # noqa: PLR0913
@@ -40,8 +87,14 @@ def compute_exit_fill(  # noqa: PLR0913
     stop_level: float | None,
     tp_level: float | None,
     slippage_pct: float,
+    order_shares: float | None = None,
+    bar_volume: int | None = None,
+    spread_cost: float = 0.0,
 ) -> float:
     """Compute fill price for exit based on exit reason.
+
+    Volume-scaled slippage and spread cost apply only to signal-based exits.
+    Stop/TP/EOD paths use level prices and are unaffected.
 
     Args:
         reason: Exit reason (signal, stop_loss, take_profit, eod_close).
@@ -50,13 +103,17 @@ def compute_exit_fill(  # noqa: PLR0913
         stop_level: Stop-loss price level (if applicable).
         tp_level: Take-profit price level (if applicable).
         slippage_pct: Slippage as a percentage.
+        order_shares: Number of shares (enables volume scaling).
+        bar_volume: Bar volume for participation rate computation.
+        spread_cost: Half-spread as a fraction of price (subtracted from fill).
 
     Returns:
         Fill price for the exit.
 
     """
     if reason == "signal":
-        return open_price * (1 - slippage_pct / 100)
+        effective = _effective_slippage(slippage_pct, order_shares, bar_volume)
+        return open_price * (1 - effective / 100) - open_price * spread_cost
     if reason == "stop_loss" and stop_level is not None:
         return min(stop_level, open_price)
     if reason == "take_profit" and tp_level is not None:
@@ -149,6 +206,8 @@ class BacktestConfig:
     slippage_pct: float = 0.1
     commission_pct: float = 0.1
     timeframe: str = "daily"  # Phase 3: threaded through
+    volume_scaled_slippage: bool = False
+    spread_estimates: np.ndarray[Any, np.dtype[np.float64]] | None = None
 
 
 def run_backtest(
@@ -188,6 +247,7 @@ def _execute_backtest(
         highs=df["high"].to_numpy().astype(np.float64),
         lows=df["low"].to_numpy().astype(np.float64),
         closes=df["close"].to_numpy().astype(np.float64),
+        volumes=df["volume"].to_numpy().astype(np.int64),
         entries=df["entry_signal"].to_numpy(),
         exits=df["exit_signal"].to_numpy(),
     )
@@ -233,6 +293,7 @@ class _MarketData:
     highs: np.ndarray[Any, np.dtype[np.float64]]
     lows: np.ndarray[Any, np.dtype[np.float64]]
     closes: np.ndarray[Any, np.dtype[np.float64]]
+    volumes: np.ndarray[Any, np.dtype[np.int64]]
     entries: np.ndarray[Any, np.dtype[Any]]
     exits: np.ndarray[Any, np.dtype[Any]]
 
@@ -251,6 +312,7 @@ class _BacktestState:
     last_price: float = 0.0
     stop_level: float | None = None
     tp_level: float | None = None
+    order_shares: float = 0.0
 
 
 def _check_entry(  # noqa: PLR0913
@@ -271,7 +333,26 @@ def _check_entry(  # noqa: PLR0913
         if isinstance(bar_time, datetime) and is_after_time(bar_time, no_entry_cutoff):
             return
 
-    state.entry_price = compute_entry_fill(float(market.opens[idx]), cfg.slippage_pct)
+    open_price = float(market.opens[idx])
+
+    # Derive order shares and spread cost for volume-scaled slippage
+    order_shares: float | None = None
+    bar_volume: int | None = None
+    spread_cost = 0.0
+    if cfg.volume_scaled_slippage:
+        order_shares = (equity[idx - 1] * state.position_size) / open_price
+        bar_volume = int(market.volumes[idx])
+        state.order_shares = order_shares
+    if cfg.spread_estimates is not None and not np.isnan(cfg.spread_estimates[idx]):
+        spread_cost = float(cfg.spread_estimates[idx]) / 2
+
+    state.entry_price = compute_entry_fill(
+        open_price,
+        cfg.slippage_pct,
+        order_shares,
+        bar_volume,
+        spread_cost,
+    )
     state.entry_idx = idx
     state.in_position = True
     state.last_price = state.entry_price
@@ -279,8 +360,9 @@ def _check_entry(  # noqa: PLR0913
     state.tp_level = (
         state.entry_price * (1 + state.take_profit / 100) if state.take_profit else None
     )
-    # Entry-day PnL: entry_price → close[entry_day]
+    # Entry-day PnL: entry_price → close[entry_day], minus entry-side commission
     day_pnl = (market.closes[idx] - state.entry_price) / state.entry_price
+    day_pnl -= cfg.commission_pct / 100
     equity[idx] += equity[idx - 1] * state.position_size * day_pnl
     state.last_price = float(market.closes[idx])
 
@@ -352,13 +434,14 @@ def _record_trade(  # noqa: PLR0913
     """
     exit_price = _compute_exit_price(state, market, idx, exit_reason, cfg)
 
-    # Full trade return (for Trade record only)
+    # Full trade return (for Trade record — round-trip commission)
     trade_return = (exit_price - state.entry_price) / state.entry_price
     trade_return -= cfg.commission_pct / 100 * 2
 
-    # Exit-day equity: only the last leg (last_price → exit_price) + commission
+    # Exit-day equity: last leg minus exit-side commission only
+    # (entry-side was already applied on entry day)
     exit_day_pnl = (exit_price - state.last_price) / state.last_price
-    exit_day_pnl -= cfg.commission_pct / 100 * 2
+    exit_day_pnl -= cfg.commission_pct / 100
     equity[idx] += equity[idx - 1] * state.position_size * exit_day_pnl
 
     holding_days, holding_minutes = _compute_holding_period(
@@ -408,6 +491,15 @@ def _compute_exit_price(
         Fill price for the exit.
 
     """
+    order_shares: float | None = None
+    bar_volume: int | None = None
+    spread_cost = 0.0
+    if cfg.volume_scaled_slippage:
+        order_shares = state.order_shares
+        bar_volume = int(market.volumes[idx])
+    if cfg.spread_estimates is not None and not np.isnan(cfg.spread_estimates[idx]):
+        spread_cost = float(cfg.spread_estimates[idx]) / 2
+
     return compute_exit_fill(
         reason=exit_reason,
         open_price=float(market.opens[idx]),
@@ -415,6 +507,9 @@ def _compute_exit_price(
         stop_level=state.stop_level,
         tp_level=state.tp_level,
         slippage_pct=cfg.slippage_pct,
+        order_shares=order_shares,
+        bar_volume=bar_volume,
+        spread_cost=spread_cost,
     )
 
 
@@ -484,6 +579,8 @@ def run_multi_symbol_backtest(
             slippage_pct=cfg.slippage_pct,
             commission_pct=cfg.commission_pct,
             timeframe=cfg.timeframe,
+            volume_scaled_slippage=cfg.volume_scaled_slippage,
+            spread_estimates=cfg.spread_estimates,
         )
         eq_curve, trades = run_backtest(
             df=sym_df,
@@ -499,11 +596,11 @@ def run_multi_symbol_backtest(
     if not equity_curves:
         return pl.DataFrame({"date": [], "equity": []}), []
 
-    combined = _combine_equity_curves(equity_curves)
+    combined = combine_equity_curves(equity_curves)
     return combined, all_trades
 
 
-def _combine_equity_curves(
+def combine_equity_curves(
     curves: list[pl.DataFrame],
 ) -> pl.DataFrame:
     """Combine per-symbol equity curves into a single averaged curve."""
