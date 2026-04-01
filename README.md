@@ -97,6 +97,17 @@ The setup script:
 
 Use `./setup.sh --skip-opik` to skip the tracing stack, or `./setup.sh --skip-mcp` to skip MCP servers.
 
+### Pinning a Version
+
+OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
+
+```bash
+git checkout v0.9.0
+./setup.sh
+```
+
+To update to latest: `git checkout main && git pull && ./setup.sh`
+
 ---
 
 ## CLI Usage

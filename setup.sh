@@ -41,6 +41,7 @@ OBAI_SRC="$REPO_ROOT/src/obai"
 
 SKIP_OPIK=false
 SKIP_MCP=false
+OBAI_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
 
 # --- Parse args ---
 for arg in "$@"; do
@@ -378,7 +379,7 @@ fi
 # =============================================================================
 echo ""
 echo -e "${BOLD}============================================${NC}"
-echo -e "${BOLD}  OBaI Setup Complete${NC}"
+echo -e "${BOLD}  OBaI v${OBAI_VERSION} Setup Complete${NC}"
 echo -e "${BOLD}============================================${NC}"
 echo ""
 echo "  Config:      $OBAI_DIR/"

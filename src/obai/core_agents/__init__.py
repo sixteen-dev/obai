@@ -13,6 +13,8 @@ Architecture:
     - Research Agent: Deep company research via Exa semantic search
 """
 
+from importlib.metadata import version as _pkg_version
+
 from .base_agent import BaseAgent
 from .central_hub_agent import CentralHubAgent, create_central_hub
 from .config import AgentConfig, get_config, reset_config
@@ -23,7 +25,7 @@ from .options_agent import OptionsAgent, create_options_agent
 from .research_agent import ResearchAgent, create_research_agent
 from .screener_agent import ScreenerAgent, create_screener_agent
 
-__version__ = "0.1.0"
+__version__ = _pkg_version("obai")
 
 __all__ = [
     # Config
