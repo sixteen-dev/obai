@@ -97,6 +97,7 @@ class _SymbolArrays:
     highs: np.ndarray[Any, np.dtype[np.float64]]
     lows: np.ndarray[Any, np.dtype[np.float64]]
     closes: np.ndarray[Any, np.dtype[np.float64]]
+    volumes: np.ndarray[Any, np.dtype[np.int64]]
     entries: np.ndarray[Any, np.dtype[Any]]
     exits: np.ndarray[Any, np.dtype[Any]]
     date_to_idx: dict[date, int]
@@ -107,11 +108,13 @@ def run_portfolio_backtest(  # noqa: PLR0913
     initial_capital: float,
     position_sizing: PositionSizing,
     slippage_pct: float = 0.001,
-    commission_per_share: float = 0.0,
+    commission_pct: float = 0.1,
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
     close_eod: bool = False,
     timeframe: str = "daily",
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> PortfolioBacktestResult:
     """Run a portfolio backtest with shared capital across multiple symbols.
 
@@ -123,11 +126,13 @@ def run_portfolio_backtest(  # noqa: PLR0913
         initial_capital: Starting cash amount.
         position_sizing: Position sizing configuration.
         slippage_pct: Slippage percentage (e.g. 0.1 for 0.1%).
-        commission_per_share: Per-share commission cost.
+        commission_pct: Commission as percentage of trade value (e.g. 0.1 for 0.1%).
         stop_loss_pct: Optional stop-loss percentage.
         take_profit_pct: Optional take-profit percentage.
         close_eod: Whether to force close at end of day (unused for daily).
         timeframe: Bar timeframe (for holding period computation).
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays (fraction of price).
 
     Returns:
         PortfolioBacktestResult with equity curve, trades, and diagnostics.
@@ -139,7 +144,7 @@ def run_portfolio_backtest(  # noqa: PLR0913
     if not all_dates:
         return PortfolioBacktestResult([], [], [], [])
 
-    state = PortfolioState(cash=initial_capital)
+    state = PortfolioState(cash=float(initial_capital))
     trades: list[PortfolioTradeRecord] = []
     signals_skipped: list[dict[str, Any]] = []
     daily_counts: list[int] = []
@@ -157,12 +162,14 @@ def run_portfolio_backtest(  # noqa: PLR0913
             signal_fired_at=signal_fired_at,
             position_sizing=position_sizing,
             slippage_pct=slippage_pct,
-            commission_per_share=commission_per_share,
+            commission_pct=commission_pct,
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
+            volume_scaled_slippage=volume_scaled_slippage,
+            spread_estimates=spread_estimates,
         )
         equity = _compute_equity_from_state(state, current_date, symbol_arrays)
-        state.equity_history.append(equity)
+        state.equity_history.append(float(equity))
         daily_counts.append(state.position_count)
 
     # Close remaining positions at final bar's close
@@ -173,11 +180,13 @@ def run_portfolio_backtest(  # noqa: PLR0913
             final_date=all_dates[-1],
             symbol_arrays=symbol_arrays,
             slippage_pct=slippage_pct,
-            commission_per_share=commission_per_share,
+            commission_pct=commission_pct,
+            volume_scaled_slippage=volume_scaled_slippage,
+            spread_estimates=spread_estimates,
         )
         # Recompute final equity after closing
         if state.equity_history:
-            state.equity_history[-1] = state.cash
+            state.equity_history[-1] = float(state.cash)
 
     return PortfolioBacktestResult(
         equity_curve=state.equity_history,
@@ -198,9 +207,11 @@ def _process_day(  # noqa: PLR0913
     signal_fired_at: dict[str, int],
     position_sizing: PositionSizing,
     slippage_pct: float,
-    commission_per_share: float,
+    commission_pct: float,
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
     """Process a single day: exits first, then entries.
 
@@ -215,9 +226,11 @@ def _process_day(  # noqa: PLR0913
         signal_fired_at: Tracks when each symbol's signal first fired.
         position_sizing: Position sizing config.
         slippage_pct: Slippage percentage.
-        commission_per_share: Per-share commission.
+        commission_pct: Commission as percentage of trade value.
         stop_loss_pct: Stop-loss percentage.
         take_profit_pct: Take-profit percentage.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
 
     """
     # Step 1: Check exits for all held positions
@@ -227,9 +240,11 @@ def _process_day(  # noqa: PLR0913
         state=state,
         trades=trades,
         slippage_pct=slippage_pct,
-        commission_per_share=commission_per_share,
+        commission_pct=commission_pct,
         stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
+        volume_scaled_slippage=volume_scaled_slippage,
+        spread_estimates=spread_estimates,
     )
 
     # Step 2: Collect entry signals and allocate capital
@@ -243,9 +258,11 @@ def _process_day(  # noqa: PLR0913
         signal_fired_at=signal_fired_at,
         position_sizing=position_sizing,
         slippage_pct=slippage_pct,
-        commission_per_share=commission_per_share,
+        commission_pct=commission_pct,
         stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
+        volume_scaled_slippage=volume_scaled_slippage,
+        spread_estimates=spread_estimates,
     )
 
 
@@ -255,9 +272,11 @@ def _check_all_exits(  # noqa: PLR0913
     state: PortfolioState,
     trades: list[PortfolioTradeRecord],
     slippage_pct: float,
-    commission_per_share: float,
+    commission_pct: float,
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
     """Check exit conditions for all held positions.
 
@@ -267,9 +286,11 @@ def _check_all_exits(  # noqa: PLR0913
         state: Mutable portfolio state.
         trades: Trade record accumulator.
         slippage_pct: Slippage percentage.
-        commission_per_share: Per-share commission.
+        commission_pct: Commission as percentage of trade value.
         stop_loss_pct: Stop-loss percentage.
         take_profit_pct: Take-profit percentage.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
 
     """
     to_close: list[str] = []
@@ -299,7 +320,9 @@ def _check_all_exits(  # noqa: PLR0913
                 bar_idx=bar_idx,
                 exit_reason=exit_reason,
                 slippage_pct=slippage_pct,
-                commission_per_share=commission_per_share,
+                commission_pct=commission_pct,
+                volume_scaled_slippage=volume_scaled_slippage,
+                spread_estimates=spread_estimates,
             )
             to_close.append(symbol)
 
@@ -356,7 +379,9 @@ def _close_position(  # noqa: PLR0913
     bar_idx: int,
     exit_reason: str,
     slippage_pct: float,
-    commission_per_share: float,
+    commission_pct: float,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
     """Close a position and record the trade.
 
@@ -369,13 +394,26 @@ def _close_position(  # noqa: PLR0913
         bar_idx: Index into the arrays for current bar.
         exit_reason: Why the position is closing.
         slippage_pct: Slippage percentage.
-        commission_per_share: Per-share commission.
+        commission_pct: Commission as percentage of trade value.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
 
     """
     sl_pct = lot.stop_loss_pct
     tp_pct = lot.take_profit_pct
     stop_level = lot.entry_price * (1 - sl_pct / 100) if sl_pct else None
     tp_level = lot.entry_price * (1 + tp_pct / 100) if tp_pct else None
+
+    order_shares: float | None = None
+    bar_volume: int | None = None
+    spread_cost = 0.0
+    if volume_scaled_slippage:
+        order_shares = float(lot.shares)
+        bar_volume = int(arrays.volumes[bar_idx])
+    if spread_estimates and symbol in spread_estimates:
+        sv = spread_estimates[symbol]
+        if bar_idx < len(sv) and not np.isnan(sv[bar_idx]):
+            spread_cost = float(sv[bar_idx]) / 2
 
     exit_price = compute_exit_fill(
         reason=exit_reason,
@@ -384,13 +422,16 @@ def _close_position(  # noqa: PLR0913
         stop_level=stop_level,
         tp_level=tp_level,
         slippage_pct=slippage_pct,
+        order_shares=order_shares,
+        bar_volume=bar_volume,
+        spread_cost=spread_cost,
     )
 
-    proceeds = lot.shares * exit_price - lot.shares * commission_per_share
+    proceeds = lot.shares * exit_price * (1 - commission_pct / 100)
     state.cash += proceeds
 
     pnl = proceeds - lot.cost_basis
-    return_pct = (exit_price - lot.entry_price) / lot.entry_price * 100
+    return_pct = (exit_price - lot.entry_price) / lot.entry_price * 100 - commission_pct * 2
     exit_date = arrays.dates[bar_idx]
     holding_days = _compute_holding_days(lot.entry_date, exit_date)
 
@@ -410,7 +451,7 @@ def _close_position(  # noqa: PLR0913
     )
 
 
-def _collect_and_execute_entries(  # noqa: PLR0913
+def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
     day_idx: int,
     current_date: date,
     all_dates: list[date],
@@ -420,9 +461,11 @@ def _collect_and_execute_entries(  # noqa: PLR0913
     signal_fired_at: dict[str, int],
     position_sizing: PositionSizing,
     slippage_pct: float,
-    commission_per_share: float,
+    commission_pct: float,
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
     """Collect entry signals and execute allocations.
 
@@ -438,9 +481,11 @@ def _collect_and_execute_entries(  # noqa: PLR0913
         signal_fired_at: Tracks when each symbol's signal first fired.
         position_sizing: Position sizing config.
         slippage_pct: Slippage percentage.
-        commission_per_share: Per-share commission.
+        commission_pct: Commission as percentage of trade value.
         stop_loss_pct: Stop-loss percentage.
         take_profit_pct: Take-profit percentage.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
 
     """
     pending_signals: list[tuple[str, float, int]] = []
@@ -470,24 +515,53 @@ def _collect_and_execute_entries(  # noqa: PLR0913
         max_position_pct=position_sizing.max_position_pct,
         max_positions=position_sizing.max_positions,
         current_position_count=state.position_count,
-        commission_per_share=commission_per_share,
+        commission_pct=commission_pct,
     )
 
     allocated_symbols = {a[0] for a in allocations}
 
     # Execute allocations
-    for symbol, shares, total_cost in allocations:
+    for symbol, shares, _total_cost in allocations:
         arrays = symbol_arrays[symbol]
         bar_idx = arrays.date_to_idx[current_date]
-        fill_price = compute_entry_fill(float(arrays.opens[bar_idx]), slippage_pct)
 
-        state.cash -= total_cost
+        order_shares: float | None = None
+        bar_volume: int | None = None
+        spread_cost = 0.0
+        if volume_scaled_slippage:
+            order_shares = float(shares)
+            bar_volume = int(arrays.volumes[bar_idx])
+        if spread_estimates and symbol in spread_estimates:
+            sv = spread_estimates[symbol]
+            if bar_idx < len(sv) and not np.isnan(sv[bar_idx]):
+                spread_cost = float(sv[bar_idx]) / 2
+
+        fill_price = compute_entry_fill(
+            float(arrays.opens[bar_idx]),
+            slippage_pct,
+            order_shares,
+            bar_volume,
+            spread_cost,
+        )
+
+        # Recompute cost from actual fill — volume scaling may change the price
+        commission_mult = 1 + commission_pct / 100
+        actual_cost = shares * fill_price * commission_mult
+
+        # Guard: if adjusted fill exceeds available cash, reduce shares
+        if actual_cost > state.cash and fill_price > 0:
+            shares = int(state.cash / (fill_price * commission_mult))  # noqa: PLW2901
+            if shares <= 0:
+                continue
+            actual_cost = shares * fill_price * commission_mult
+
+        state.cash -= actual_cost
         state.positions[symbol] = PositionLot(
             symbol=symbol,
             shares=shares,
             entry_price=fill_price,
             entry_date=current_date,
-            cost_basis=total_cost,
+            cost_basis=actual_cost,
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
         )
@@ -513,7 +587,9 @@ def _close_remaining_positions(  # noqa: PLR0913
     final_date: date,
     symbol_arrays: dict[str, _SymbolArrays],
     slippage_pct: float,
-    commission_per_share: float,
+    commission_pct: float,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
     """Close all remaining open positions at final bar's close.
 
@@ -523,7 +599,9 @@ def _close_remaining_positions(  # noqa: PLR0913
         final_date: The last date in the backtest.
         symbol_arrays: Pre-extracted per-symbol arrays.
         slippage_pct: Slippage percentage.
-        commission_per_share: Per-share commission.
+        commission_pct: Commission as percentage of trade value.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
 
     """
     to_close = list(state.positions.keys())
@@ -549,7 +627,9 @@ def _close_remaining_positions(  # noqa: PLR0913
             bar_idx=bar_idx,
             exit_reason="end_of_backtest",
             slippage_pct=slippage_pct,
-            commission_per_share=commission_per_share,
+            commission_pct=commission_pct,
+            volume_scaled_slippage=volume_scaled_slippage,
+            spread_estimates=spread_estimates,
         )
     state.positions.clear()
 
@@ -581,6 +661,7 @@ def _prepare_symbol_arrays(
             highs=df["high"].to_numpy().astype(np.float64),
             lows=df["low"].to_numpy().astype(np.float64),
             closes=df["close"].to_numpy().astype(np.float64),
+            volumes=df["volume"].to_numpy().astype(np.int64),
             entries=df["entry_signal"].to_numpy(),
             exits=df["exit_signal"].to_numpy(),
             date_to_idx=date_to_idx,
@@ -622,7 +703,7 @@ def _compute_equity_from_state(
         Total portfolio equity.
 
     """
-    equity = state.cash
+    equity = float(state.cash)
     for symbol, lot in state.positions.items():
         arrays = symbol_arrays.get(symbol)
         if arrays is None:

@@ -272,6 +272,40 @@ class TestStrategyDefinition:
         assert serialized["data_config"]["start_date"] == "2020-01-01"
         assert len(serialized["indicators"]) == 2
 
+    def test_execution_config_new_fields_roundtrip(
+        self,
+        sample_strategy_dict: dict[str, Any],
+    ) -> None:
+        """New execution config fields should survive round-trip."""
+        sample_strategy_dict["execution_config"] = {
+            "slippage_pct": 0.15,
+            "commission_pct": 0.2,
+            "initial_capital": 50_000.0,
+            "volume_scaled_slippage": True,
+            "estimate_spread": True,
+        }
+        strategy = StrategyDefinition.from_dict(sample_strategy_dict)
+        assert strategy.execution_config.volume_scaled_slippage is True
+        assert strategy.execution_config.estimate_spread is True
+
+        serialized = strategy.to_dict()
+        ec = serialized["execution_config"]
+        assert ec["volume_scaled_slippage"] is True
+        assert ec["estimate_spread"] is True
+        assert ec["slippage_pct"] == 0.15
+
+    def test_execution_config_defaults_for_missing_fields(
+        self,
+        sample_strategy_dict: dict[str, Any],
+    ) -> None:
+        """Missing new fields should default to False."""
+        sample_strategy_dict["execution_config"] = {
+            "slippage_pct": 0.1,
+        }
+        strategy = StrategyDefinition.from_dict(sample_strategy_dict)
+        assert strategy.execution_config.volume_scaled_slippage is False
+        assert strategy.execution_config.estimate_spread is False
+
     def test_cache_key_deterministic(self, sample_strategy_dict: dict[str, Any]) -> None:
         """cache_key should be deterministic for same input."""
         s1 = StrategyDefinition.from_dict(sample_strategy_dict)

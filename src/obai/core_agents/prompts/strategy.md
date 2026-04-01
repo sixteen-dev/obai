@@ -469,6 +469,13 @@ This is a shape template, not a recommended parameter set.
     "take_profit_pct": "<number_or_null>",
     "close_eod": "<true_or_false>",
     "no_entry_after": "<HH:MM_or_null>"
+  },
+  "execution_config": {
+    "slippage_pct": "<number>",
+    "commission_pct": "<number>",
+    "initial_capital": "<number>",
+    "volume_scaled_slippage": "<true_or_false>",
+    "estimate_spread": "<true_or_false>"
   }
 }
 ```
@@ -481,6 +488,30 @@ Field rules:
 - `timeframe` defaults to `"daily"` if omitted. Supported: `daily`, `1hour`, `15min`, `5min`.
 - `close_eod` forces position close at session end. Use `true` for day trading strategies.
 - `no_entry_after` prevents new entries after a time (e.g., `"15:30"`). Recommended for day trading.
+
+### Realistic Execution Costs
+
+Two optional flags improve backtest realism by modeling execution costs that vary with
+market conditions instead of using flat rates:
+
+- `volume_scaled_slippage: true` — scales slippage by the square root of order
+  participation rate (order size / bar volume). Large orders in illiquid stocks pay
+  more; small orders in liquid stocks pay less. Base rate is still `slippage_pct`.
+
+- `estimate_spread: true` — estimates bid-ask spread from high-low price data
+  (Corwin-Schultz method) and applies half-spread cost on each side of every trade.
+  This captures the baseline cost of crossing the spread even for tiny orders.
+
+**When to enable:**
+- Default iteration/exploration: leave both `false` (faster, simpler comparison)
+- Final validation or production-candidate strategy: enable both
+- Comparing strategies across different liquidity profiles: enable both
+- User explicitly asks for "realistic costs" or "production-quality backtest": enable both
+- Small-cap or illiquid universe: strongly recommend enabling both
+
+**When to keep disabled:**
+- Rapid iteration on entry/exit logic (costs add noise to signal comparison)
+- Very liquid large-cap-only universes where flat slippage is reasonable
 
 ### Condition Operands
 
