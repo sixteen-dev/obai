@@ -18,7 +18,7 @@ exclude = [
 
 [project]
 name = "obai"
-version = "0.1.0"
+version = "0.9.0"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"

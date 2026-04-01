@@ -27,6 +27,7 @@ import time
 import uuid
 import warnings
 from datetime import datetime, timezone
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +118,7 @@ _fix_closed_log_streams()
 
 # --- Constants ---
 
-_VERSION = "0.1.0"
+_VERSION = _pkg_version("obai")
 _SESSION_DB = Path.home() / ".obai" / "sessions.db"
 _EXIT_GUARDRAIL = 1
 _EXIT_INFRA = 3
