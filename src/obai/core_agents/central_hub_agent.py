@@ -23,6 +23,7 @@ Why agents-as-tools instead of handoffs:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -567,54 +568,10 @@ class CentralHubAgent:
         logger.info("Initializing Central Hub Agent and all specialists")
 
         try:
-            # Initialize all specialist agents with proper cleanup on failure
-            self.fundamentals_agent = FundamentalsAgent()
-            await self.fundamentals_agent.initialize()
-            self._initialized_agents.append(self.fundamentals_agent)
-            logger.info("✓ Fundamentals Agent initialized")
-
-            self.market_data_agent = MarketDataAgent()
-            await self.market_data_agent.initialize()
-            self._initialized_agents.append(self.market_data_agent)
-            logger.info("✓ Market Data Agent initialized")
-
-            self.events_news_agent = EventsNewsAgent()
-            await self.events_news_agent.initialize()
-            self._initialized_agents.append(self.events_news_agent)
-            logger.info("✓ Events/News Agent initialized")
-
-            self.options_agent = OptionsAgent()
-            await self.options_agent.initialize()
-            self._initialized_agents.append(self.options_agent)
-            logger.info("✓ Options Agent initialized")
-
-            self.screener_agent = ScreenerAgent()
-            await self.screener_agent.initialize()
-            self._initialized_agents.append(self.screener_agent)
-            logger.info("✓ Screener Agent initialized")
-
-            self.portfolio_agent = PortfolioAgent()
-            await self.portfolio_agent.initialize()
-            self._initialized_agents.append(self.portfolio_agent)
-            logger.info("✓ Portfolio Agent initialized")
-
-            self.strategy_agent = StrategyAgent()
-            await self.strategy_agent.initialize()
-            self._initialized_agents.append(self.strategy_agent)
-            logger.info("✓ Strategy Agent initialized")
-
-            try:
-                self.research_agent = ResearchAgent()
-                await self.research_agent.initialize()
-                self._initialized_agents.append(self.research_agent)
-                logger.info("✓ Research Agent initialized")
-            except Exception:
-                logger.warning(
-                    "Research Agent unavailable — research_analysis tool disabled. "
-                    "Other agents unaffected.",
-                    exc_info=True,
-                )
-                self.research_agent = None
+            # Initialize all specialist agents in parallel for fast startup.
+            # Each agent independently connects to its MCP server, loads tools,
+            # and reads its prompt — no shared state between them.
+            await self._init_specialists_parallel()
 
             # Central hub uses dedicated model (needs strong reasoning)
             model = self.config.orchestrator_model
@@ -789,6 +746,68 @@ class CentralHubAgent:
             logger.exception("Central Hub initialization failed, cleaning up")
             await self._cleanup_agents()
             raise
+
+    async def _init_specialists_parallel(self) -> None:
+        """Initialize all specialist agents in parallel.
+
+        Each agent connects to its own MCP server on a separate port,
+        loads its tools via list_tools(), and reads its prompt file.
+        No shared state — safe to run concurrently.
+
+        All 8 required agents must succeed. Research agent is optional
+        and degrades gracefully if its server is unavailable.
+
+        Raises:
+            MCPClientError: If any required agent fails to initialize.
+        """
+        # Construct instances (instant, no I/O)
+        self.fundamentals_agent = FundamentalsAgent()
+        self.market_data_agent = MarketDataAgent()
+        self.events_news_agent = EventsNewsAgent()
+        self.options_agent = OptionsAgent()
+        self.screener_agent = ScreenerAgent()
+        self.portfolio_agent = PortfolioAgent()
+        self.strategy_agent = StrategyAgent()
+        self.research_agent = ResearchAgent()
+
+        required = [
+            self.fundamentals_agent,
+            self.market_data_agent,
+            self.events_news_agent,
+            self.options_agent,
+            self.screener_agent,
+            self.portfolio_agent,
+            self.strategy_agent,
+        ]
+
+        all_agents = [*required, self.research_agent]
+        results = await asyncio.gather(
+            *[a.initialize() for a in all_agents],
+            return_exceptions=True,
+        )
+
+        # Re-raise BaseException subtypes (KeyboardInterrupt, CancelledError)
+        # that asyncio.gather captures but should not be silently swallowed.
+        first_error: Exception | None = None
+        for agent, result in zip(all_agents, results, strict=True):
+            if isinstance(result, BaseException) and not isinstance(result, Exception):
+                raise result
+            if isinstance(result, Exception):
+                if agent is self.research_agent:
+                    logger.warning(
+                        "Research Agent unavailable — research_analysis tool disabled. "
+                        "Other agents unaffected.",
+                    )
+                    self.research_agent = None
+                else:
+                    logger.error("Failed to initialize %s: %s", agent.agent_name, result)
+                    first_error = first_error or result
+            else:
+                self._initialized_agents.append(agent)
+                logger.info("✓ %s initialized", agent.agent_name)
+
+        if first_error is not None:
+            raise first_error
 
     async def _cleanup_agents(self) -> None:
         """Clean up all initialized specialist agents."""
