@@ -52,12 +52,12 @@ def generate_windows(
     min_segments = n_windows + 1
     min_required_days = min_segments * 365
     if total_days < min_required_days:
-        years_needed = min_segments
-        years_have = total_days / 365.25
+        max_windows = max((total_days // 365) - 1, 0)
         msg = (
-            f"Walk-forward requires >= {years_needed} years for {n_windows} windows, "
-            f"but date range is only {years_have:.1f} years "
-            f"({start_date} to {end_date})"
+            f"Walk-forward requires >= {min_required_days} days for {n_windows} windows, "
+            f"but date range is only {total_days} days "
+            f"({start_date} to {end_date}). "
+            f"Maximum windows for this range: {max_windows}"
         )
         raise ValueError(msg)
 

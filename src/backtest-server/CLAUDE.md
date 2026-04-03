@@ -20,6 +20,8 @@ Changes to the backtest server schema have downstream dependencies in the Strate
 
 **Prompt example style:** Concrete shape examples are good, hardcoded market-default examples are not. They teach both schema and strategy priors, and you only want the first. Use neutral placeholders (`<indicator_id>`, `<threshold>`) instead of classic TA defaults (RSI 14/30, SMA 50/200).
 
+**Prompt editing rule:** Do not add inline examples to agent prompts. Examples overfit the model to specific phrasings and crowd out general instruction-following. Tighten gate conditions and word choice instead.
+
 **Other downstream consumers to check:**
 - `src/obai/evaluation/test_cases/suite.yaml` — eval queries may reference removed/renamed features
 - `src/obai/evaluation/scorers/custom.py` — StrategyContractScorer validates response structure
