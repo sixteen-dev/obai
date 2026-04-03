@@ -29,30 +29,15 @@ import warnings
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-# Suppress third-party deprecation warnings before they fire on import.
-# SentryHubDeprecationWarning from opik->sentry_sdk.Hub bypasses warnings.filterwarnings
-# due to Python 3.13 C-level warning internals, so we temporarily redirect stderr.
-warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"opik\..*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"sentry_sdk\..*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"aiohttp\..*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, message=r"enable_cleanup_closed")
+if TYPE_CHECKING:
+    from agents import SQLiteSession
 
-# Tell LiteLLM to shut up before it gets imported (it creates its own handler on import).
-os.environ.setdefault("LITELLM_LOG", "ERROR")
+    from core_agents.central_hub_agent import CentralHubAgent
 
-# Set CLI logging to WARNING so library init noise is suppressed.
-# Python's basicConfig is a no-op if handlers already exist, so this
-# "wins" over later basicConfig calls in config.py.
+# Keep console quiet by default — only stdlib, no heavy imports.
 logging.basicConfig(level=logging.WARNING)
-
-# Pin the console handler's own level to WARNING.  basicConfig creates a
-# StreamHandler(stderr) with level=NOTSET, which defers to the root logger
-# level.  When configure_file_logging() later lowers root to INFO (so the
-# file handler receives everything), the console handler would start passing
-# INFO too.  Setting the handler level explicitly prevents that — console
-# stays quiet unless --verbose is passed.
 for _h in logging.root.handlers:
     if isinstance(_h, logging.StreamHandler) and not isinstance(_h, logging.FileHandler):
         _h.setLevel(logging.WARNING)
@@ -62,66 +47,75 @@ with contextlib.suppress(ImportError):
 
 import typer
 
-# Redirect stderr during import to suppress sentry_sdk.Hub deprecation warning
-# that opik emits at import time (bypasses Python warnings infrastructure).
-_devnull = open(os.devnull, "w")  # noqa: SIM115, PTH123
-_old_stderr = sys.stderr
-sys.stderr = _devnull
-
-from agents import SQLiteSession  # noqa: E402
-from agents.items import ItemHelpers, MessageOutputItem  # noqa: E402
-from agents.stream_events import (  # noqa: E402
-    AgentUpdatedStreamEvent,
-    RawResponsesStreamEvent,
-    RunItemStreamEvent,
-)
-from openai.types.responses import ResponseTextDeltaEvent  # noqa: E402
-
-from core_agents.central_hub_agent import (  # noqa: E402
-    CentralHubAgent,
-    create_central_hub,
-    get_inner_tool_outputs,
-)
-from core_agents.config import get_config  # noqa: E402
-from core_agents.guardrails import get_rejection_message  # noqa: E402
-from evaluation.scorers.faithfulness import (  # noqa: E402
-    CompletenessScorer,
-    FaithfulnessScorer,
-    build_scorer_input,
-)
-
-sys.stderr = _old_stderr
-_devnull.close()
-
-
-# Fix logging handlers that captured _devnull as their stream during the
-# stderr redirect above.  Any StreamHandler created while sys.stderr pointed
-# to /dev/null now holds a closed file — patch them to use the real stderr.
-# Also pin ALL console handlers to WARNING so library loggers (LiteLLM, Opik,
-# httpx, etc.) that created their own handlers during import stay quiet.
-def _fix_closed_log_streams() -> None:
-    real_stderr = sys.stderr
-    all_handlers: list[logging.Handler] = list(logging.root.handlers)
-    for logger_ref in logging.root.manager.loggerDict.values():
-        if isinstance(logger_ref, logging.Logger):
-            all_handlers.extend(logger_ref.handlers)
-    for handler in all_handlers:
-        if isinstance(handler, logging.StreamHandler) and not isinstance(
-            handler, logging.FileHandler
-        ):
-            if handler.stream.closed:
-                handler.stream = real_stderr
-            handler.setLevel(logging.WARNING)
-
-
-_fix_closed_log_streams()
-
 # --- Constants ---
 
 _VERSION = _pkg_version("obai")
 _SESSION_DB = Path.home() / ".obai" / "sessions.db"
 _EXIT_GUARDRAIL = 1
 _EXIT_INFRA = 3
+
+_AGENT_SYSTEM_LOADED = False
+
+
+def _bootstrap_agent_system() -> None:
+    """Load heavy agent dependencies with import noise suppression.
+
+    Imports the OpenAI Agent SDK, core agent modules, and evaluation
+    scorers into sys.modules so subsequent local imports are instant.
+    No-op after the first call.
+    """
+    global _AGENT_SYSTEM_LOADED
+    if _AGENT_SYSTEM_LOADED:
+        return
+
+    # Suppress third-party deprecation warnings before they fire on import.
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"opik\..*")
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"sentry_sdk\..*")
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"aiohttp\..*")
+    warnings.filterwarnings("ignore", category=DeprecationWarning, message=r"enable_cleanup_closed")
+    os.environ.setdefault("LITELLM_LOG", "ERROR")
+
+    # Redirect stderr during import to suppress sentry_sdk.Hub deprecation
+    # warning that opik emits at import time (bypasses Python warnings).
+    devnull = open(os.devnull, "w")  # noqa: SIM115, PTH123
+    old_stderr = sys.stderr
+    sys.stderr = devnull
+    try:
+        import agents  # noqa: F401
+        import openai.types.responses  # noqa: F401
+
+        from core_agents import central_hub_agent, config, guardrails  # noqa: F401
+        from evaluation.scorers import faithfulness  # noqa: F401
+    finally:
+        sys.stderr = old_stderr
+        devnull.close()
+
+    # Fix log handlers that captured devnull as their stream.
+    _fix_closed_log_streams()
+
+    _AGENT_SYSTEM_LOADED = True
+
+
+def _fix_closed_log_streams() -> None:
+    """Repair StreamHandlers that captured the devnull redirect.
+
+    Only touches handlers whose stream is closed (pointing at devnull).
+    Preserves the current level of open handlers so --verbose is not
+    clobbered when _bootstrap_agent_system runs after _verbose_callback.
+    """
+    real_stderr = sys.stderr
+    all_handlers: list[logging.Handler] = list(logging.root.handlers)
+    for logger_ref in logging.root.manager.loggerDict.values():
+        if isinstance(logger_ref, logging.Logger):
+            all_handlers.extend(logger_ref.handlers)
+    for handler in all_handlers:
+        if (
+            isinstance(handler, logging.StreamHandler)
+            and not isinstance(handler, logging.FileHandler)
+            and handler.stream.closed
+        ):
+            handler.stream = real_stderr
+            handler.setLevel(logging.WARNING)
 
 
 # --- CLI setup ---
@@ -201,6 +195,8 @@ def _launch_tui() -> None:
 
 async def _init_hub() -> CentralHubAgent:
     """Create and initialize the central hub agent."""
+    from core_agents.central_hub_agent import create_central_hub
+
     return await create_central_hub()
 
 
@@ -210,6 +206,8 @@ def _make_session(session_id: str | None) -> tuple[str, SQLiteSession]:
     Returns:
         Tuple of (session_id, SQLiteSession).
     """
+    from agents import SQLiteSession
+
     sid = session_id or f"cli_{uuid.uuid4().hex[:8]}"
     _SESSION_DB.parent.mkdir(parents=True, exist_ok=True)
     return sid, SQLiteSession(sid, db_path=str(_SESSION_DB))
@@ -227,6 +225,8 @@ def _build_result(
     error: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the structured result dict for JSON output."""
+    from core_agents.config import get_config
+
     config = get_config()
     result: dict[str, Any] = {
         "query": query,
@@ -314,6 +314,23 @@ async def _run_query(  # noqa: PLR0912
     Raises:
         SystemExit: On guardrail rejection (1) or infra error (3).
     """
+    from agents.items import ItemHelpers, MessageOutputItem
+    from agents.stream_events import (
+        AgentUpdatedStreamEvent,
+        RawResponsesStreamEvent,
+        RunItemStreamEvent,
+    )
+    from openai.types.responses import ResponseTextDeltaEvent
+
+    from core_agents.central_hub_agent import get_inner_tool_outputs
+    from core_agents.config import get_config
+    from core_agents.guardrails import get_rejection_message
+    from evaluation.scorers.faithfulness import (
+        CompletenessScorer,
+        FaithfulnessScorer,
+        build_scorer_input,
+    )
+
     start = time.perf_counter()
     response_text = ""
     agents_called: list[str] = []
@@ -510,6 +527,9 @@ def query(
     """Send a single query and stream the response."""
 
     async def _main() -> None:
+        _bootstrap_agent_system()
+        from core_agents.config import get_config
+
         if model:
             get_config().orchestrator_model = model
         if scoring:
@@ -548,6 +568,9 @@ def chat(
     """Interactive REPL with conversation memory."""
 
     async def _main() -> None:
+        _bootstrap_agent_system()
+        from core_agents.config import get_config
+
         if model:
             get_config().orchestrator_model = model
         if scoring:
@@ -616,6 +639,8 @@ def status(
 
     async def _main() -> int:
         import httpx
+
+        from core_agents.config import get_config
 
         config = get_config()
         servers = [
