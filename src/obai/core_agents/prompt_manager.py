@@ -11,6 +11,7 @@ works fine with just the markdown files on disk.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -33,19 +34,35 @@ PROMPT_NAMES = [
 ]
 
 
+_opik_client_cache: Any | None = None
+_opik_client_resolved = False
+_opik_client_lock = threading.Lock()
+
+
 def _get_opik_client() -> Any | None:
-    """Get an Opik client instance.
+    """Get an Opik client instance (cached after first resolution).
+
+    Thread-safe: called from both the main asyncio thread (parallel agent
+    init) and the daemon prompt-sync thread concurrently.
 
     Returns:
         Opik client, or None if opik is not installed or unreachable.
     """
-    try:
-        import opik
+    global _opik_client_cache, _opik_client_resolved  # noqa: PLW0603
+    if _opik_client_resolved:
+        return _opik_client_cache
+    with _opik_client_lock:
+        if _opik_client_resolved:
+            return _opik_client_cache
+        try:
+            import opik
 
-        return opik.Opik()
-    except Exception:
-        logger.debug("Opik client unavailable for prompt management")
-        return None
+            _opik_client_cache = opik.Opik()
+        except Exception:
+            logger.debug("Opik client unavailable for prompt management")
+            _opik_client_cache = None
+        _opik_client_resolved = True
+    return _opik_client_cache
 
 
 def sync_prompts_to_opik() -> dict[str, bool]:

@@ -128,8 +128,10 @@ def init_opik() -> bool:
     _opik_initialized = True
     logger.info("Opik tracing initialized for project: %s", config.opik_project)
 
-    # Sync prompt files to Opik for versioning (best-effort)
-    sync_prompts_to_opik()
+    # Background: prompt sync is not needed for startup.
+    import threading
+
+    threading.Thread(target=sync_prompts_to_opik, daemon=True).start()
 
     return True
 

@@ -70,6 +70,9 @@ ignore = [
 "tests/*" = ["S101", "D102", "D103", "ANN201", "PLR2004"]
 "scripts/*" = ["S101", "D103", "T201", "INP001"]
 
+[tool.uv]
+exclude-newer = "14 days"
+
 [tool.mypy]
 strict = true
 python_version = "3.12"

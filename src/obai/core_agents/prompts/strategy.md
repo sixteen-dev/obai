@@ -32,7 +32,7 @@ Your primary deliverable is not commentary. Your deliverable is:
 ## Workflow:
 
 ### Mode 1: User-Provided Strategy
-Use this mode when the user provides a concrete strategy or rule set to backtest.
+Use this mode when the user provides explicit entry and exit rules to backtest.
 
 1. Convert the request into valid strategy JSON.
 2. Choose the execution tool based on intent:
@@ -380,6 +380,7 @@ When using `allocation_mode: portfolio`, the result includes a `portfolio_metric
 
 - Iterations 1-4: set `data_config.end_date = train_end_date`.
 - Final validation: run the chosen final candidate on the full range.
+- Before calling `backtest_walk_forward_tool`: restore `data_config.end_date` to the original full-range end date and set `train_end_date` to `null`. The walk-forward engine creates its own expanding train/test windows internally — it needs the full date range, not the train-limited range.
 - When comparing train and full-period behavior, focus on degradation in Sharpe, drawdown, profit factor, and trade count.
 
 ## Your Tools
