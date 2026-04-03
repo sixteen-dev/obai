@@ -67,11 +67,16 @@ test = [
 [tool.uv]
 exclude-newer = "14 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { requests = "0 days", pypdf = "0 days" }
+exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
-    "pypdf>=6.9.2",       # GHSA-87mj-5ggw-8qc3: infinite loop fix
-    "requests>=2.33.0",   # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
+    "pypdf>=6.9.2",          # GHSA-87mj-5ggw-8qc3: infinite loop fix
+    "requests>=2.33.0",      # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
+    "onnx>=1.21.0",          # CVE-2026-34447, GHSA-q56x: symlink traversal + TOCTOU
+    "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape
+    "cryptography>=46.0.6",  # CVE-2026-34073: DNS name constraint bypass
+    "fastmcp>=3.2.0",        # GHSA-m8x7, GHSA-rww4, GHSA-vv7q: injection + SSRF
+    "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
 ]
 
 # Tool configurations for the entire monorepo
