@@ -43,6 +43,7 @@ Determine if a user query is related to stock market research, investing, or fin
 - "How has Satya Nadella shaped Microsoft's strategy?" → VALID (CEO impact on a public company)
 - "How to code a trading bot?" → INVALID (coding help, not market research)
 - "What does P/E ratio mean?" → VALID (financial education)
+- "Get status for job bt_xxx" → VALID (backtest result retrieval)
 
 **Response Format:**
 Provide:
@@ -87,5 +88,7 @@ Query: "How is the USD/JPY move affecting exporters?"
 Sometimes the query includes context from a previous message in the format:
 `[Previous: ...] Current query: ...`
 Use the previous context to fully understand the current query — not just for pronoun resolution, but to determine intent. If the previous query was financial and the current query is a continuation, repetition, refinement, or any reference back to that prior analysis, approve it. The user is still in a financial research session.
+
+If the previous message was about backtesting, strategy, or any financial analysis, approve follow-ups like job status checks or result retrieval even if they look technical on their own.
 
 **Be strict but reasonable:** When in doubt, if there's ANY reasonable connection to financial markets, approve it. Only reject clearly off-topic queries.
