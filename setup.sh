@@ -9,7 +9,8 @@
 #   4. Spins up Opik tracing stack (docker compose)
 #   5. Builds and starts MCP data servers (docker compose)
 #   6. Installs OBaI CLI globally (uv tool install)
-#   7. Configures Opik SDK for local tracing
+#   7. Launches Web UI (FastAPI on port 8090)
+#   8. Configures Opik SDK for local tracing
 #
 # Usage:
 #   ./setup.sh              # Full setup
@@ -79,7 +80,7 @@ check_cmd() {
 # =============================================================================
 # Step 1: Prerequisites
 # =============================================================================
-step "1/7 Checking prerequisites"
+step "1/8 Checking prerequisites"
 
 errors=0
 
@@ -153,7 +154,7 @@ fi
 # =============================================================================
 # Step 2: API Keys (from shell environment)
 # =============================================================================
-step "2/7 Checking API keys"
+step "2/8 Checking API keys"
 
 missing_required=0
 missing_optional=0
@@ -201,7 +202,7 @@ fi
 # =============================================================================
 # Step 3: Create ~/.obai directory
 # =============================================================================
-step "3/7 Setting up ~/.obai"
+step "3/8 Setting up ~/.obai"
 
 mkdir -p "$OBAI_DIR/logs"
 ok "$OBAI_DIR directory ready"
@@ -228,7 +229,7 @@ fi
 # Step 4: Opik tracing stack
 # =============================================================================
 if [ "$SKIP_OPIK" = false ]; then
-    step "4/7 Starting Opik tracing stack"
+    step "4/8 Starting Opik tracing stack"
 
     # Create external volumes
     info "Creating Opik docker volumes..."
@@ -252,14 +253,14 @@ if [ "$SKIP_OPIK" = false ]; then
         warn "Opik UI not responding yet — it may still be starting up"
     fi
 else
-    step "4/7 Skipping Opik (--skip-opik)"
+    step "4/8 Skipping Opik (--skip-opik)"
 fi
 
 # =============================================================================
 # Step 5: MCP data servers
 # =============================================================================
 if [ "$SKIP_MCP" = false ]; then
-    step "5/7 Building and starting MCP servers"
+    step "5/8 Building and starting MCP servers"
 
     info "Building 8 MCP server images (this may take a few minutes on first run)..."
     docker compose -f "$REPO_ROOT/docker-compose.yml" build
@@ -312,13 +313,13 @@ if [ "$SKIP_MCP" = false ]; then
         ok "Qdrant collection has $QDRANT_COUNT vectors"
     fi
 else
-    step "5/7 Skipping MCP servers (--skip-mcp)"
+    step "5/8 Skipping MCP servers (--skip-mcp)"
 fi
 
 # =============================================================================
 # Step 6: Install OBaI CLI
 # =============================================================================
-step "6/7 Installing OBaI CLI"
+step "6/8 Installing OBaI CLI"
 
 info "Installing OBaI as a global tool via uv (editable — source changes take effect immediately)..."
 
@@ -339,6 +340,7 @@ else
     fi
 fi
 
+
 # Verify obai is on PATH
 if command -v obai &>/dev/null; then
     ok "'obai' command available at $(command -v obai)"
@@ -356,9 +358,42 @@ else
 fi
 
 # =============================================================================
-# Step 7: Configure Opik SDK
+# Step 7: Launch Web UI
 # =============================================================================
-step "7/7 Final configuration"
+step "7/8 Launching Web UI"
+
+WEB_PORT=8090
+info "Starting OBaI Web UI on port $WEB_PORT..."
+
+if command -v obai &>/dev/null; then
+    obai web --port "$WEB_PORT" &
+    WEB_PID=$!
+elif [ -f "$OBAI_SRC/clients/web/server.py" ]; then
+    uv run --directory "$OBAI_SRC" obai web --port "$WEB_PORT" &
+    WEB_PID=$!
+else
+    WEB_PID=""
+    warn "Could not start Web UI — obai command not found"
+fi
+
+if [ -n "${WEB_PID:-}" ]; then
+    retries=0
+    until curl -sf "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1 || [ "$retries" -ge 15 ]; do
+        retries=$((retries + 1))
+        sleep 1
+    done
+
+    if curl -sf "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1; then
+        ok "Web UI running (pid $WEB_PID)"
+    else
+        warn "Web UI not responding yet — it may still be initializing agents"
+    fi
+fi
+
+# =============================================================================
+# Step 8: Configure Opik SDK
+# =============================================================================
+step "8/8 Final configuration"
 
 # Set up Opik to point at local instance
 if [ "$SKIP_OPIK" = false ]; then
@@ -385,6 +420,9 @@ echo ""
 echo "  Config:      $OBAI_DIR/"
 echo "  Logs:        $OBAI_DIR/logs/obai.log"
 echo "  Preferences: $OBAI_DIR/preferences.json"
+echo ""
+
+echo -e "  ${BOLD}Web UI:     http://127.0.0.1:${WEB_PORT}${NC}"
 echo ""
 
 if [ "$SKIP_OPIK" = false ]; then

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBaI</title>
+    <link rel="icon" href="/static/logo.png">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="loading-overlay">
+        <div class="loading-content glass">
+            <div class="brand-lockup brand-lockup-center">
+                <pre class="logo-ascii logo-ascii-large"> ___  ____       ___
+/ _ \| __ ) __ _|_ _|
+\___/|____/\__,_|___|</pre>
+            </div>
+            <div class="loading-spinner"></div>
+            <div id="loading-status">Initializing agents...</div>
+        </div>
+    </div>
+
+    <aside id="sidebar" class="glass">
+        <div id="sidebar-header">
+            <div class="brand-lockup">
+                <pre class="logo-ascii"> ___  ____       ___
+/ _ \| __ ) __ _|_ _|
+\___/|____/\__,_|___|</pre>
+            </div>
+            <button id="new-session-btn" aria-label="New conversation">+</button>
+        </div>
+
+        <div id="session-list"></div>
+
+        <div id="sidebar-footer">
+            <button id="settings-btn" title="Settings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                <span>Settings</span>
+            </button>
+        </div>
+    </aside>
+
+    <div id="settings-overlay" class="hidden">
+        <div id="settings-modal" class="glass">
+            <div id="settings-header">
+                <span>Settings</span>
+                <div id="settings-header-actions">
+                    <span id="settings-status"></span>
+                    <button id="settings-save-btn">Save</button>
+                    <button id="settings-close-btn" aria-label="Close settings">&times;</button>
+                </div>
+            </div>
+            <div id="settings-body">
+                <div class="settings-section">
+                    <div class="settings-section-title">Links</div>
+                    <div class="settings-row">
+                        <label>Opik Tracing</label>
+                        <a id="opik-link" href="#" target="_blank" rel="noopener" class="settings-link">Not configured</a>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <div class="settings-section-title">Portfolio Preferences</div>
+                    <div class="settings-row">
+                        <label for="pref-risk">Risk Tolerance</label>
+                        <select id="pref-risk">
+                            <option value="conservative">Conservative</option>
+                            <option value="moderate">Moderate</option>
+                            <option value="aggressive">Aggressive</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label for="pref-horizon">Investment Horizon</label>
+                        <select id="pref-horizon">
+                            <option value="short">Short</option>
+                            <option value="medium">Medium</option>
+                            <option value="long">Long</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label for="pref-benchmark">Default Benchmark</label>
+                        <input id="pref-benchmark" type="text" placeholder="SPY">
+                    </div>
+                    <div class="settings-row">
+                        <label for="pref-capital">Initial Capital</label>
+                        <input id="pref-capital" type="number" placeholder="50000">
+                    </div>
+                    <div class="settings-row">
+                        <label for="pref-currency">Currency</label>
+                        <input id="pref-currency" type="text" placeholder="USD">
+                    </div>
+                    <div class="settings-row">
+                        <label for="pref-market">Market</label>
+                        <input id="pref-market" type="text" placeholder="US">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <main id="main">
+        <div id="chat-area">
+            <div id="welcome" class="welcome-screen">
+                <div class="welcome-copy">Turn market questions into research, screens, and trade-ready conviction.</div>
+                <div class="welcome-suggestions" aria-label="Suggested prompts">
+                    <button class="suggestion-chip" data-prompt="Screen for U.S. software names with positive EPS revisions, high gross margins, and 6-month relative strength.">Revision screen</button>
+                    <button class="suggestion-chip" data-prompt="Compare NVDA, AMD, and AVGO on estimate revisions, margin trend, revenue growth, and forward valuation.">Semi comp</button>
+                    <button class="suggestion-chip" data-prompt="Backtest a QQQ regime strategy: stay long only when price is above the 200-day moving average and 20-day realized volatility is below its 1-year median. Show CAGR, Sharpe, max drawdown, turnover, and yearly returns.">QQQ regime test</button>
+                    <button class="suggestion-chip" data-prompt="I am long AAPL and TSLA. Walk me through the technical setup, key levels, and event risk into next week.">Positions review</button>
+                </div>
+            </div>
+            <div id="messages"></div>
+        </div>
+
+        <div id="composer-shell">
+            <div id="input-area" class="glass">
+                <textarea id="query-input" placeholder="Ask anything about markets..." rows="1"></textarea>
+                <button id="send-btn" disabled aria-label="Send message">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+                        <path d="M22 2L11 13"></path>
+                        <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="model-summary" class="model-summary" aria-live="polite">Loading...</div>
+        </div>
+    </main>
+
+    <aside id="tool-panel" class="glass">
+        <div id="tool-panel-header">
+            <span>Activity</span>
+            <button id="toggle-tools-btn" title="Toggle panel" aria-label="Hide activity panel">&#x2715;</button>
+        </div>
+        <div id="tool-tree"></div>
+    </aside>
+
+    <button id="show-tools-btn" class="glass hidden" title="Show agent activity" aria-label="Show agent activity">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+        </svg>
+    </button>
+
+    <script src="/static/marked.min.js"></script>
+    <script src="/static/tools.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
