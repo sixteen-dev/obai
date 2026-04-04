@@ -93,7 +93,8 @@ The setup script:
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
 5. Builds and starts all 8 MCP servers (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
-7. Configures Opik SDK for local tracing
+7. Launches the Web UI (FastAPI on port 8090)
+8. Configures Opik SDK for local tracing
 
 Use `./setup.sh --skip-opik` to skip the tracing stack, or `./setup.sh --skip-mcp` to skip MCP servers.
 
@@ -179,6 +180,24 @@ Strategy Agent workflow:
 The agent uses `gpt-5.1` by default (not `gpt-5-mini` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
 
 **Backtest server tools:** `run_strategy`, `get_job_status`, `get_supported_indicators`, `download_data`, `list_available_data`, `get_trade_log`, `compare_strategies`, `clear_cache`
+
+---
+
+## Web UI
+
+OBaI ships a browser-based client with a dark glassmorphism interface:
+
+- Real-time streaming via WebSocket
+- Session management with persistent conversation history
+- Live agent activity panel showing tool calls and specialist routing
+- Portfolio preferences and Opik trace links in settings
+
+```bash
+obai web                  # Launch on http://127.0.0.1:8090
+obai web --port 3000      # Custom port
+```
+
+The web UI is automatically started by `setup.sh`. It runs a single-process FastAPI/uvicorn server with minimal resource overhead — the heavy computation happens in the MCP servers (Docker) and the OpenAI API (remote).
 
 ---
 
@@ -342,9 +361,12 @@ obai/
 │       │   ├── prompts/            # Markdown prompt files
 │       │   └── *_agent.py          # 8 specialist agents
 │       ├── clients/
-│       │   └── cli/                # CLI + TUI clients
-│       │       ├── chat.py         # Headless CLI (obai query/chat/status)
-│       │       └── tui.py          # Textual TUI
+│       │   ├── cli/                # CLI + TUI clients
+│       │   │   ├── chat.py         # Headless CLI (obai query/chat/status)
+│       │   │   └── tui.py          # Textual TUI
+│       │   └── web/                # Browser client
+│       │       ├── server.py       # FastAPI + WebSocket server
+│       │       └── static/         # SPA (HTML, CSS, JS)
 │       └── evaluation/             # Eval framework
 │           ├── cli.py              # Evaluation CLI
 │           ├── eval_runner.py      # Test runner
@@ -415,7 +437,7 @@ OBaI ships with two agent skills that let any AI agent autonomously interact wit
 - [ ] Polymarket prediction market analysis
 - [ ] Crypto market analysis
 - [ ] Semantic caching via LangCache (Redis)
-- [ ] Web client
+- [x] Web client (FastAPI + WebSocket, dark glassmorphism UI)
 
 ---
 

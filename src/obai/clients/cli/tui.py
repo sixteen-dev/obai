@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import sys
@@ -51,6 +50,7 @@ from clients.cli.widgets import (
     StatusBar,
     WelcomeBanner,
 )
+from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
 from core_agents.central_hub_agent import get_inner_tool_outputs
 from core_agents.config import get_config
 from evaluation.scorers.faithfulness import (
@@ -141,49 +141,6 @@ class QueryTimer:
     def get_duration_ms(self) -> int:
         """Get elapsed time since start in milliseconds."""
         return int((time.perf_counter() - self.start_time) * 1000)
-
-
-class ToolCallTracker:
-    """Track tool calls for timing and parent relationships."""
-
-    def __init__(self) -> None:
-        """Initialize tracker."""
-        self._start_times: dict[str, float] = {}
-        self._specialist_ids: dict[str, str] = {}  # specialist_name -> call_id
-        self._current_specialist_id: str | None = None
-
-    def clear(self) -> None:
-        """Clear tracked state for new query."""
-        self._start_times.clear()
-        self._specialist_ids.clear()
-        self._current_specialist_id = None
-
-    def start_specialist_call(self, call_id: str, specialist_name: str) -> None:
-        """Record a specialist tool call starting."""
-        self._start_times[call_id] = time.perf_counter()
-        self._specialist_ids[specialist_name] = call_id
-        self._current_specialist_id = call_id
-
-    def start_mcp_call(self, call_id: str) -> None:
-        """Record an MCP tool call starting."""
-        self._start_times[call_id] = time.perf_counter()
-
-    def complete_call(self, call_id: str) -> int | None:
-        """Complete a call and return duration in ms."""
-        if call_id not in self._start_times:
-            return None
-        duration_ms = int((time.perf_counter() - self._start_times[call_id]) * 1000)
-        del self._start_times[call_id]
-        return duration_ms
-
-    def get_specialist_id(self, specialist_name: str) -> str | None:
-        """Get the call ID for a specialist by name."""
-        return self._specialist_ids.get(specialist_name)
-
-    @property
-    def current_specialist_id(self) -> str | None:
-        """Get the current specialist call ID for MCP nesting."""
-        return self._current_specialist_id
 
 
 class OBaIApp(App[None]):
@@ -416,7 +373,7 @@ class OBaIApp(App[None]):
         parent_id = self.tool_tracker.get_specialist_id(specialist_name)
 
         if event_type == "start":
-            self.tool_tracker.start_mcp_call(call_id)
+            self.tool_tracker.start_mcp(call_id)
             if parent_id:
                 tools.add_mcp_tool(call_id, parent_id, tool_name, args)
             else:
@@ -425,7 +382,7 @@ class OBaIApp(App[None]):
             self.log_debug("MCPToolStart", tool=tool_name, agent=specialist_name)
 
         elif event_type == "complete":
-            actual_duration = self.tool_tracker.complete_call(call_id)
+            actual_duration = self.tool_tracker.complete(call_id)
             tools.complete_tool(call_id, actual_duration or duration_ms or 0)
             self.log_debug(
                 "MCPToolComplete",
@@ -642,18 +599,6 @@ class OBaIApp(App[None]):
 
         self.log_debug("QueryStart", query=text[:50])
 
-        # Specialist tool name mapping
-        specialist_tools = {
-            "market_data_analysis": "Market Data Agent",
-            "fundamentals_analysis": "Fundamentals Agent",
-            "events_news_analysis": "Events & News Agent",
-            "options_analysis": "Options Agent",
-            "screener_lookup": "Screener Agent",
-            "portfolio_analysis": "Portfolio Agent",
-            "strategy_analysis": "Strategy Agent",
-            "research_analysis": "Research Agent",
-        }
-
         # Track state for hub activity display
         current_agent = "Central Hub"
         hub_shown_analyzing = False
@@ -711,8 +656,8 @@ class OBaIApp(App[None]):
                             call_id = getattr(raw_item, "call_id", None)
 
                             # Get display name for specialists
-                            if tool_name in specialist_tools:
-                                display_name = specialist_tools[tool_name]
+                            if tool_name in SPECIALIST_TOOLS:
+                                display_name = SPECIALIST_TOOLS[tool_name]
                                 self.query_timer.add_specialist(display_name)
                                 # Mark hub analysis complete when calling specialist
                                 if hub_shown_analyzing:
@@ -723,10 +668,10 @@ class OBaIApp(App[None]):
 
                             # Parse args
                             raw_args = getattr(raw_item, "arguments", "{}")
-                            args_str = self._format_args(raw_args, tool_name, specialist_tools)
+                            args_str = format_tool_args(raw_args, tool_name)
 
                             if call_id:
-                                self.tool_tracker.start_specialist_call(call_id, display_name)
+                                self.tool_tracker.start_specialist(call_id, display_name)
                                 tools.add_tool(call_id, display_name, tool_name, args_str)
 
                     # Tool call output - mark tool as complete
@@ -741,7 +686,7 @@ class OBaIApp(App[None]):
                                 else getattr(raw_item, "call_id", None)
                             )
                             if call_id:
-                                dur = self.tool_tracker.complete_call(call_id)
+                                dur = self.tool_tracker.complete(call_id)
                                 tools.complete_tool(call_id, dur if dur is not None else 0)
 
                                 # Capture specialist output for scoring fallback
@@ -864,33 +809,6 @@ class OBaIApp(App[None]):
             # Ensure all tool spinners are stopped
             with contextlib.suppress(Exception):
                 tools.complete_all()
-
-    def _format_args(
-        self,
-        raw_args: str,
-        tool_name: str,
-        specialist_tools: dict[str, str],
-    ) -> str:
-        """Format tool arguments for display."""
-        try:
-            args = json.loads(raw_args) if raw_args else {}
-
-            # For specialist tools, show the query
-            if tool_name in specialist_tools:
-                input_text = str(args.get("input", ""))
-                if len(input_text) > 50:
-                    return input_text[:50] + "..."
-                return input_text
-
-            # For other tools, show key=value pairs
-            pairs = [f"{k}={v}" for k, v in list(args.items())[:3]]
-            result = ", ".join(pairs)
-            if len(args) > 3:
-                result += ", ..."
-            return str(result)
-
-        except (json.JSONDecodeError, TypeError):
-            return ""
 
     def _log_stream_event(self, event: Any) -> None:
         """Log a stream event to debug panel."""

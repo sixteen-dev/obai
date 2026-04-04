@@ -3,8 +3,9 @@
 # OBaI Teardown Script
 #
 # Stops all OBaI services:
-#   1. MCP data servers (docker compose)
-#   2. Opik tracing stack (docker compose)
+#   1. Web UI server (background uvicorn process)
+#   2. MCP data servers (docker compose)
+#   3. Opik tracing stack (docker compose)
 #
 # Usage:
 #   ./teardown.sh
@@ -24,6 +25,22 @@ OPIK_DIR="$REPO_ROOT/infra/opik"
 
 info()  { echo -e "${GREEN}[OK]${NC}    $1"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $1"; }
+
+# --- Stop Web UI ---
+echo -e "\n${BOLD}=== Stopping Web UI ===${NC}\n"
+WEB_PIDS=$(pgrep -f "obai web|uvicorn.*clients\.web" 2>/dev/null || true)
+if [ -n "$WEB_PIDS" ]; then
+    kill $WEB_PIDS 2>/dev/null || true
+    sleep 1
+    for pid in $WEB_PIDS; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    info "Web UI stopped (pid $WEB_PIDS)"
+else
+    info "Web UI not running"
+fi
 
 # --- Stop MCP servers ---
 echo -e "\n${BOLD}=== Stopping MCP data servers ===${NC}\n"

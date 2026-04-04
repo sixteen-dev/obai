@@ -732,6 +732,18 @@ async def _check_server(
         return {"name": name, "url": url, "status": type(e).__name__, "latency_ms": None}
 
 
+@cli.command()
+def web(
+    port: int = typer.Option(8090, "--port", "-p", help="Server port"),
+    host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind address"),
+) -> None:
+    """Launch the web UI in a browser."""
+    from clients.web.server import run_server
+
+    typer.echo(f"Starting OBaI Web UI at http://{host}:{port}")
+    run_server(host=host, port=port)
+
+
 def main() -> None:
     """Entry point for the obai CLI."""
     cli()
