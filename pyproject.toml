@@ -71,7 +71,7 @@ test = [
 [tool.uv]
 exclude-newer = "14 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days" }
+exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
     "pypdf>=6.9.2",          # GHSA-87mj-5ggw-8qc3: infinite loop fix
@@ -81,6 +81,8 @@ constraint-dependencies = [
     "cryptography>=46.0.6",  # CVE-2026-34073: DNS name constraint bypass
     "fastmcp>=3.2.0",        # GHSA-m8x7, GHSA-rww4, GHSA-vv7q: injection + SSRF
     "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
+    "aiohttp>=3.13.4",       # CVE-2026-34513 thru CVE-2026-34525: header injection, SSRF, DoS
+    "litellm>=1.83.0",       # CVE-2026-35029, CVE-2026-35030: auth bypass + privilege escalation
 ]
 
 # Tool configurations for the entire monorepo

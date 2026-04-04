@@ -111,7 +111,8 @@ testpaths = ["core_agents/tests"]
 
 [tool.uv]
 exclude-newer = "14 days"
-override-dependencies = ["litellm==1.72.2"]
+exclude-newer-package = { litellm = "0 days", aiohttp = "0 days" }
+override-dependencies = ["litellm==1.83.0"]
 
 [dependency-groups]
 dev = [

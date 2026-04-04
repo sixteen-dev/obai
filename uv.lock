@@ -19,23 +19,26 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-03-21T02:15:04.299602419Z"
+exclude-newer = "2026-03-21T02:43:30.186493542Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-requests = { timestamp = "2026-04-04T02:15:04.299613069Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-04-04T02:15:04.299620583Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-04T02:15:04.299620342Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-04T02:15:04.299620803Z", span = "PT0S" }
-pypdf = { timestamp = "2026-04-04T02:15:04.299619551Z", span = "PT0S" }
-anthropic = { timestamp = "2026-04-04T02:15:04.299620032Z", span = "PT0S" }
-onnx = { timestamp = "2026-04-04T02:15:04.299619781Z", span = "PT0S" }
+anthropic = { timestamp = "2026-04-04T02:43:30.186509462Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-04T02:43:30.186510023Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-04T02:43:30.186509772Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-04T02:43:30.186510243Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-04T02:43:30.186510474Z", span = "PT0S" }
+pypdf = { timestamp = "2026-04-04T02:43:30.186509001Z", span = "PT0S" }
+onnx = { timestamp = "2026-04-04T02:43:30.186509241Z", span = "PT0S" }
+requests = { timestamp = "2026-04-04T02:43:30.18650313Z", span = "PT0S" }
 
 [manifest]
 constraints = [
+    { name = "aiohttp", specifier = ">=3.13.4" },
     { name = "anthropic", specifier = ">=0.87.0" },
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "fastmcp", specifier = ">=3.2.0" },
+    { name = "litellm", specifier = ">=1.83.0" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pypdf", specifier = ">=6.9.2" },
