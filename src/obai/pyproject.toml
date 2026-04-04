@@ -111,7 +111,8 @@ testpaths = ["core_agents/tests"]
 
 [tool.uv]
 exclude-newer = "14 days"
-exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days" }
+exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", requests = "0 days" }
+constraint-dependencies = ["requests>=2.33.0"]
 override-dependencies = ["litellm==1.83.0"]
 
 [dependency-groups]
