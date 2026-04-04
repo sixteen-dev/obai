@@ -19,7 +19,7 @@ exclude = [
 
 [project]
 name = "obai"
-version = "1.0.0"
+version = "1.0.1"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -111,7 +111,7 @@ testpaths = ["core_agents/tests"]
 
 [tool.uv]
 exclude-newer = "14 days"
-exclude-newer-package = { litellm = "0 days", aiohttp = "0 days" }
+exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days" }
 override-dependencies = ["litellm==1.83.0"]
 
 [dependency-groups]
