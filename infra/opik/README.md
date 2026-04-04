@@ -5,7 +5,8 @@ Self-hosted [Opik](https://github.com/comet-ml/opik) instance for LLM tracing an
 ## Quick Start
 
 ```bash
-# First-time setup (creates persistent external volumes — only need to run once)
+# First-time setup (creates persistent external volumes and syncs ClickHouse config)
+# Safe to re-run if the local Opik config changes.
 ./infra/opik/setup-volumes.sh
 
 # Start Opik (all services)

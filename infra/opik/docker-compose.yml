@@ -85,20 +85,6 @@ services:
       - opik-network
     restart: unless-stopped
 
-  opik-clickhouse-init:
-    image: alpine:latest
-    container_name: opik-clickhouse-init
-    volumes:
-      - ./clickhouse_config:/clickhouse_config_files
-      - opik-clickhouse-config:/config
-    command: |
-      sh -c "
-        cp -r /clickhouse_config_files/* /config/ &&
-        chown -R 1000:1000 /config
-      "
-    networks:
-      - opik-network
-
   opik-clickhouse:
     image: clickhouse/clickhouse-server:25.3.6.56-alpine
     container_name: opik-clickhouse
@@ -124,8 +110,6 @@ services:
     depends_on:
       opik-zookeeper:
         condition: service_healthy
-      opik-clickhouse-init:
-        condition: service_completed_successfully
     networks:
       - opik-network
     restart: unless-stopped
@@ -262,7 +246,7 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ./nginx_default_local.conf:/etc/nginx/templates/default.conf.template:ro
+      - opik-frontend-config:/etc/nginx/conf.d
     environment:
       NGINX_PORT: 5173
       OTEL_TRACE: "off"
@@ -295,6 +279,8 @@ volumes:
   opik-clickhouse-logs:
     external: true
   opik-clickhouse-config:
+    external: true
+  opik-frontend-config:
     external: true
   opik-minio-data:
     external: true

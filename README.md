@@ -269,6 +269,7 @@ uv run python -m evaluation evaluate --suite --report results.md
 Opik runs as a Docker Compose stack (ClickHouse + backend + frontend). The `setup.sh` script handles this automatically, or run it manually:
 
 ```bash
+./infra/opik/setup-volumes.sh
 docker compose -f infra/opik/docker-compose.yml up -d
 ```
 
