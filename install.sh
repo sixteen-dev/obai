@@ -31,6 +31,25 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $1"; }
 
+load_env_file() {
+    local env_file="$1"
+    local line
+
+    [ -f "$env_file" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Tolerate UTF-8 BOMs and CRLF files from browsers/editors.
+        line="${line#$'\xEF\xBB\xBF'}"
+        line="${line%$'\r'}"
+        line="${line%%#*}"
+        line="${line// /}"
+
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.+$ ]]; then
+            export "$line"
+        fi
+    done < "$env_file"
+}
+
 timestamp() {
     date +"%Y%m%d-%H%M%S"
 }
@@ -51,7 +70,7 @@ backup_obai_src() {
 
 # --- Constants ---
 OBAI_HOME="${OBAI_HOME:-$HOME/.obai}"
-OBAI_SRC="$OBAI_HOME/src"
+OBAI_SRC="${OBAI_SRC:-$HOME/.local/share/obai}"
 OBAI_REPO="${OBAI_REPO:-https://github.com/sixteen-dev/obai.git}"
 OBAI_BRANCH="${OBAI_BRANCH:-main}"
 OBAI_ENV_FILE="$OBAI_HOME/.env"
@@ -178,6 +197,7 @@ echo ""
 info "Setting up OBaI source..."
 
 mkdir -p "$OBAI_HOME"
+mkdir -p "$(dirname "$OBAI_SRC")"
 
 if [ -d "$OBAI_SRC/.git" ]; then
     info "Existing installation found — updating..."
@@ -224,17 +244,21 @@ info "Configuring API keys..."
 echo ""
 
 # Load existing env file
-if [ -f "$OBAI_ENV_FILE" ]; then
-    set -a
-    source "$OBAI_ENV_FILE"
-    set +a
-fi
+load_env_file "$OBAI_ENV_FILE"
 
 save_key() {
     local name="$1"
     local value="$2"
     if grep -q "^${name}=" "$OBAI_ENV_FILE" 2>/dev/null; then
-        sed -i "s|^${name}=.*|${name}=${value}|" "$OBAI_ENV_FILE"
+        local tmp="${OBAI_ENV_FILE}.tmp"
+        while IFS= read -r line; do
+            if [[ "$line" == "${name}="* ]]; then
+                echo "${name}=${value}"
+            else
+                echo "$line"
+            fi
+        done < "$OBAI_ENV_FILE" > "$tmp"
+        mv "$tmp" "$OBAI_ENV_FILE"
     else
         echo "${name}=${value}" >> "$OBAI_ENV_FILE"
     fi
@@ -303,8 +327,6 @@ echo ""
 cd "$OBAI_SRC"
 
 # Source env file so setup.sh sees the keys
-set -a
-source "$OBAI_ENV_FILE"
-set +a
+load_env_file "$OBAI_ENV_FILE"
 
 ./setup.sh
