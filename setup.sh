@@ -64,13 +64,28 @@ for arg in "$@"; do
     esac
 done
 
+load_env_file() {
+    local env_file="$1"
+    local line
+
+    [ -f "$env_file" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Tolerate UTF-8 BOMs and CRLF files from browsers/editors.
+        line="${line#$'\xEF\xBB\xBF'}"
+        line="${line%$'\r'}"
+        line="${line%%#*}"
+        line="${line// /}"
+
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.+$ ]]; then
+            export "$line"
+        fi
+    done < "$env_file"
+}
+
 # --- Load saved API keys from ~/.obai/.env (does not override shell exports) ---
 OBAI_ENV_FILE="$OBAI_DIR/.env"
-if [ -f "$OBAI_ENV_FILE" ]; then
-    set -a
-    source "$OBAI_ENV_FILE"
-    set +a
-fi
+load_env_file "$OBAI_ENV_FILE"
 
 # --- Helpers ---
 info()  { echo -e "${BLUE}[INFO]${NC}  $1"; }
@@ -101,7 +116,15 @@ prompt_key() {
         # Append or update in env file
         mkdir -p "$OBAI_DIR"
         if grep -q "^${name}=" "$OBAI_ENV_FILE" 2>/dev/null; then
-            sed -i "s|^${name}=.*|${name}=${value}|" "$OBAI_ENV_FILE"
+            local tmp="${OBAI_ENV_FILE}.tmp"
+            while IFS= read -r line; do
+                if [[ "$line" == "${name}="* ]]; then
+                    echo "${name}=${value}"
+                else
+                    echo "$line"
+                fi
+            done < "$OBAI_ENV_FILE" > "$tmp"
+            mv "$tmp" "$OBAI_ENV_FILE"
         else
             echo "${name}=${value}" >> "$OBAI_ENV_FILE"
         fi

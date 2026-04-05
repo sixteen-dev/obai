@@ -66,7 +66,20 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 
 ---
 
-## Quick Start
+## Install
+
+```bash
+curl -fsSL https://openbell.ai/install.sh | bash
+```
+
+This single command checks prerequisites, clones the repo, prompts for API keys, starts all services, and installs the `obai` CLI. Once complete:
+
+```bash
+obai chat
+```
+
+<details>
+<summary>Manual setup</summary>
 
 ```bash
 git clone https://github.com/sixteen-dev/obai.git
@@ -85,6 +98,7 @@ export EXA_API_KEY=...         # optional
 # Start chatting
 obai chat
 ```
+</details>
 
 The setup script:
 1. Checks prerequisites (Docker, Python 3.12+, uv, git)
