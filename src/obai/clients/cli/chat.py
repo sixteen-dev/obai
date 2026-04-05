@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import getpass
 import json
 import logging
 import os
@@ -744,8 +745,103 @@ def web(
     run_server(host=host, port=port)
 
 
+# --- Config subcommands ---
+
+_KNOWN_KEYS = [
+    ("OPENAI_API_KEY", "Powers all agents (OpenAI Agent SDK)"),
+    ("FMP_API_KEY", "Financial Modeling Prep (6 of 8 MCP servers)"),
+    ("MASSIVE_API_KEY", "Options chain data (options-server)"),
+    ("TAVILY_API_KEY", "AI news search (events-news-server)"),
+    ("EXA_API_KEY", "Semantic search (research-server)"),
+    ("ANTHROPIC_API_KEY", "LLM-judge evaluation scoring"),
+]
+
+_ENV_FILE = Path.home() / ".obai" / ".env"
+
+config_app = typer.Typer(help="Manage OBaI configuration.")
+cli.add_typer(config_app, name="config")
+
+
+@config_app.command("set-key")
+def config_set_key(
+    key_name: str = typer.Argument(
+        ...,
+        help="API key name (e.g., OPENAI_API_KEY, FMP_API_KEY)",
+    ),
+    value: str | None = typer.Option(
+        None,
+        "--value",
+        "-v",
+        help="Key value (prompted securely if not provided)",
+    ),
+) -> None:
+    """Set an API key in ~/.obai/.env."""
+    valid_names = [k for k, _ in _KNOWN_KEYS]
+    if key_name not in valid_names:
+        typer.echo(f"Unknown key: {key_name}")
+        typer.echo(f"Valid keys: {', '.join(valid_names)}")
+        raise typer.Exit(1)
+
+    if value is None:
+        value = getpass.getpass(f"Enter {key_name}: ")
+    if not value:
+        typer.echo("Empty value — key not saved.")
+        raise typer.Exit(1)
+
+    _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing lines, update or append
+    lines: list[str] = []
+    found = False
+    if _ENV_FILE.is_file():
+        for line in _ENV_FILE.read_text().splitlines():
+            if line.startswith(f"{key_name}="):
+                lines.append(f"{key_name}={value}")
+                found = True
+            else:
+                lines.append(line)
+    if not found:
+        lines.append(f"{key_name}={value}")
+
+    _ENV_FILE.write_text("\n".join(lines) + "\n")
+    _ENV_FILE.chmod(0o600)
+    typer.echo(f"{key_name} saved to {_ENV_FILE}")
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Display API key status (masked)."""
+    typer.echo(f"\nOBaI API Keys ({_ENV_FILE}):\n")
+    for key_name, desc in _KNOWN_KEYS:
+        val = os.environ.get(key_name, "")
+        if val:
+            masked = val[:8] + "..." if len(val) > 8 else val  # noqa: PLR2004
+            status = typer.style(f"\u2713 {masked}", fg=typer.colors.GREEN)
+        else:
+            status = typer.style("\u2717 not set", fg=typer.colors.RED)
+        typer.echo(f"  {key_name:<22} {status}  ({desc})")
+    typer.echo("")
+
+
+def _load_env_file() -> None:
+    """Load ~/.obai/.env into os.environ (does not override existing vars)."""
+    env_path = Path.home() / ".obai" / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
 def main() -> None:
     """Entry point for the obai CLI."""
+    _load_env_file()
     cli()
 
 

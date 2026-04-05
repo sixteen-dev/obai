@@ -44,7 +44,7 @@ fi
 
 # --- Stop MCP servers ---
 echo -e "\n${BOLD}=== Stopping MCP data servers ===${NC}\n"
-if docker compose -f "$REPO_ROOT/docker-compose.yml" down 2>/dev/null; then
+if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" down 2>/dev/null; then
     info "MCP servers stopped"
 else
     fail "Could not stop MCP servers (may not be running)"
@@ -52,7 +52,7 @@ fi
 
 # --- Stop Opik ---
 echo -e "\n${BOLD}=== Stopping Opik tracing stack ===${NC}\n"
-if docker compose -f "$OPIK_DIR/docker-compose.yml" down 2>/dev/null; then
+if (cd "$OPIK_DIR" && docker compose -p obai-opik down) 2>/dev/null; then
     info "Opik services stopped"
 else
     fail "Could not stop Opik services (may not be running)"

@@ -13,9 +13,10 @@
 #   8. Configures Opik SDK for local tracing
 #
 # Usage:
-#   ./setup.sh              # Full setup
-#   ./setup.sh --skip-opik  # Skip Opik tracing stack
-#   ./setup.sh --skip-mcp   # Skip MCP servers (start later)
+#   ./setup.sh                # Full setup
+#   ./setup.sh --skip-opik    # Skip Opik tracing stack
+#   ./setup.sh --skip-mcp     # Skip MCP servers (start later)
+#   ./setup.sh --prompt-keys  # Interactively prompt for missing API keys
 #
 # Prerequisites:
 #   - Docker + Docker Compose v2 (or Rancher Desktop exposing `docker` + `docker compose`)
@@ -36,19 +37,22 @@ NC='\033[0m' # No Color
 
 # --- Globals ---
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-OBAI_DIR="$HOME/.obai"
+OBAI_HOME="${OBAI_HOME:-$HOME/.obai}"
+OBAI_DIR="$OBAI_HOME"
 OPIK_DIR="$REPO_ROOT/infra/opik"
 OBAI_SRC="$REPO_ROOT/src/obai"
 
 SKIP_OPIK=false
 SKIP_MCP=false
-OBAI_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
+PROMPT_KEYS=false
+export OBAI_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
 
 # --- Parse args ---
 for arg in "$@"; do
     case "$arg" in
-        --skip-opik) SKIP_OPIK=true ;;
-        --skip-mcp)  SKIP_MCP=true ;;
+        --skip-opik)   SKIP_OPIK=true ;;
+        --skip-mcp)    SKIP_MCP=true ;;
+        --prompt-keys) PROMPT_KEYS=true ;;
         --help|-h)
             head -22 "$0" | tail -16
             exit 0
@@ -59,6 +63,14 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# --- Load saved API keys from ~/.obai/.env (does not override shell exports) ---
+OBAI_ENV_FILE="$OBAI_DIR/.env"
+if [ -f "$OBAI_ENV_FILE" ]; then
+    set -a
+    source "$OBAI_ENV_FILE"
+    set +a
+fi
 
 # --- Helpers ---
 info()  { echo -e "${BLUE}[INFO]${NC}  $1"; }
@@ -74,6 +86,27 @@ check_cmd() {
     else
         fail "$1 not found"
         return 1
+    fi
+}
+
+prompt_key() {
+    local name="$1"
+    local desc="$2"
+    echo ""
+    echo -e "  ${BOLD}$name${NC} — $desc"
+    printf "  Enter value (or press Enter to skip): "
+    read -r value
+    if [ -n "$value" ]; then
+        export "$name=$value"
+        # Append or update in env file
+        mkdir -p "$OBAI_DIR"
+        if grep -q "^${name}=" "$OBAI_ENV_FILE" 2>/dev/null; then
+            sed -i "s|^${name}=.*|${name}=${value}|" "$OBAI_ENV_FILE"
+        else
+            echo "${name}=${value}" >> "$OBAI_ENV_FILE"
+        fi
+        chmod 600 "$OBAI_ENV_FILE"
+        ok "$name saved"
     fi
 }
 
@@ -123,7 +156,7 @@ if check_cmd python3; then
 fi
 if [ "$_py_found" = false ] && check_cmd uv; then
     # System python3 is too old or missing — check if uv manages 3.12+
-    uv_py=$(uv python list --only-installed 2>/dev/null | grep -oP 'cpython-3\.\K(1[2-9]|[2-9][0-9])' | head -1)
+    uv_py=$(uv python list --only-installed 2>/dev/null | grep -oP 'cpython-3\.\K(1[2-9]|[2-9][0-9])' | head -1 || true)
     if [ -n "$uv_py" ]; then
         ok "Python 3.$uv_py (uv-managed, >= 3.12)"
         _py_found=true
@@ -184,19 +217,38 @@ check_key "EXA_API_KEY"       "optional" "needed for research-server (Exa semant
 check_key "ANTHROPIC_API_KEY" "optional" "needed for LLM-judge evaluation scorers"
 
 if [ "$missing_required" -gt 0 ]; then
-    echo ""
-    fail "$missing_required required API key(s) missing."
-    echo ""
-    info "Export them in your shell and re-run:"
-    echo "  export OPENAI_API_KEY=sk-proj-..."
-    echo "  export FMP_API_KEY=..."
-    echo ""
-    info "Or add to your shell profile (~/.bashrc, ~/.zshrc) for persistence."
-    exit 1
+    if [ "$PROMPT_KEYS" = true ]; then
+        info "Prompting for missing required keys..."
+        [ -z "${OPENAI_API_KEY:-}" ] && prompt_key "OPENAI_API_KEY" "Powers all agents (OpenAI Agent SDK)"
+        [ -z "${FMP_API_KEY:-}" ]    && prompt_key "FMP_API_KEY" "Financial Modeling Prep (6 of 8 MCP servers)"
+        # Re-check after prompting
+        if [ -z "${OPENAI_API_KEY:-}" ] || [ -z "${FMP_API_KEY:-}" ]; then
+            fail "Required API keys still missing. Cannot continue."
+            exit 1
+        fi
+    else
+        echo ""
+        fail "$missing_required required API key(s) missing."
+        echo ""
+        info "Export them in your shell and re-run:"
+        echo "  export OPENAI_API_KEY=sk-proj-..."
+        echo "  export FMP_API_KEY=..."
+        echo ""
+        info "Or add to your shell profile (~/.bashrc, ~/.zshrc) for persistence."
+        exit 1
+    fi
 fi
 
 if [ "$missing_optional" -gt 0 ]; then
-    warn "$missing_optional optional key(s) missing. Some features will be degraded."
+    if [ "$PROMPT_KEYS" = true ]; then
+        info "Optional keys enhance functionality. Press Enter to skip any."
+        [ -z "${MASSIVE_API_KEY:-}" ]   && prompt_key "MASSIVE_API_KEY" "Options chain data (free tier)"
+        [ -z "${TAVILY_API_KEY:-}" ]    && prompt_key "TAVILY_API_KEY" "AI news search (free tier)"
+        [ -z "${EXA_API_KEY:-}" ]       && prompt_key "EXA_API_KEY" "Semantic search for research"
+        [ -z "${ANTHROPIC_API_KEY:-}" ] && prompt_key "ANTHROPIC_API_KEY" "LLM-judge evaluation scoring"
+    else
+        warn "$missing_optional optional key(s) missing. Some features will be degraded."
+    fi
 fi
 
 # =============================================================================
@@ -237,7 +289,7 @@ if [ "$SKIP_OPIK" = false ]; then
 
     # Start Opik
     info "Starting Opik services (mysql, redis, clickhouse, minio, backend, frontend)..."
-    docker compose -f "$OPIK_DIR/docker-compose.yml" up -d
+    (cd "$OPIK_DIR" && docker compose -p obai-opik up -d)
 
     # Wait for frontend
     info "Waiting for Opik UI..."
@@ -262,11 +314,17 @@ fi
 if [ "$SKIP_MCP" = false ]; then
     step "5/8 Building and starting MCP servers"
 
-    info "Building 8 MCP server images (this may take a few minutes on first run)..."
-    docker compose -f "$REPO_ROOT/docker-compose.yml" build
+    info "Pulling pre-built images from GHCR..."
+    if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" pull 2>/dev/null; then
+        ok "Pre-built images pulled successfully"
+    else
+        warn "Could not pull pre-built images — building locally"
+        info "Building 8 MCP server images (this may take a few minutes on first run)..."
+        docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
+    fi
 
     info "Starting MCP servers..."
-    docker compose -f "$REPO_ROOT/docker-compose.yml" up -d
+    docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" up -d
 
     # Health check
     info "Waiting for servers to become healthy..."
@@ -412,6 +470,18 @@ fi
 # =============================================================================
 # Summary
 # =============================================================================
+# --- Key status helper ---
+key_status() {
+    local name="$1"
+    local label="$2"
+    local val="${!name:-}"
+    if [ -n "$val" ]; then
+        echo -e "    ${GREEN}\u2713${NC} $label"
+    else
+        echo -e "    ${RED}\u2717${NC} $label ${YELLOW}(not set)${NC}"
+    fi
+}
+
 echo ""
 echo -e "${BOLD}============================================${NC}"
 echo -e "${BOLD}  OBaI v${OBAI_VERSION} Setup Complete${NC}"
@@ -420,6 +490,15 @@ echo ""
 echo "  Config:      $OBAI_DIR/"
 echo "  Logs:        $OBAI_DIR/logs/obai.log"
 echo "  Preferences: $OBAI_DIR/preferences.json"
+echo ""
+
+echo -e "  ${BOLD}API Keys:${NC}"
+key_status "OPENAI_API_KEY"    "OPENAI_API_KEY     — agents"
+key_status "FMP_API_KEY"       "FMP_API_KEY        — market data"
+key_status "MASSIVE_API_KEY"   "MASSIVE_API_KEY    — options"
+key_status "TAVILY_API_KEY"    "TAVILY_API_KEY     — news search"
+key_status "EXA_API_KEY"       "EXA_API_KEY        — research"
+key_status "ANTHROPIC_API_KEY" "ANTHROPIC_API_KEY  — evaluation"
 echo ""
 
 echo -e "  ${BOLD}Web UI:     http://127.0.0.1:${WEB_PORT}${NC}"
@@ -449,12 +528,10 @@ echo "  Quick start:"
 echo "    obai status                              # Check server connectivity"
 echo "    obai query \"What is AAPL trading at?\"    # Single query"
 echo "    obai chat                                # Interactive REPL"
+echo "    obai config show                         # View API key status"
+echo "    obai config set-key TAVILY_API_KEY       # Add/update a key"
 echo ""
 echo "  MCP Inspector (optional, for MCP server testing):"
 echo "    Docs: https://modelcontextprotocol.io/docs/tools/inspector"
 echo "    Run:  npx @modelcontextprotocol/inspector"
 echo ""
-
-if [ "$missing_optional" -gt 0 ]; then
-    warn "Some optional API keys are missing. Export them in your shell for full functionality."
-fi

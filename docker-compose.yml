@@ -20,6 +20,7 @@ services:
       start_period: 10s
 
   fundamentals-server:
+    image: ghcr.io/sixteen-dev/obai/fundamentals-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/fundamentals-server
       dockerfile: Dockerfile
@@ -54,6 +55,7 @@ services:
       start_period: 30s
 
   market-data-server:
+    image: ghcr.io/sixteen-dev/obai/market-data-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/market-data-server
       dockerfile: Dockerfile
@@ -79,6 +81,7 @@ services:
       start_period: 30s
 
   events-news-server:
+    image: ghcr.io/sixteen-dev/obai/events-news-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/events-news-server
       dockerfile: Dockerfile
@@ -105,6 +108,7 @@ services:
       start_period: 30s
 
   options-server:
+    image: ghcr.io/sixteen-dev/obai/options-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/options-server
       dockerfile: Dockerfile
@@ -130,6 +134,7 @@ services:
       start_period: 30s
 
   screening-server:
+    image: ghcr.io/sixteen-dev/obai/screening-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/screening-server
       dockerfile: Dockerfile
@@ -155,6 +160,7 @@ services:
       start_period: 30s
 
   portfolio-server:
+    image: ghcr.io/sixteen-dev/obai/portfolio-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/portfolio-server
       dockerfile: Dockerfile
@@ -188,6 +194,7 @@ services:
       start_period: 30s
 
   backtest-server:
+    image: ghcr.io/sixteen-dev/obai/backtest-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/backtest-server
       dockerfile: Dockerfile
@@ -216,6 +223,7 @@ services:
       start_period: 30s
 
   research-server:
+    image: ghcr.io/sixteen-dev/obai/research-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/research-server
       dockerfile: Dockerfile
