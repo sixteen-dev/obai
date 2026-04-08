@@ -88,3 +88,5 @@ docs/website/
 # =============================================================================
 scripts/*
 !scripts/release.sh
+!scripts/hooks/
+!scripts/hooks/pre-commit
