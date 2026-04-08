@@ -261,6 +261,63 @@ class FMPClient:
         data: list[dict[str, Any]] = await self._get("commodities-list")
         return data
 
+    async def batch_quote(self, symbols: list[str]) -> list[dict[str, Any]]:
+        """Get quotes for multiple symbols in a single request.
+
+        The batch-quote endpoint returns 'changePercentage' while
+        other endpoints use 'changesPercentage'. This method normalizes
+        the field name for consistency.
+
+        Args:
+            symbols: List of ticker symbols (e.g., ['AAPL', 'MSFT', 'GOOG'])
+
+        Returns:
+            List of quote dicts with price, change, volume, etc.
+
+        Raises:
+            httpx.HTTPError: On API request failure.
+            FMPAPIError: When FMP returns 200 OK with an error body.
+        """
+        if not symbols:
+            return []
+
+        joined = ",".join(symbols)
+        data: list[dict[str, Any]] = await self._get("batch-quote", {"symbols": joined})
+
+        # Normalize: batch-quote returns 'changePercentage',
+        # other endpoints return 'changesPercentage'
+        for quote in data:
+            if "changePercentage" in quote and "changesPercentage" not in quote:
+                quote["changesPercentage"] = quote.pop("changePercentage")
+
+        return data
+
+    async def get_index_constituents(self, index: str) -> list[dict[str, Any]]:
+        """Get constituent symbols for a market index.
+
+        Args:
+            index: Index identifier ('sp500', 'nasdaq', 'dowjones')
+
+        Returns:
+            List of constituent entries with symbol, name, sector, etc.
+
+        Raises:
+            ValueError: If index is not recognized.
+            httpx.HTTPError: On API request failure.
+            FMPAPIError: When FMP returns 200 OK with an error body.
+        """
+        endpoint_map = {
+            "sp500": "sp500-constituent",
+            "nasdaq": "nasdaq-constituent",
+            "dowjones": "dowjones-constituent",
+        }
+        endpoint = endpoint_map.get(index)
+        if endpoint is None:
+            raise ValueError(f"Unknown index: {index!r}. Valid: {list(endpoint_map)}")
+
+        data: list[dict[str, Any]] = await self._get(endpoint)
+        return data
+
     async def health_check(self, timeout: float = 5.0) -> bool:
         """Verify API connectivity with a lightweight request.
 

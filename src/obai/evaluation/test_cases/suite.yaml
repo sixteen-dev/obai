@@ -1,6 +1,6 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 165 test cases across 7 active categories (A-E, G, H; F pending).
+# 167 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 # Category H: Deep company research — Exa-powered research agent queries.
@@ -223,6 +223,20 @@ test_cases:
     query_type: options_strangle_theta_income
     expected_tools: [options_analysis]
     description: Short strangle risk profile — theta income, breakevens, max loss should show unlimited on call side
+
+  - id: A30
+    query: "What are today's top 5 gainers and top 5 losers among S&P 500 stocks?"
+    category: A
+    query_type: movers_index_scoped
+    expected_tools: [market_data_analysis]
+    description: Index-scoped movers — agent must pass index=sp500 to batch-quote S&P 500 constituents and return top movers
+
+  - id: A31
+    query: "Show me the biggest Dow Jones losers today."
+    category: A
+    query_type: movers_index_scoped
+    expected_tools: [market_data_analysis]
+    description: Dow Jones scoped losers — tests index=dowjones with losers mover type
 
   # ─────────────────────────────────────────────
   # Category B: Multi-Agent (Coordination & Sequencing)

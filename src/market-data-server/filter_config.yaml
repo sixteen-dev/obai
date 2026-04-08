@@ -34,13 +34,15 @@ filters:
     keep_all: true
 
   movers:
-    # Market movers - keep only symbol, name, price, and change data
+    # Market movers - price, change, volume, and market cap
     keep_fields:
       - symbol
       - name
       - change
       - price
       - changesPercentage
+      - volume
+      - marketCap
 
   sector_performance:
     # Sector performance - already concise, keep all

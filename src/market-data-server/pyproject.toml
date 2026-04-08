@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "MCP server for real-time and historical market data"
 requires-python = ">=3.12"
 dependencies = [
+    "cachetools>=5.3.0",
     "fastmcp>=2.12.4",
     "httpx>=0.28.1",
     "pydantic-settings>=2.6.1",

@@ -242,17 +242,25 @@ async def market_data_get_candles_tool(
 )
 async def market_data_get_movers_tool(
     mover_type: Literal["gainers", "losers", "actives"] = "gainers",
+    index: Literal["sp500", "nasdaq", "dowjones"] | None = None,
+    limit: int = 20,
 ) -> dict[str, Any]:
     """Get market movers (top gainers, losers, or most active stocks).
 
     Args:
         mover_type: Type of movers to retrieve (gainers, losers, or actives)
+        index: Scope results to a specific index (sp500, nasdaq, dowjones).
+            When provided, batch-quotes all index constituents and returns
+            the top movers sorted by change % (or volume for actives).
+            Constituent lists are cached 24h. Omit for exchange-wide movers.
+        limit: Max results to return for index movers (default 20, ignored
+            when index is omitted)
 
     Returns:
         List of stocks with price change and volume data
     """
     try:
-        result = await get_movers(mover_type)
+        result = await get_movers(mover_type, index=index, limit=limit)
         return truncate_response(result)
     except Exception as e:
         log_error(logger, e, context={"tool": "market_data_get_movers_tool", "type": mover_type})
