@@ -613,32 +613,33 @@ class FMPClient:
             return None
 
     async def get_quotes_batch(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
-        """Get current quotes for multiple symbols in parallel.
+        """Get current quotes for multiple symbols in a single request.
 
         Args:
             symbols: List of ticker symbols.
 
         Returns:
-            Map of symbol to quote dict. Symbols that failed are omitted.
+            Map of symbol to quote dict. Symbols not returned are omitted.
 
         """
-        tasks = [self.get_quote(s) for s in symbols]
-        results_raw: list[dict[str, Any] | None | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        if not symbols:
+            return {}
 
-        results: dict[str, dict[str, Any]] = {}
-        for symbol, raw_result in zip(symbols, results_raw, strict=True):
-            if isinstance(raw_result, BaseException):
-                logger.warning(
-                    "quote_fetch_failed",
-                    symbol=symbol,
-                    error=str(raw_result),
-                )
-            elif raw_result is not None:
-                results[symbol] = raw_result
+        joined = ",".join(symbols)
+        try:
+            data = await self._get("batch-quote", {"symbols": joined})
+        except Exception as e:
+            log_error(logger, e, context={"operation": "get_quotes_batch"})
+            return {}
 
-        return results
+        if not isinstance(data, list):
+            return {}
+
+        return {
+            quote["symbol"]: quote
+            for quote in data
+            if isinstance(quote, dict) and "symbol" in quote
+        }
 
     # ─────────────────────────────────────────────────────────────────
     # Health Check

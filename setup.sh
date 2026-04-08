@@ -14,6 +14,7 @@
 #
 # Usage:
 #   ./setup.sh                # Full setup
+#   ./setup.sh --local        # Build MCP images from local source (skip GHCR pull)
 #   ./setup.sh --skip-opik    # Skip Opik tracing stack
 #   ./setup.sh --skip-mcp     # Skip MCP servers (start later)
 #   ./setup.sh --prompt-keys  # Interactively prompt for missing API keys
@@ -45,6 +46,7 @@ OBAI_SRC="$REPO_ROOT/src/obai"
 SKIP_OPIK=false
 SKIP_MCP=false
 PROMPT_KEYS=false
+LOCAL_BUILD=false
 export OBAI_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
 
 # --- Parse args ---
@@ -52,6 +54,7 @@ for arg in "$@"; do
     case "$arg" in
         --skip-opik)   SKIP_OPIK=true ;;
         --skip-mcp)    SKIP_MCP=true ;;
+        --local)       LOCAL_BUILD=true ;;
         --prompt-keys) PROMPT_KEYS=true ;;
         --help|-h)
             head -22 "$0" | tail -16
@@ -337,13 +340,18 @@ fi
 if [ "$SKIP_MCP" = false ]; then
     step "5/8 Building and starting MCP servers"
 
-    info "Pulling pre-built images from GHCR..."
-    if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" pull 2>/dev/null; then
-        ok "Pre-built images pulled successfully"
-    else
-        warn "Could not pull pre-built images — building locally"
-        info "Building 8 MCP server images (this may take a few minutes on first run)..."
+    if [ "$LOCAL_BUILD" = true ]; then
+        info "Building MCP server images from local source (--local)..."
         docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
+    else
+        info "Pulling pre-built images from GHCR..."
+        if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" pull 2>/dev/null; then
+            ok "Pre-built images pulled successfully"
+        else
+            warn "Could not pull pre-built images — building locally"
+            info "Building 8 MCP server images (this may take a few minutes on first run)..."
+            docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
+        fi
     fi
 
     info "Starting MCP servers..."

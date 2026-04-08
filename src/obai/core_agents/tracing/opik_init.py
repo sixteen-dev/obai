@@ -103,7 +103,7 @@ def init_opik() -> bool:
     _saved_stderr = sys.stderr
     sys.stderr = open(os.devnull, "w")  # noqa: SIM115, PTH123
     try:
-        opik.configure(use_local=True)
+        opik.configure(use_local=True, automatic_approvals=True)
     except Exception:
         sys.stderr.close()
         sys.stderr = _saved_stderr

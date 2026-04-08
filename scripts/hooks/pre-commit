@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint, type check, test, and audit changed servers
+#
+# Install: ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+fail() { echo -e "${RED}[FAIL]${NC} $1"; }
+ok()   { echo -e "${GREEN}[OK]${NC}   $1"; }
+step() { echo -e "\n${BOLD}$1${NC}"; }
+
+# Detect which server directories have staged changes
+changed_dirs=$(git diff --cached --name-only | grep -oP '^src/[^/]+-server/' | sort -u || true)
+changed_obai=$(git diff --cached --name-only | grep -q '^src/obai/' && echo "yes" || true)
+changed_root=$(git diff --cached --name-only | grep -qP '^(pyproject\.toml|uv\.lock)$' && echo "yes" || true)
+
+errors=0
+
+# Gate checks for each changed server
+for dir in $changed_dirs; do
+    server_name=$(basename "$dir")
+    step "Checking $server_name"
+
+    if [ ! -f "$dir/pyproject.toml" ]; then
+        continue
+    fi
+
+    pushd "$dir" > /dev/null
+
+    echo "  ruff check..."
+    if ! uv run ruff check src/ 2>&1; then
+        fail "$server_name: ruff check"
+        errors=$((errors + 1))
+    fi
+
+    echo "  ruff format..."
+    if ! uv run ruff format --check src/ 2>&1; then
+        fail "$server_name: ruff format"
+        errors=$((errors + 1))
+    fi
+
+    echo "  mypy..."
+    if ! uv run mypy src/ --strict 2>&1; then
+        fail "$server_name: mypy"
+        errors=$((errors + 1))
+    fi
+
+    echo "  pytest..."
+    if [ -d "tests" ]; then
+        if ! uv run pytest tests/ -q 2>&1; then
+            fail "$server_name: pytest"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    popd > /dev/null
+    ok "$server_name"
+done
+
+# Gate checks for obai core
+if [ "$changed_obai" = "yes" ]; then
+    step "Checking obai core"
+    pushd src/obai > /dev/null
+
+    echo "  ruff check..."
+    if ! uv run ruff check . 2>&1; then
+        fail "obai: ruff check"
+        errors=$((errors + 1))
+    fi
+
+    echo "  ruff format..."
+    if ! uv run ruff format --check . 2>&1; then
+        fail "obai: ruff format"
+        errors=$((errors + 1))
+    fi
+
+    echo "  mypy..."
+    if ! uv run mypy src/ --strict 2>&1; then
+        fail "obai: mypy"
+        errors=$((errors + 1))
+    fi
+
+    echo "  pytest..."
+    if [ -d "tests" ]; then
+        if ! uv run pytest tests/ -q 2>&1; then
+            fail "obai: pytest"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    popd > /dev/null
+    ok "obai core"
+fi
+
+# Audit root lockfile for vulnerabilities
+if [ "$changed_root" = "yes" ] || [ -n "$changed_dirs" ]; then
+    step "Auditing dependencies"
+    if ! uv audit 2>&1; then
+        fail "uv audit found vulnerabilities"
+        errors=$((errors + 1))
+    else
+        ok "uv audit"
+    fi
+fi
+
+if [ "$errors" -gt 0 ]; then
+    echo ""
+    fail "$errors check(s) failed. Commit aborted."
+    exit 1
+fi
+
+echo ""
+ok "All checks passed"

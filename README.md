@@ -110,7 +110,12 @@ The setup script:
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
 
-Use `./setup.sh --skip-opik` to skip the tracing stack, or `./setup.sh --skip-mcp` to skip MCP servers.
+| Flag | Effect |
+|------|--------|
+| `--local` | Build MCP images from local source instead of pulling from GHCR |
+| `--skip-opik` | Skip the Opik tracing stack |
+| `--skip-mcp` | Skip MCP servers (start them later) |
+| `--prompt-keys` | Interactively prompt for missing API keys |
 
 ### Pinning a Version
 
@@ -152,7 +157,7 @@ obai status
 | Server | Port | Data Source | Key Capabilities |
 |--------|------|-------------|-----------------|
 | **fundamentals-server** | 8001 | FMP + Qdrant | Company financials, ratios, SEC filings, insider trades, vector search over financial education PDFs |
-| **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday data (5min/15min/1hr), technical indicators |
+| **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday data (5min/15min/1hr), technical indicators, index-scoped movers (S&P 500, Nasdaq, Dow Jones) |
 | **events-news-server** | 8003 | FMP + Tavily | Earnings calendar, dividends, AI-powered news search |
 | **options-server** | 8004 | Massive.com | Options chains, Greeks, implied volatility, open interest |
 | **screening-server** | 8005 | FMP | Stock screening with financial filters, ticker discovery |
