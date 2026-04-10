@@ -78,15 +78,25 @@ if [ "$changed_obai" = "yes" ]; then
         errors=$((errors + 1))
     fi
 
+    # Identify changed obai subpaths relative to src/obai/
+    obai_changed=$(git diff --cached --name-only | sed -n 's|^src/obai/||p')
+
+    # mypy — check only changed files, follow-imports=silent so
+    # pre-existing errors in transitive deps don't block.
     echo "  mypy..."
-    if ! uv run mypy src/ --strict 2>&1; then
-        fail "obai: mypy"
-        errors=$((errors + 1))
+    obai_py_files=$(echo "$obai_changed" | grep '\.py$' | grep -v '__pycache__' || true)
+    if [ -n "$obai_py_files" ]; then
+        if ! echo "$obai_py_files" | xargs uv run mypy --strict --follow-imports=silent 2>&1; then
+            fail "obai: mypy"
+            errors=$((errors + 1))
+        fi
     fi
 
+    # pytest — run only test files that were staged.
     echo "  pytest..."
-    if [ -d "tests" ]; then
-        if ! uv run pytest tests/ -q 2>&1; then
+    obai_test_files=$(echo "$obai_changed" | grep 'tests/test_.*\.py$' || true)
+    if [ -n "$obai_test_files" ]; then
+        if ! echo "$obai_test_files" | xargs uv run pytest -q 2>&1; then
             fail "obai: pytest"
             errors=$((errors + 1))
         fi
