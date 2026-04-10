@@ -141,6 +141,10 @@ class AgentConfig(BaseSettings):
         default=None,
         description="Override model for research agent (uses specialist_model if None)",
     )
+    prediction_markets_model: str | None = Field(
+        default=None,
+        description="Override model for prediction markets agent (uses specialist_model if None)",
+    )
 
     # Guardrails
     enable_guardrails: bool = Field(
@@ -180,6 +184,10 @@ class AgentConfig(BaseSettings):
     mcp_research_url: str = Field(
         default="http://localhost:8008/mcp",
         description="Research MCP server URL",
+    )
+    mcp_prediction_markets_url: str = Field(
+        default="http://localhost:8009/mcp",
+        description="Prediction markets MCP server URL",
     )
 
     # MCP Client Settings

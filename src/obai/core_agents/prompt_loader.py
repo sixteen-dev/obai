@@ -91,8 +91,13 @@ def validate_prompt(prompt: str, agent_name: str) -> None:
         # Guardrail is a simple classifier, minimal requirements
         required_sections = ["Valid Topics", "Invalid Topics"]
     else:
-        # Specialist agents use THINK → PLAN → ACT → REFLECT workflow
-        required_sections = ["Workflow:", "Your expertise", "Output Guidelines"]
+        # Specialist agents need workflow, scope/expertise, and output guidance.
+        # Accept alternative section names so prompts can evolve structure.
+        required_sections = ["Workflow:"]
+        if "Your expertise" not in prompt and "## Scope" not in prompt:
+            required_sections.append("Your expertise (or ## Scope)")
+        if "Output Guidelines" not in prompt and "Response modes" not in prompt:
+            required_sections.append("Output Guidelines (or Response modes)")
 
     missing_sections = [s for s in required_sections if s not in prompt]
 

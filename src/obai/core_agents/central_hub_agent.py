@@ -1,6 +1,6 @@
 """Central Hub Agent for routing queries to specialist agents.
 
-This agent acts as the central hub for a team of 7 specialist agents:
+This agent acts as the central hub for a team of 8 specialist agents:
     - Fundamentals Agent: Company financials and ratios
     - Market Data Agent: Prices and technical indicators
     - Events/News Agent: News, earnings, dividends
@@ -8,6 +8,7 @@ This agent acts as the central hub for a team of 7 specialist agents:
     - Screener Agent: Stock screening and ticker discovery
     - Portfolio Agent: Portfolio parsing, risk preferences, ETF holdings
     - Strategy Agent: Trading strategy design, backtesting, optimization
+    - Prediction Markets Agent: Polymarket analysis and trade ideas
 
 The central hub uses the "agents-as-tools" pattern (not handoffs):
     1. Understands user intent
@@ -53,6 +54,7 @@ from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
 from .options_agent import OptionsAgent
 from .portfolio_agent import PortfolioAgent
+from .prediction_markets_agent import PredictionMarketsAgent
 from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
@@ -277,13 +279,24 @@ _STRATEGY_QUERY_KEYWORDS = re.compile(
 )
 
 
+_PREDICTION_MARKET_KEYWORDS = re.compile(
+    r"\b(polymarket|prediction\s+market|prediction[-\s]market|event\s+odds"
+    r"|YES/NO|yes.no\s+market)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_strategy_query(query: str) -> bool:
-    """Detect if the user query is a strategy/backtest request.
+    """Detect if the user query is an equity strategy/backtest request.
 
     Used to inject a routing hint so the hub doesn't answer
-    strategy questions from training data.
+    strategy questions from training data. Does NOT match
+    prediction-market backtest requests.
     """
-    return bool(_STRATEGY_QUERY_KEYWORDS.search(query))
+    if not _STRATEGY_QUERY_KEYWORDS.search(query):
+        return False
+    # Prediction-market backtests should route to prediction_market_analysis
+    return not _PREDICTION_MARKET_KEYWORDS.search(query)
 
 
 def _get_missing_strategy_inputs(input_text: str) -> list[str]:
@@ -537,6 +550,7 @@ class CentralHubAgent:
         self.portfolio_agent: PortfolioAgent | None = None
         self.strategy_agent: StrategyAgent | None = None
         self.research_agent: ResearchAgent | None = None
+        self.prediction_markets_agent: PredictionMarketsAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -718,6 +732,30 @@ class CentralHubAgent:
                     )
                 )
 
+            if self.prediction_markets_agent and self.prediction_markets_agent.agent:
+                specialist_tools.append(
+                    self.prediction_markets_agent.agent.as_tool(
+                        tool_name="prediction_market_analysis",
+                        tool_description=(
+                            "Polymarket prediction market analysis. "
+                            "Use for market discovery, understanding, and comparison; "
+                            "executable pricing with bid/ask/spread/depth; "
+                            "trade flow and holder analysis; "
+                            "trader leaderboard and wallet tracing; "
+                            "manual trade thesis generation; "
+                            "and setup-based backtesting over resolved prediction markets. "
+                            "Route here for Polymarket, prediction market odds, "
+                            "YES/NO market pricing, event resolution, top traders on "
+                            "Polymarket, and prediction-market trade ideas. "
+                            "Do NOT route prediction-market backtests to strategy_analysis."
+                        ),
+                        max_turns=25,
+                        on_stream=_create_stream_handler(
+                            "prediction_market_analysis", "Prediction Markets Agent"
+                        ),
+                    )
+                )
+
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
             specialist_tools.append(set_preferences)
@@ -769,6 +807,7 @@ class CentralHubAgent:
         self.portfolio_agent = PortfolioAgent()
         self.strategy_agent = StrategyAgent()
         self.research_agent = ResearchAgent()
+        self.prediction_markets_agent = PredictionMarketsAgent()
 
         required = [
             self.fundamentals_agent,
@@ -780,7 +819,8 @@ class CentralHubAgent:
             self.strategy_agent,
         ]
 
-        all_agents = [*required, self.research_agent]
+        optional = [self.research_agent, self.prediction_markets_agent]
+        all_agents = [*required, *optional]
         results = await asyncio.gather(
             *[a.initialize() for a in all_agents],
             return_exceptions=True,
@@ -799,6 +839,13 @@ class CentralHubAgent:
                         "Other agents unaffected.",
                     )
                     self.research_agent = None
+                elif agent is self.prediction_markets_agent:
+                    logger.warning(
+                        "Prediction Markets Agent unavailable — "
+                        "prediction_market_analysis tool disabled. "
+                        "Other agents unaffected.",
+                    )
+                    self.prediction_markets_agent = None
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result
@@ -826,6 +873,7 @@ class CentralHubAgent:
         self.portfolio_agent = None
         self.strategy_agent = None
         self.research_agent = None
+        self.prediction_markets_agent = None
         self.agent = None
         self._initialized = False
 
@@ -945,6 +993,7 @@ class CentralHubAgent:
             "portfolio": self.portfolio_agent,
             "strategy": self.strategy_agent,
             "research": self.research_agent,
+            "prediction_markets": self.prediction_markets_agent,
         }
 
         if specialist_name not in specialists:
@@ -1075,7 +1124,7 @@ class CentralHubAgent:
 async def create_central_hub() -> CentralHubAgent:
     """Create and initialize a Central Hub Agent.
 
-    This will also initialize all 8 specialist agents:
+    This will also initialize all 9 specialist agents:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
@@ -1084,6 +1133,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Portfolio Agent (FMP)
     - Strategy Agent (backtest-server)
     - Research Agent (Exa)
+    - Prediction Markets Agent (Polymarket)
 
     Opik tracing is automatically initialized before agent creation
     if OPIK_ENABLED=true (default). Traces are sent to the Opik UI.

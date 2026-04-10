@@ -145,7 +145,7 @@ function handleMessage(msg) {
 function handleTextDelta(delta) {
     if (!streamingBubble) {
         removeThinking();
-        const msgDiv = createMessageDiv("assistant");
+        const msgDiv = createMessageDiv("assistant", new Date());
         const bubble = msgDiv.querySelector(".message-bubble");
         bubble.classList.add("streaming");
         bubble.textContent = "";
@@ -185,7 +185,11 @@ function handleComplete(msg) {
                     msg.specialists.length + " agent" + (msg.specialists.length > 1 ? "s" : "")
                 );
             }
-            setAssistantMetaDetail(streamingMessage, parts.join(" · "));
+            const timestamp = streamingMessage.dataset.timestampLabel || "";
+            setMessageMetaDetail(
+                streamingMessage,
+                [timestamp, parts.join(" · ")].filter(Boolean).join(" · ")
+            );
         }
     }
 
@@ -203,7 +207,7 @@ function handleError(msg) {
     toolTree.clearActiveAgent();
     removeThinking();
 
-    const msgDiv = createMessageDiv("assistant");
+    const msgDiv = createMessageDiv("assistant", new Date());
     msgDiv.classList.add("message-error");
     msgDiv.querySelector(".message-bubble").textContent = msg.message || "An error occurred";
     messagesDiv.appendChild(msgDiv);
@@ -464,7 +468,7 @@ function updateSessionTitle(sessionId, title) {
 }
 
 function renderStoredMessage(msg) {
-    const msgDiv = createMessageDiv(msg.role);
+    const msgDiv = createMessageDiv(msg.role, msg.created_at);
     const bubble = msgDiv.querySelector(".message-bubble");
 
     if (msg.role === "assistant" && typeof marked !== "undefined") {
@@ -473,8 +477,15 @@ function renderStoredMessage(msg) {
         bubble.textContent = msg.content;
     }
 
-    if (msg.role === "assistant" && msg.duration_ms) {
-        setAssistantMetaDetail(msgDiv, formatDuration(msg.duration_ms));
+    if (msg.role === "assistant") {
+        const parts = [];
+        if (msg.created_at) {
+            parts.push(formatMessageTimestamp(msg.created_at));
+        }
+        if (msg.duration_ms) {
+            parts.push(formatDuration(msg.duration_ms));
+        }
+        setMessageMetaDetail(msgDiv, parts.join(" · "));
     }
 
     messagesDiv.appendChild(msgDiv);
@@ -498,7 +509,8 @@ async function sendQuery() {
 
     welcomeScreen.classList.add("hidden");
 
-    const userMsg = createMessageDiv("user");
+    const now = new Date();
+    const userMsg = createMessageDiv("user", now);
     userMsg.querySelector(".message-bubble").textContent = text;
     messagesDiv.appendChild(userMsg);
 
@@ -515,7 +527,7 @@ async function sendQuery() {
     scrollChatToBottom();
 }
 
-function createMessageDiv(role) {
+function createMessageDiv(role, createdAt = null) {
     const div = document.createElement("div");
     div.className = "message message-" + role;
 
@@ -530,11 +542,9 @@ function createMessageDiv(role) {
     metaLabel.textContent = role === "assistant" ? "OBaI" : "You";
     meta.appendChild(metaLabel);
 
-    if (role === "assistant") {
-        const metaDetail = document.createElement("span");
-        metaDetail.className = "message-meta-detail hidden";
-        meta.appendChild(metaDetail);
-    }
+    const metaDetail = document.createElement("span");
+    metaDetail.className = "message-meta-detail hidden";
+    meta.appendChild(metaDetail);
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
@@ -543,17 +553,73 @@ function createMessageDiv(role) {
     stack.appendChild(bubble);
     div.appendChild(stack);
 
+    if (createdAt) {
+        const timestampLabel = formatMessageTimestamp(createdAt);
+        div.dataset.timestampLabel = timestampLabel;
+        setMessageMetaDetail(div, timestampLabel);
+        if (timestampLabel) {
+            metaDetail.title = formatExactTimestamp(createdAt);
+        }
+    }
+
     return div;
 }
 
-function setAssistantMetaDetail(messageEl, text) {
+function setMessageMetaDetail(messageEl, text) {
     const detail = messageEl.querySelector(".message-meta-detail");
     if (!detail) {
         return;
     }
 
-    detail.textContent = text;
-    detail.classList.remove("hidden");
+    if (text) {
+        detail.textContent = text;
+        detail.classList.remove("hidden");
+        return;
+    }
+
+    detail.textContent = "";
+    detail.classList.add("hidden");
+}
+
+function formatMessageTimestamp(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    const now = new Date();
+    const sameDay = date.toDateString() === now.toDateString();
+    const sameYear = date.getFullYear() === now.getFullYear();
+
+    const options = sameDay
+        ? { hour: "numeric", minute: "2-digit" }
+        : sameYear
+            ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+            : {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+            };
+
+    return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function formatExactTimestamp(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+    }).format(date);
 }
 
 function scrollChatToBottom() {

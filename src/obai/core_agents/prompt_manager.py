@@ -28,6 +28,7 @@ PROMPT_NAMES = [
     "market_data",
     "options",
     "portfolio",
+    "prediction_markets",
     "research",
     "screener",
     "strategy",

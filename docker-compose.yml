@@ -247,6 +247,30 @@ services:
       retries: 3
       start_period: 30s
 
+  prediction-markets-server:
+    image: ghcr.io/sixteen-dev/obai/prediction-markets-server:${OBAI_VERSION:-latest}
+    build:
+      context: ./src/prediction-markets-server
+      dockerfile: Dockerfile
+    container_name: obai-prediction-markets-server
+    ports:
+      - "8009:8009"
+    environment:
+      # No API keys required — Polymarket APIs are public
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8009
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8009/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   qdrant-data:
   backtest-data:
