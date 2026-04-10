@@ -235,12 +235,15 @@ async def _handle_query(app: FastAPI, ws: WebSocket, msg: dict[str, Any]) -> Non
         new_title = await store.auto_title(session_id, text)
         await _ws_send(ws, {"type": "session_title", "session_id": session_id, "title": new_title})
 
-    await _ws_send(ws, {"type": "status", "message": "Processing query..."})
+    await _ws_send(
+        ws, {"type": "status", "message": "Processing query...", "session_id": session_id}
+    )
 
     complete_evt: dict[str, Any] | None = None
 
     try:
         async for event in bridge.run_query(text, sdk_session):
+            event["session_id"] = session_id
             if event.get("type") == "complete":
                 complete_evt = event
             await _ws_send(ws, event)
@@ -256,7 +259,9 @@ async def _handle_query(app: FastAPI, ws: WebSocket, msg: dict[str, Any]) -> Non
 
     except Exception:
         logger.exception("Query streaming failed")
-        await _ws_send(ws, {"type": "error", "message": "Internal server error"})
+        await _ws_send(
+            ws, {"type": "error", "message": "Internal server error", "session_id": session_id}
+        )
 
 
 async def _ws_send(ws: WebSocket, data: dict[str, Any]) -> None:

@@ -8,11 +8,12 @@
 const state = {
     sessions: [],
     activeSessionId: null,
+    processingSessionId: null,
     ws: null,
-    isProcessing: false,
     isReady: false,
     reconnectAttempts: 0,
     compactToolsMode: null,
+    savedInputs: {},
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -90,6 +91,11 @@ async function checkHubStatus() {
 }
 
 function handleMessage(msg) {
+    // Messages scoped to a session only render when that session is active.
+    // session_title is always handled (updates sidebar regardless of view).
+    const msgSession = msg.session_id;
+    const isActiveSession = !msgSession || msgSession === state.activeSessionId;
+
     switch (msg.type) {
         case "status":
             if (!state.isReady) {
@@ -98,12 +104,14 @@ function handleMessage(msg) {
             break;
 
         case "agent_switch":
+            if (!isActiveSession) break;
             toolTree.setActiveAgent(msg.agent);
             updateThinking(thinkingVerb());
             toolTree.scrollToBottom();
             break;
 
         case "tool_start":
+            if (!isActiveSession) break;
             toolTree.addTool(
                 msg.call_id,
                 msg.agent,
@@ -116,11 +124,13 @@ function handleMessage(msg) {
             break;
 
         case "tool_complete":
+            if (!isActiveSession) break;
             toolTree.completeTool(msg.call_id, msg.duration_ms || 0);
             toolTree.scrollToBottom();
             break;
 
         case "text_delta":
+            if (!isActiveSession) break;
             handleTextDelta(msg.delta);
             break;
 
@@ -137,6 +147,7 @@ function handleMessage(msg) {
             break;
 
         case "queued":
+            if (!isActiveSession) break;
             updateThinking("Queued, waiting...");
             break;
     }
@@ -161,8 +172,14 @@ function handleTextDelta(delta) {
 }
 
 function handleComplete(msg) {
-    state.isProcessing = false;
+    const completedSession = msg.session_id || state.activeSessionId;
+    if (state.processingSessionId === completedSession) {
+        state.processingSessionId = null;
+    }
     updateSendButton();
+
+    const isActiveSession = completedSession === state.activeSessionId;
+    if (!isActiveSession) return;
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
@@ -200,8 +217,14 @@ function handleComplete(msg) {
 }
 
 function handleError(msg) {
-    state.isProcessing = false;
+    const errorSession = msg.session_id || state.activeSessionId;
+    if (state.processingSessionId === errorSession) {
+        state.processingSessionId = null;
+    }
     updateSendButton();
+
+    const isActiveSession = errorSession === state.activeSessionId;
+    if (!isActiveSession) return;
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
@@ -369,7 +392,10 @@ function renderSessionList() {
 
     for (const session of state.sessions) {
         const item = document.createElement("div");
-        item.className = "session-item" + (session.id === state.activeSessionId ? " active" : "");
+        let className = "session-item";
+        if (session.id === state.activeSessionId) className += " active";
+        if (session.id === state.processingSessionId) className += " processing";
+        item.className = className;
         item.dataset.id = session.id;
 
         const title = document.createElement("span");
@@ -405,6 +431,11 @@ async function createSession() {
 }
 
 async function switchSession(sessionId) {
+    // Save current input text for the old session
+    if (state.activeSessionId) {
+        state.savedInputs[state.activeSessionId] = queryInput.value;
+    }
+
     state.activeSessionId = sessionId;
     renderSessionList();
     toolTree.switchSession(sessionId);
@@ -414,6 +445,11 @@ async function switchSession(sessionId) {
     streamingBubble = null;
     streamingText = "";
     removeThinking();
+
+    // Restore saved input for the new session
+    queryInput.value = state.savedInputs[sessionId] || "";
+    autoResizeInput();
+    updateSendButton();
 
     try {
         const res = await fetch("/api/sessions/" + sessionId + "/messages");
@@ -440,6 +476,7 @@ async function deleteSession(sessionId) {
         await fetch("/api/sessions/" + sessionId, { method: "DELETE" });
         state.sessions = state.sessions.filter((session) => session.id !== sessionId);
         toolTree.sessionHistory.delete(sessionId);
+        delete state.savedInputs[sessionId];
 
         if (state.activeSessionId === sessionId) {
             state.activeSessionId = null;
@@ -493,7 +530,8 @@ function renderStoredMessage(msg) {
 
 async function sendQuery() {
     const text = queryInput.value.trim();
-    if (!text || state.isProcessing || !state.ws || !state.isReady) {
+    const activeBlocked = state.processingSessionId === state.activeSessionId;
+    if (!text || activeBlocked || !state.ws || !state.isReady) {
         return;
     }
 
@@ -504,7 +542,7 @@ async function sendQuery() {
         }
     }
 
-    state.isProcessing = true;
+    state.processingSessionId = state.activeSessionId;
     updateSendButton();
 
     welcomeScreen.classList.add("hidden");
@@ -628,7 +666,8 @@ function scrollChatToBottom() {
 
 function updateSendButton() {
     const hasText = queryInput.value.trim().length > 0;
-    sendBtn.disabled = !hasText || state.isProcessing || !state.isReady;
+    const activeBlocked = state.processingSessionId === state.activeSessionId;
+    sendBtn.disabled = !hasText || activeBlocked || !state.isReady;
 }
 
 const thinkingVerbsList = [
