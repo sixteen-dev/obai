@@ -197,9 +197,7 @@ class ClobClient:
             else None
         )
         spread = (
-            round(best_ask - best_bid, 6)
-            if best_bid is not None and best_ask is not None
-            else None
+            round(best_ask - best_bid, 6) if best_bid is not None and best_ask is not None else None
         )
 
         return {

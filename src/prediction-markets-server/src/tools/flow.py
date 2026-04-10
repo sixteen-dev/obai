@@ -35,9 +35,7 @@ async def get_trade_flow(
         # Identify large trades (top 10% by size)
         sizes = [t.get("size", 0) for t in trades if t.get("size", 0) > 0]
         large_threshold = sorted(sizes, reverse=True)[max(len(sizes) // 10, 1) - 1] if sizes else 0
-        large_trades = [
-            t for t in trades if t.get("size", 0) >= large_threshold > 0
-        ]
+        large_trades = [t for t in trades if t.get("size", 0) >= large_threshold > 0]
 
         return {
             "tool": "get_trade_flow",
