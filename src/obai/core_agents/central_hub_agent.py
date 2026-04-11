@@ -572,6 +572,37 @@ def get_inner_tool_outputs() -> list[dict[str, Any]]:
     return list(_inner_tool_outputs)
 
 
+async def _persist_prediction_context(
+    *,
+    prediction_fired: bool,
+    session_id: str | None,
+) -> None:
+    """Persist prediction-market identifiers captured during this turn."""
+    logger.info(
+        "Context write gate: prediction_fired=%s session_id=%s outputs=%d",
+        prediction_fired,
+        session_id,
+        len(_inner_tool_outputs),
+    )
+    if not prediction_fired or not session_id or not _inner_tool_outputs:
+        return
+
+    try:
+        payload = extract_prediction_context(list(_inner_tool_outputs))
+        logger.info("Context extraction: payload=%s", "present" if payload else "None")
+        if payload:
+            store = get_context_store()
+            await store.initialize()
+            await store.write_context(
+                session_id,
+                "prediction_market",
+                payload,
+            )
+            logger.info("Prediction context saved for session %s", session_id)
+    except Exception:
+        logger.exception("Failed to save prediction context")
+
+
 def clear_agent_activity_tracking() -> None:
     """Clear specialist agent activity tracking.
 
@@ -1251,6 +1282,14 @@ class CentralHubAgent:
 
             yield event
 
+        # Persist before yielding buffered/fallback final output. Some clients
+        # stop consuming once final text is rendered, which would otherwise
+        # skip durable context writes placed after those yields.
+        await _persist_prediction_context(
+            prediction_fired=prediction_fired,
+            session_id=session_id,
+        )
+
         # Validation gate: emit buffered events or passthrough
         if prediction_fired and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
@@ -1270,22 +1309,6 @@ class CentralHubAgent:
                 query=query,  # Original query, not augmented
                 response=final_response,
             )
-
-        # Write prediction context to durable store
-        if prediction_fired and session_id and _inner_tool_outputs:
-            try:
-                payload = extract_prediction_context(list(_inner_tool_outputs))
-                if payload:
-                    store = get_context_store()
-                    await store.initialize()
-                    await store.write_context(
-                        session_id,
-                        "prediction_market",
-                        payload,
-                    )
-                    logger.info("Prediction context saved for session %s", session_id)
-            except Exception:
-                logger.exception("Failed to save prediction context")
 
 
 async def create_central_hub() -> CentralHubAgent:

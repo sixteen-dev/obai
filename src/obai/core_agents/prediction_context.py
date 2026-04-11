@@ -27,6 +27,8 @@ _LINE_SLUG_RE = re.compile(
     r"`?([A-Za-z0-9][A-Za-z0-9._-]{1,})`?"
 )
 
+_MAX_CONTEXT_MARKETS = 8
+
 # Tools that carry market identifiers worth extracting.
 _MARKET_LIST_TOOLS = {"search_prediction_markets", "compare_prediction_markets"}
 _SINGLE_MARKET_TOOLS = {"get_market_details", "get_market_snapshot"}
@@ -98,7 +100,7 @@ def extract_prediction_context(
 def format_context_for_hub(contexts: list[dict[str, Any]]) -> str:
     """Render stored context payloads into a plain-text block for the hub.
 
-    Deduplicates by condition_id across context entries and caps at 5 markets.
+    Deduplicates by condition_id across context entries and caps at 8 markets.
 
     Args:
         contexts: List of payload dicts from SessionContextStore.read_context().
@@ -115,9 +117,9 @@ def format_context_for_hub(contexts: list[dict[str, Any]]) -> str:
             if cid and cid not in seen:
                 seen.add(cid)
                 unique_markets.append(market)
-            if len(unique_markets) >= 5:
+            if len(unique_markets) >= _MAX_CONTEXT_MARKETS:
                 break
-        if len(unique_markets) >= 5:
+        if len(unique_markets) >= _MAX_CONTEXT_MARKETS:
             break
 
     if not unique_markets:
