@@ -120,6 +120,7 @@ class HubBridge:
         )
         from openai.types.responses import ResponseTextDeltaEvent
 
+        from core_agents.central_hub_agent import PredictionPassthroughEvent
         from core_agents.guardrails import get_rejection_message
 
         async with self._lock:
@@ -149,6 +150,12 @@ class HubBridge:
 
             try:
                 async for event in self._hub.run(text, session):
+                    # --- Prediction passthrough ---
+                    if isinstance(event, PredictionPassthroughEvent):
+                        response_text = event.content
+                        yield {"type": "text_delta", "delta": event.content}
+                        continue
+
                     # --- Agent switch ---
                     if isinstance(event, AgentUpdatedStreamEvent):
                         agent_name = event.new_agent.name

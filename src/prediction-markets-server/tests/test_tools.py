@@ -478,6 +478,10 @@ class TestExploreTrendingMarkets:
             "https://polymarket.com/event/fed-decision-in-april"
         )
         assert result["events"][0]["market_count"] == 1
+        nested_market = result["events"][0]["markets"][0]
+        assert nested_market["market_url"] == (
+            "https://polymarket.com/event/fed-decision-in-april"
+        )
 
     @pytest.mark.asyncio
     async def test_trending_passes_tag_slug(self):

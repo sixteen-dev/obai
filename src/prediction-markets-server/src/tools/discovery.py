@@ -295,12 +295,14 @@ async def explore_trending_markets(
 
         results = []
         for event in events:
+            event_url = f"https://polymarket.com/event/{event['slug']}" if event.get("slug") else ""
             market_summaries = []
             for m in event.get("markets", []):
                 market_summaries.append(
                     {
                         "condition_id": m.get("condition_id", ""),
                         "slug": m.get("slug", ""),
+                        "market_url": event_url,
                         "question": m.get("question", ""),
                         "outcomes": m.get("outcomes", []),
                         "outcome_prices": m.get("outcome_prices", []),
@@ -313,9 +315,7 @@ async def explore_trending_markets(
                     "id": event.get("id", ""),
                     "title": event.get("title", ""),
                     "slug": event.get("slug", ""),
-                    "event_url": (
-                        f"https://polymarket.com/event/{event['slug']}" if event.get("slug") else ""
-                    ),
+                    "event_url": event_url,
                     "volume_24h": event.get("volume", 0),
                     "liquidity": event.get("liquidity", 0),
                     "tags": event.get("tags", []),

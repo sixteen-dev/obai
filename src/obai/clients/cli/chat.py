@@ -323,7 +323,7 @@ async def _run_query(  # noqa: PLR0912
     )
     from openai.types.responses import ResponseTextDeltaEvent
 
-    from core_agents.central_hub_agent import get_inner_tool_outputs
+    from core_agents.central_hub_agent import PredictionPassthroughEvent, get_inner_tool_outputs
     from core_agents.config import get_config
     from core_agents.guardrails import get_rejection_message
     from evaluation.scorers.faithfulness import (
@@ -341,6 +341,15 @@ async def _run_query(  # noqa: PLR0912
 
     try:
         async for event in hub.run(query, session):
+            # Prediction passthrough: hub relay failed, use specialist output
+            if isinstance(event, PredictionPassthroughEvent):
+                response_text = event.content
+                got_streaming_delta = True
+                if not json_mode:
+                    sys.stdout.write(event.content)
+                    sys.stdout.flush()
+                continue
+
             if isinstance(event, AgentUpdatedStreamEvent):
                 agent_name = event.new_agent.name
                 if agent_name not in agents_called:

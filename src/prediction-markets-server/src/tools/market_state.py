@@ -130,6 +130,7 @@ async def get_market_snapshot(
             "tool": "get_market_snapshot",
             "condition_id": resolved_cid,
             "slug": market.get("slug", slug),
+            "market_url": market.get("market_url", ""),
             "question": market["question"],
             "outcomes": market["outcomes"],
             "outcome_prices": market["outcome_prices"],
@@ -270,6 +271,7 @@ async def compare_prediction_markets(
                 {
                     "condition_id": market["condition_id"],
                     "slug": market.get("slug", identifiers[i]),
+                    "market_url": market.get("market_url", ""),
                     "question": market["question"],
                     "outcomes": market["outcomes"],
                     "outcome_prices": market["outcome_prices"],

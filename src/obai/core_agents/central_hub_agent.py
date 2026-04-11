@@ -54,12 +54,18 @@ from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
 from .options_agent import OptionsAgent
 from .portfolio_agent import PortfolioAgent
+from .prediction_context import (
+    extract_prediction_context,
+    format_context_for_hub,
+    validate_prediction_relay,
+)
 from .prediction_markets_agent import PredictionMarketsAgent
 from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .research_agent import ResearchAgent
 from .screener_agent import ScreenerAgent
+from .session_context import get_context_store
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
 
@@ -78,6 +84,17 @@ class StrategyPassthrough:
 
     content: str
     kind: str  # "completed" or "pending"
+
+
+@dataclass(frozen=True)
+class PredictionPassthroughEvent:
+    """Emitted by hub.run() when hub relay fails validation.
+
+    Clients should render ``content`` as the final assistant response
+    instead of the hub's synthesized text.
+    """
+
+    content: str
 
 
 # Module-level storage for strategy passthrough (reset per query)
@@ -1155,6 +1172,29 @@ class CentralHubAgent:
             )
             logger.info("Strategy intent detected — injected routing hint")
 
+        # Inject durable prediction context for follow-up disambiguation
+        session_id = getattr(session, "session_id", None) if session else None
+        if session_id:
+            try:
+                ctx_store = get_context_store()
+                await ctx_store.initialize()
+                contexts = await ctx_store.read_context(
+                    session_id,
+                    "prediction_market",
+                    limit=3,
+                )
+                if contexts:
+                    context_block = format_context_for_hub(contexts)
+                    if context_block:
+                        query_to_run = context_block + "\n\n" + query_to_run
+                        logger.info(
+                            "Injected prediction context for session %s (%d entries)",
+                            session_id,
+                            len(contexts),
+                        )
+            except Exception:
+                logger.exception("Failed to load prediction context")
+
         # Run streamed
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
         result = Runner.run_streamed(
@@ -1165,6 +1205,11 @@ class CentralHubAgent:
 
         # Buffer response text for caching
         response_buffer: list[str] = []
+
+        # Buffered hub-mediated relay: after prediction fires, buffer hub
+        # text synthesis and validate before emitting to clients.
+        prediction_fired = False
+        buffered_events: list[Any] = []
 
         async for event in result.stream_events():
             # Buffer streaming text deltas for caching
@@ -1183,7 +1228,34 @@ class CentralHubAgent:
                     if text and not response_buffer:
                         response_buffer.append(text)
 
+            # Detect prediction firing: passthrough set by tool wrapper
+            if not prediction_fired and _prediction_passthrough is not None:
+                prediction_fired = True
+
+            # After prediction fires, buffer hub text synthesis
+            if prediction_fired:
+                if isinstance(event, RawResponsesStreamEvent):
+                    buffered_events.append(event)
+                    continue
+                if isinstance(event, RunItemStreamEvent) and isinstance(
+                    getattr(event, "item", None), MessageOutputItem
+                ):
+                    buffered_events.append(event)
+                    continue
+
             yield event
+
+        # Validation gate: emit buffered events or passthrough
+        if prediction_fired and _prediction_passthrough:
+            hub_final_text = "".join(response_buffer)
+            if validate_prediction_relay(hub_final_text, _prediction_passthrough):
+                for evt in buffered_events:
+                    yield evt
+            else:
+                logger.warning("Hub relay failed validation — using passthrough")
+                yield PredictionPassthroughEvent(content=_prediction_passthrough)
+                response_buffer.clear()
+                response_buffer.append(_prediction_passthrough)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)
@@ -1192,6 +1264,22 @@ class CentralHubAgent:
                 query=query,  # Original query, not augmented
                 response=final_response,
             )
+
+        # Write prediction context to durable store
+        if prediction_fired and session_id and _inner_tool_outputs:
+            try:
+                payload = extract_prediction_context(list(_inner_tool_outputs))
+                if payload:
+                    store = get_context_store()
+                    await store.initialize()
+                    await store.write_context(
+                        session_id,
+                        "prediction_market",
+                        payload,
+                    )
+                    logger.info("Prediction context saved for session %s", session_id)
+            except Exception:
+                logger.exception("Failed to save prediction context")
 
 
 async def create_central_hub() -> CentralHubAgent:

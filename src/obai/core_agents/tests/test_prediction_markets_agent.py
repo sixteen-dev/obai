@@ -81,6 +81,12 @@ class TestPredictionMarketsAgentInitialization:
         assert "Only show `slug` or `market_url` values that came from tool data" in prompt
         assert "no relevant active market was found" in prompt
 
+    def test_prediction_markets_prompt_prefers_market_url_over_slug(self) -> None:
+        """Prediction-market prompt should include URLs before slug fallback."""
+        prompt = self._read_prompt_file("prediction_markets")
+        assert "include the tool-provided `market_url`" in prompt
+        assert "Use `slug` only as a fallback when `market_url` is absent" in prompt
+
     def test_central_hub_prompt_has_prediction_market_terminal_rules(self) -> None:
         """Hub prompt should relay prediction-market output verbatim."""
         prompt = self._read_prompt_file("central_hub")
