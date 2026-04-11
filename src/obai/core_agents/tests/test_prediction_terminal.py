@@ -328,6 +328,37 @@ class TestPredictionContextExtraction:
         assert ctx["markets"][0]["slug"] == "will-btc-hit-100k"
         assert ctx["venue"] == "polymarket"
 
+    def test_extract_from_mcp_wrapper_tool_names(self) -> None:
+        """FastMCP wrapper names ending in _tool are recognized."""
+        outputs = [
+            _inner_output(
+                "explore_trending_markets_tool",
+                {
+                    "events": [
+                        {
+                            "title": "Trending",
+                            "markets": [
+                                _market_output(condition_id="0x111"),
+                            ],
+                        },
+                    ],
+                },
+            ),
+            _inner_output(
+                "get_market_snapshot_tool",
+                _market_output(condition_id="0x222", slug="snapshot-market"),
+            ),
+            _inner_output(
+                "get_market_details_tool",
+                _market_output(condition_id="0x333", slug="details-market"),
+            ),
+        ]
+
+        ctx = extract_prediction_context(outputs)
+
+        assert ctx is not None
+        assert {m["condition_id"] for m in ctx["markets"]} == {"0x111", "0x222", "0x333"}
+
     def test_extract_from_get_market_details(self) -> None:
         """get_market_details → single market with clob_token_ids."""
         market = _market_output(clob_token_ids=["tok_yes", "tok_no"])

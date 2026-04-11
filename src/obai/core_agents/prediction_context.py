@@ -66,7 +66,7 @@ def extract_prediction_context(
     for entry in inner_tool_outputs:
         if entry.get("specialist") != _PREDICTION_SPECIALIST:
             continue
-        tool_name = entry.get("tool_name", "")
+        tool_name = str(entry.get("tool_name", "")).removesuffix("_tool")
         if tool_name in _SKIP_TOOLS:
             continue
 
