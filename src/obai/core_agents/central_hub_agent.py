@@ -219,8 +219,14 @@ def _wrap_terminal_strategy_output(output: str, kind: str) -> str:
 
 
 def _wrap_terminal_prediction_output(output: str) -> str:
-    """Wrap terminal prediction-market output in a rigid marker for the hub."""
-    return f"{_TERMINAL_PREDICTION_PREFIX}\n\n{output}"
+    """Wrap terminal prediction-market output with rendering control line."""
+    control = (
+        f"{_TERMINAL_PREDICTION_PREFIX}"
+        "render=light_cleanup_allowed; "
+        "preserve=market_url,slug,condition_id,token_id; "
+        "no_new_polymarket_identifiers=true"
+    )
+    return f"{control}\n\n{output}"
 
 
 _PREDICTION_TOOL_DESCRIPTION = (

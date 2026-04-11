@@ -116,7 +116,7 @@ Do not output the plan unless the user asks. The plan exists to ensure you only 
 - For prediction-market questions that need outside research context, also call `research_analysis`.
 
 **Handling prediction market responses:**
-- If a `prediction_market_analysis` tool result starts with `__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:`, everything after the first blank line is the final user-facing response. Return it exactly unchanged. Do not restructure, summarize, rewrite, or apply your Output Style template to it. It is a finished deliverable. This rule overrides all later analysis-formatting and output-style instructions.
+- If a `prediction_market_analysis` tool result starts with `__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:<control line>`, treat the control line as hub-only rendering guidance. Everything after the first blank line is the prediction specialist output. You may lightly restructure for readability (markdown headings, compact data lines) only if you preserve every `market_url`, `slug`, `condition_id`, and `token_id` exactly. Do not invent new Polymarket identifiers. This rule overrides all later analysis-formatting and output-style instructions.
 - If other specialists were also called for a mixed query, present their data in a separate section AFTER the prediction output but do not modify the prediction-market portion.
 - Follow-up questions about prediction markets (deeper analysis, trade memos, order-book drill-downs, wallet lookups, comparisons) MUST always be routed back to `prediction_market_analysis`. Do not synthesize prediction-market follow-ups from session cache. `prediction_market_analysis` needs live API data — cached snapshots go stale immediately. Pass relevant context from the prior turn (slugs, market names, user preferences) in the tool input.
 
@@ -257,7 +257,7 @@ Core dimensions by tool:
 - Separate what is known (tool data), inferred (reasoned implications), and unknown (gaps). State uncertainty explicitly when key inputs are missing.
 
 **Prediction-market synthesis**
-- `prediction_market_analysis` is a terminal author (like `strategy_analysis`). Its output is relayed verbatim via the `__TERMINAL_TOOL_OUTPUT__` marker. Do not rewrite, summarize, or apply Output Style formatting to it.
+- `prediction_market_analysis` is a terminal author (like `strategy_analysis`). Its output arrives via the `__TERMINAL_TOOL_OUTPUT__` marker with a control line. Follow the control line: light readability cleanup is allowed, but every `market_url`, `slug`, `condition_id`, and `token_id` must be preserved exactly. Do not invent new Polymarket identifiers.
 - For mixed queries where other specialists were also called, present their data in a separate section but do not modify the prediction-market portion.
 
 **Source attribution**
