@@ -51,7 +51,7 @@ from clients.cli.widgets import (
     WelcomeBanner,
 )
 from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
-from core_agents.central_hub_agent import get_inner_tool_outputs
+from core_agents.central_hub_agent import PredictionPassthroughEvent, get_inner_tool_outputs
 from core_agents.config import get_config
 from evaluation.scorers.faithfulness import (
     CompletenessScorer,
@@ -617,6 +617,12 @@ class OBaIApp(App[None]):
                 # Log all events to debug panel
                 self._log_stream_event(event)
 
+                # Prediction passthrough: hub relay failed, use specialist output
+                if isinstance(event, PredictionPassthroughEvent):
+                    response.append(event.content)
+                    response_text = event.content
+                    continue
+
                 # Handle agent changes
                 if isinstance(event, AgentUpdatedStreamEvent):
                     agent_name = event.new_agent.name
@@ -839,7 +845,7 @@ class OBaIApp(App[None]):
         self,
         query: str,
         response_text: str,
-        inner_outputs: list[str | Any],
+        inner_outputs: list[dict[str, Any]],
         block: QueryBlock,
     ) -> None:
         """Run faithfulness scoring in background after query completes.

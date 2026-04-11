@@ -233,6 +233,16 @@ body {
     background: rgba(255, 255, 255, 0.72);
 }
 
+.session-item.processing::before {
+    background: var(--accent, #60a5fa);
+    animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
 .session-title {
     flex: 1;
     min-width: 0;
@@ -568,8 +578,10 @@ body {
 .message-meta-detail {
     color: var(--text-secondary);
     font-weight: 500;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     text-transform: none;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .message-bubble {
@@ -585,6 +597,16 @@ body {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
+}
+
+.message-bubble a[href] {
+    color: var(--accent, #60a5fa);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.message-bubble a[href]:hover {
+    opacity: 0.8;
 }
 
 .message-user .message-bubble {

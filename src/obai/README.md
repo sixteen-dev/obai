@@ -1,6 +1,6 @@
 # OBaI - Financial Research Assistant
 
-**OBaI** (pronounced like Obi-Wan) is a multi-agent AI system for stock market research, built with:
+**OBaI** (pronounced like Oww-bee) is a multi-agent platform for stock research, strategy backtesting, and prediction market intelligence, built with:
 - **OpenAI Agent SDK** for agent orchestration
 - **MCP (Model Context Protocol)** for tool integration
 - **Multi-specialist architecture** (agents-as-tools, not handoffs)
@@ -19,6 +19,7 @@ OBaI/
 │   ├── portfolio_agent.py       # Portfolio parsing, risk prefs, ETF holdings
 │   ├── strategy_agent.py       # Backtesting, strategy design, optimization
 │   ├── research_agent.py       # Qualitative research via Exa semantic search
+│   ├── prediction_markets_agent.py  # Polymarket analysis, trade memos
 │   ├── mcp/                     # MCP client integration
 │   │   ├── client.py            # HTTP client for MCP servers
 │   │   └── tool_converter.py   # MCP tools → Agent SDK format
@@ -69,6 +70,7 @@ cd src/screening-server && uv run fastmcp run server.py      # :8005
 cd src/portfolio-server && uv run fastmcp run server.py      # :8006
 cd src/backtest-server && uv run fastmcp run server.py       # :8007
 cd src/research-server && uv run fastmcp run server.py       # :8008
+cd src/prediction-markets-server && uv run python -m src.server  # :8009
 ```
 
 ### 2. Set Environment Variables
@@ -83,6 +85,7 @@ export MCP_SCREENER_URL=http://localhost:8005/mcp
 export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
 export MCP_BACKTEST_URL=http://localhost:8007/mcp
 export MCP_RESEARCH_URL=http://localhost:8008/mcp
+export MCP_PREDICTION_MARKETS_URL=http://localhost:8009/mcp
 export EXA_API_KEY=...                                    # research-server
 ```
 
@@ -147,7 +150,7 @@ uv run python test_connection.py
 
 **Central Hub** (gpt-5.1): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
-**Specialists** (8 agents, each with dedicated MCP server):
+**Specialists** (9 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
 2. **Fundamentals Agent** (:8001): Financial statements, ratios, analyst estimates
 3. **Events/News Agent** (:8003): News articles, earnings calendar, dividends
@@ -156,6 +159,7 @@ uv run python test_connection.py
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
 7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.1 for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
+9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)
@@ -282,16 +286,17 @@ uv run python -m evaluation list-tests --category B
 
 ### Test Suite
 
-Test cases are defined in `evaluation/test_cases/suite.yaml` (139 cases across 6 categories):
+Test cases are defined in `evaluation/test_cases/suite.yaml` (176 cases across 7 categories):
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| A | 29 | Single-agent queries (price, fundamentals, news, options, portfolio, strategy) |
+| A | 31 | Single-agent queries (price, fundamentals, news, options, portfolio, strategy) |
 | B | 28 | Multi-agent with sequencing (ticker→price, screen→analyze, backtest flows) |
-| C | 8 | Guardrail tests (reject non-financial, accept valid) |
+| C | 9 | Guardrail tests (reject non-financial, accept valid) |
 | D | 10 | Error handling (invalid symbol, timeout, malformed) |
 | E | 34 | Strategy & backtesting (intraday, daily, multi-indicator, optimization) |
-| G | 30 | Advanced capabilities (portfolio risk, options analytics, cross-domain) |
+| G | 42 | Advanced capabilities (portfolio risk, options analytics, prediction markets) |
+| H | 22 | Deep company research (Exa-powered semantic search, synthesis) |
 
 Suite runs print an aggregate summary with per-category pass/fail stats and failure details.
 

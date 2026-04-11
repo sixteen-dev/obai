@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/banner.png" alt="OBaI - Multi-agent AI for stock market research" width="600" />
+  <img src="assets/banner.png" alt="OBaI - Multi-agent AI for market research" width="600" />
   <br/>
-  <strong>Multi-agent AI system for stock market research, powered by GPT and real-time FMP custom MCP servers.</strong>
+  <strong>Open-source multi-agent platform for stock research, strategy backtesting, and prediction market intelligence.</strong>
   <br/>
   <sub>pronounced <i>"oww-bee"</i></sub>
   <br/><br/>
@@ -28,7 +28,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search — company profiles, leadership, product sentiment, and competitive landscape.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting.
 
 ---
 
@@ -40,6 +40,7 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 | **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |
+| **Polymarket** | Free (public APIs) | Prediction market data — market discovery, order books, price history, trade flow, leaderboard, wallet activity. |
 
 FMP is the backbone -- it is not free, but a single subscription powers almost the entire system.
 
@@ -105,7 +106,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 8 MCP servers (Docker Compose)
+5. Builds and starts all 9 MCP servers (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
@@ -164,6 +165,7 @@ obai status
 | **portfolio-server** | 8006 | FMP | Portfolio parsing, risk analysis, ETF holdings, treasury rates |
 | **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, DuckDB storage, daily + intraday (5min/15min/1hr), train/test split |
 | **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
+| **prediction-markets-server** | 8009 | Polymarket | Market discovery, executable pricing (bid/ask/depth), price history, trade flow, holder concentration, leaderboard, wallet tracing, setup-based backtesting |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -273,7 +275,7 @@ uv run python -m evaluation query "What is AAPL trading at?" --verbose
 # Run evaluation with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite (139 cases, categories: A/B/C/D/E/G)
+# Run the full test suite (176 cases, categories: A/B/C/D/E/G/H)
 uv run python -m evaluation evaluate --suite
 
 # Fast mode — skip LLM judge, just faithfulness + completeness
@@ -311,7 +313,7 @@ Key environment variables (all have sensible defaults):
 | `MCP_TIMEOUT` | `30` | MCP request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
-Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`.
+Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`.
 
 ---
 
@@ -371,6 +373,7 @@ obai/
 │   ├── portfolio-server/           # MCP server — portfolio analysis, ETF holdings
 │   ├── backtest-server/            # MCP server — strategy backtesting
 │   ├── research-server/            # MCP server — qualitative research (Exa)
+│   ├── prediction-markets-server/  # MCP server — Polymarket analysis (no API keys)
 │   └── obai/                       # Core application
 │       ├── pyproject.toml          # OBaI package config
 │       ├── core_agents/            # Agent definitions + orchestration
@@ -379,7 +382,7 @@ obai/
 │       │   ├── config.py
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
-│       │   └── *_agent.py          # 8 specialist agents
+│       │   └── *_agent.py          # 9 specialist agents
 │       ├── clients/
 │       │   ├── cli/                # CLI + TUI clients
 │       │   │   ├── chat.py         # Headless CLI (obai query/chat/status)
@@ -454,7 +457,7 @@ OBaI ships with two agent skills that let any AI agent autonomously interact wit
 ### Next
 
 - [ ] Options strategy analysis and backtesting
-- [ ] Polymarket prediction market analysis
+- [x] Polymarket prediction market analysis (11 tools, executable pricing, trade memos, wallet tracing)
 - [ ] Crypto market analysis
 - [ ] Semantic caching via LangCache (Redis)
 - [x] Web client (FastAPI + WebSocket, dark glassmorphism UI)

@@ -8,11 +8,12 @@
 const state = {
     sessions: [],
     activeSessionId: null,
+    processingSessionId: null,
     ws: null,
-    isProcessing: false,
     isReady: false,
     reconnectAttempts: 0,
     compactToolsMode: null,
+    savedInputs: {},
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -90,6 +91,11 @@ async function checkHubStatus() {
 }
 
 function handleMessage(msg) {
+    // Messages scoped to a session only render when that session is active.
+    // session_title is always handled (updates sidebar regardless of view).
+    const msgSession = msg.session_id;
+    const isActiveSession = !msgSession || msgSession === state.activeSessionId;
+
     switch (msg.type) {
         case "status":
             if (!state.isReady) {
@@ -98,12 +104,14 @@ function handleMessage(msg) {
             break;
 
         case "agent_switch":
+            if (!isActiveSession) break;
             toolTree.setActiveAgent(msg.agent);
             updateThinking(thinkingVerb());
             toolTree.scrollToBottom();
             break;
 
         case "tool_start":
+            if (!isActiveSession) break;
             toolTree.addTool(
                 msg.call_id,
                 msg.agent,
@@ -116,11 +124,13 @@ function handleMessage(msg) {
             break;
 
         case "tool_complete":
+            if (!isActiveSession) break;
             toolTree.completeTool(msg.call_id, msg.duration_ms || 0);
             toolTree.scrollToBottom();
             break;
 
         case "text_delta":
+            if (!isActiveSession) break;
             handleTextDelta(msg.delta);
             break;
 
@@ -137,6 +147,7 @@ function handleMessage(msg) {
             break;
 
         case "queued":
+            if (!isActiveSession) break;
             updateThinking("Queued, waiting...");
             break;
     }
@@ -145,7 +156,7 @@ function handleMessage(msg) {
 function handleTextDelta(delta) {
     if (!streamingBubble) {
         removeThinking();
-        const msgDiv = createMessageDiv("assistant");
+        const msgDiv = createMessageDiv("assistant", new Date());
         const bubble = msgDiv.querySelector(".message-bubble");
         bubble.classList.add("streaming");
         bubble.textContent = "";
@@ -161,8 +172,14 @@ function handleTextDelta(delta) {
 }
 
 function handleComplete(msg) {
-    state.isProcessing = false;
+    const completedSession = msg.session_id || state.activeSessionId;
+    if (state.processingSessionId === completedSession) {
+        state.processingSessionId = null;
+    }
     updateSendButton();
+
+    const isActiveSession = completedSession === state.activeSessionId;
+    if (!isActiveSession) return;
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
@@ -185,7 +202,11 @@ function handleComplete(msg) {
                     msg.specialists.length + " agent" + (msg.specialists.length > 1 ? "s" : "")
                 );
             }
-            setAssistantMetaDetail(streamingMessage, parts.join(" · "));
+            const timestamp = streamingMessage.dataset.timestampLabel || "";
+            setMessageMetaDetail(
+                streamingMessage,
+                [timestamp, parts.join(" · ")].filter(Boolean).join(" · ")
+            );
         }
     }
 
@@ -196,14 +217,20 @@ function handleComplete(msg) {
 }
 
 function handleError(msg) {
-    state.isProcessing = false;
+    const errorSession = msg.session_id || state.activeSessionId;
+    if (state.processingSessionId === errorSession) {
+        state.processingSessionId = null;
+    }
     updateSendButton();
+
+    const isActiveSession = errorSession === state.activeSessionId;
+    if (!isActiveSession) return;
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
     removeThinking();
 
-    const msgDiv = createMessageDiv("assistant");
+    const msgDiv = createMessageDiv("assistant", new Date());
     msgDiv.classList.add("message-error");
     msgDiv.querySelector(".message-bubble").textContent = msg.message || "An error occurred";
     messagesDiv.appendChild(msgDiv);
@@ -221,6 +248,11 @@ function renderMarkdownInto(element, markdownText) {
     element.textContent = "";
     while (doc.body.firstChild) {
         element.appendChild(doc.body.firstChild);
+    }
+    // Open all links in a new tab so the user stays in the app
+    for (const link of element.querySelectorAll("a[href]")) {
+        link.target = "_blank";
+        link.rel = "noopener";
     }
     enhanceCodeBlocks(element);
 }
@@ -365,7 +397,10 @@ function renderSessionList() {
 
     for (const session of state.sessions) {
         const item = document.createElement("div");
-        item.className = "session-item" + (session.id === state.activeSessionId ? " active" : "");
+        let className = "session-item";
+        if (session.id === state.activeSessionId) className += " active";
+        if (session.id === state.processingSessionId) className += " processing";
+        item.className = className;
         item.dataset.id = session.id;
 
         const title = document.createElement("span");
@@ -401,6 +436,11 @@ async function createSession() {
 }
 
 async function switchSession(sessionId) {
+    // Save current input text for the old session
+    if (state.activeSessionId) {
+        state.savedInputs[state.activeSessionId] = queryInput.value;
+    }
+
     state.activeSessionId = sessionId;
     renderSessionList();
     toolTree.switchSession(sessionId);
@@ -410,6 +450,11 @@ async function switchSession(sessionId) {
     streamingBubble = null;
     streamingText = "";
     removeThinking();
+
+    // Restore saved input for the new session
+    queryInput.value = state.savedInputs[sessionId] || "";
+    autoResizeInput();
+    updateSendButton();
 
     try {
         const res = await fetch("/api/sessions/" + sessionId + "/messages");
@@ -436,6 +481,7 @@ async function deleteSession(sessionId) {
         await fetch("/api/sessions/" + sessionId, { method: "DELETE" });
         state.sessions = state.sessions.filter((session) => session.id !== sessionId);
         toolTree.sessionHistory.delete(sessionId);
+        delete state.savedInputs[sessionId];
 
         if (state.activeSessionId === sessionId) {
             state.activeSessionId = null;
@@ -464,7 +510,7 @@ function updateSessionTitle(sessionId, title) {
 }
 
 function renderStoredMessage(msg) {
-    const msgDiv = createMessageDiv(msg.role);
+    const msgDiv = createMessageDiv(msg.role, msg.created_at);
     const bubble = msgDiv.querySelector(".message-bubble");
 
     if (msg.role === "assistant" && typeof marked !== "undefined") {
@@ -473,8 +519,15 @@ function renderStoredMessage(msg) {
         bubble.textContent = msg.content;
     }
 
-    if (msg.role === "assistant" && msg.duration_ms) {
-        setAssistantMetaDetail(msgDiv, formatDuration(msg.duration_ms));
+    if (msg.role === "assistant") {
+        const parts = [];
+        if (msg.created_at) {
+            parts.push(formatMessageTimestamp(msg.created_at));
+        }
+        if (msg.duration_ms) {
+            parts.push(formatDuration(msg.duration_ms));
+        }
+        setMessageMetaDetail(msgDiv, parts.join(" · "));
     }
 
     messagesDiv.appendChild(msgDiv);
@@ -482,7 +535,8 @@ function renderStoredMessage(msg) {
 
 async function sendQuery() {
     const text = queryInput.value.trim();
-    if (!text || state.isProcessing || !state.ws || !state.isReady) {
+    const activeBlocked = state.processingSessionId === state.activeSessionId;
+    if (!text || activeBlocked || !state.ws || !state.isReady) {
         return;
     }
 
@@ -493,12 +547,13 @@ async function sendQuery() {
         }
     }
 
-    state.isProcessing = true;
+    state.processingSessionId = state.activeSessionId;
     updateSendButton();
 
     welcomeScreen.classList.add("hidden");
 
-    const userMsg = createMessageDiv("user");
+    const now = new Date();
+    const userMsg = createMessageDiv("user", now);
     userMsg.querySelector(".message-bubble").textContent = text;
     messagesDiv.appendChild(userMsg);
 
@@ -515,7 +570,7 @@ async function sendQuery() {
     scrollChatToBottom();
 }
 
-function createMessageDiv(role) {
+function createMessageDiv(role, createdAt = null) {
     const div = document.createElement("div");
     div.className = "message message-" + role;
 
@@ -530,11 +585,9 @@ function createMessageDiv(role) {
     metaLabel.textContent = role === "assistant" ? "OBaI" : "You";
     meta.appendChild(metaLabel);
 
-    if (role === "assistant") {
-        const metaDetail = document.createElement("span");
-        metaDetail.className = "message-meta-detail hidden";
-        meta.appendChild(metaDetail);
-    }
+    const metaDetail = document.createElement("span");
+    metaDetail.className = "message-meta-detail hidden";
+    meta.appendChild(metaDetail);
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
@@ -543,17 +596,73 @@ function createMessageDiv(role) {
     stack.appendChild(bubble);
     div.appendChild(stack);
 
+    if (createdAt) {
+        const timestampLabel = formatMessageTimestamp(createdAt);
+        div.dataset.timestampLabel = timestampLabel;
+        setMessageMetaDetail(div, timestampLabel);
+        if (timestampLabel) {
+            metaDetail.title = formatExactTimestamp(createdAt);
+        }
+    }
+
     return div;
 }
 
-function setAssistantMetaDetail(messageEl, text) {
+function setMessageMetaDetail(messageEl, text) {
     const detail = messageEl.querySelector(".message-meta-detail");
     if (!detail) {
         return;
     }
 
-    detail.textContent = text;
-    detail.classList.remove("hidden");
+    if (text) {
+        detail.textContent = text;
+        detail.classList.remove("hidden");
+        return;
+    }
+
+    detail.textContent = "";
+    detail.classList.add("hidden");
+}
+
+function formatMessageTimestamp(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    const now = new Date();
+    const sameDay = date.toDateString() === now.toDateString();
+    const sameYear = date.getFullYear() === now.getFullYear();
+
+    const options = sameDay
+        ? { hour: "numeric", minute: "2-digit" }
+        : sameYear
+            ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+            : {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+            };
+
+    return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function formatExactTimestamp(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+    }).format(date);
 }
 
 function scrollChatToBottom() {
@@ -562,7 +671,8 @@ function scrollChatToBottom() {
 
 function updateSendButton() {
     const hasText = queryInput.value.trim().length > 0;
-    sendBtn.disabled = !hasText || state.isProcessing || !state.isReady;
+    const activeBlocked = state.processingSessionId === state.activeSessionId;
+    sendBtn.disabled = !hasText || activeBlocked || !state.isReady;
 }
 
 const thinkingVerbsList = [

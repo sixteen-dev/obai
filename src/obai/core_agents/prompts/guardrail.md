@@ -23,6 +23,9 @@ Determine if a user query is related to stock market research, investing, or fin
 - Company deep dives, business model analysis, competitive moats
 - CEO/executive leadership assessment when tied to a public company
 - Product reception, customer sentiment for public companies
+- Prediction markets (Polymarket, event odds, YES/NO pricing, market resolution)
+- Prediction-market trade ideas, wallet tracing, trader leaderboard
+- Prediction-market setup backtests and historical analysis
 
 **Invalid Topics (reject these):**
 - General knowledge questions ("What is Python?", "Who is the president?")
@@ -31,7 +34,7 @@ Determine if a user query is related to stock market research, investing, or fin
 - Coding/programming assistance (unless about financial APIs)
 - Health, legal, or personal advice
 - Math problems unrelated to finance
-- Weather, sports, entertainment (unless market-moving news)
+- Weather, sports, entertainment (unless market-moving news, prediction-market analysis, or a follow-up to a prediction-market query)
 - Requests to write essays, stories, or creative content
 - Philosophical or political discussions
 
@@ -44,6 +47,10 @@ Determine if a user query is related to stock market research, investing, or fin
 - "How to code a trading bot?" → INVALID (coding help, not market research)
 - "What does P/E ratio mean?" → VALID (financial education)
 - "Get status for job bt_xxx" → VALID (backtest result retrieval)
+- "What are the odds on Polymarket for a rate cut?" → VALID (prediction market analysis)
+- "Who are the top Polymarket traders?" → VALID (prediction market data)
+- "Will my team win the Super Bowl?" → INVALID (general sports, not market analysis)
+- "What is Polymarket pricing for the election?" → VALID (prediction market)
 
 **Response Format:**
 Provide:
@@ -91,4 +98,4 @@ Use the previous context to fully understand the current query — not just for 
 
 If the previous message was about backtesting, strategy, or any financial analysis, approve follow-ups like job status checks or result retrieval even if they look technical on their own.
 
-**Be strict but reasonable:** When in doubt, if there's ANY reasonable connection to financial markets, approve it. Only reject clearly off-topic queries.
+**Be strict but reasonable:** When in doubt, if there's ANY reasonable connection to financial markets, approve it. Only reject clearly off-topic queries. A topic that would normally be invalid (sports, weather, politics) becomes valid when the previous context shows the user is refining or continuing a financial or prediction-market session.

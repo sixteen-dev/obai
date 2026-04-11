@@ -1,6 +1,6 @@
 """Central Hub Agent for routing queries to specialist agents.
 
-This agent acts as the central hub for a team of 7 specialist agents:
+This agent acts as the central hub for a team of 8 specialist agents:
     - Fundamentals Agent: Company financials and ratios
     - Market Data Agent: Prices and technical indicators
     - Events/News Agent: News, earnings, dividends
@@ -8,6 +8,7 @@ This agent acts as the central hub for a team of 7 specialist agents:
     - Screener Agent: Stock screening and ticker discovery
     - Portfolio Agent: Portfolio parsing, risk preferences, ETF holdings
     - Strategy Agent: Trading strategy design, backtesting, optimization
+    - Prediction Markets Agent: Polymarket analysis and trade ideas
 
 The central hub uses the "agents-as-tools" pattern (not handoffs):
     1. Understands user intent
@@ -53,11 +54,18 @@ from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
 from .options_agent import OptionsAgent
 from .portfolio_agent import PortfolioAgent
+from .prediction_context import (
+    extract_prediction_context,
+    format_context_for_hub,
+    validate_prediction_relay,
+)
+from .prediction_markets_agent import PredictionMarketsAgent
 from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .research_agent import ResearchAgent
 from .screener_agent import ScreenerAgent
+from .session_context import get_context_store
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
 
@@ -76,6 +84,17 @@ class StrategyPassthrough:
 
     content: str
     kind: str  # "completed" or "pending"
+
+
+@dataclass(frozen=True)
+class PredictionPassthroughEvent:
+    """Emitted by hub.run() when hub relay fails validation.
+
+    Clients should render ``content`` as the final assistant response
+    instead of the hub's synthesized text.
+    """
+
+    content: str
 
 
 # Module-level storage for strategy passthrough (reset per query)
@@ -106,6 +125,30 @@ def _clear_strategy_passthrough() -> None:
     """Reset strategy passthrough state (call between queries)."""
     global _strategy_passthrough
     _strategy_passthrough = None
+
+
+# Prediction-market passthrough (same pattern as strategy)
+_prediction_passthrough: str | None = None
+
+
+def _set_prediction_passthrough(content: str) -> None:
+    """Store prediction-market output for tracing and potential passthrough."""
+    global _prediction_passthrough
+    _prediction_passthrough = content
+    logger.info("Prediction passthrough set (len=%d)", len(content))
+    _inner_tool_outputs.append(
+        {
+            "specialist": "Prediction Markets Agent",
+            "tool_name": "prediction_passthrough",
+            "output": content,
+        }
+    )
+
+
+def _clear_prediction_passthrough() -> None:
+    """Reset prediction passthrough state (call between queries)."""
+    global _prediction_passthrough
+    _prediction_passthrough = None
 
 
 def _is_completed_strategy_output(output: str) -> bool:
@@ -167,12 +210,41 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "Do not summarize it, reformat it, or add commentary."
 )
 _TERMINAL_STRATEGY_OUTPUT_PREFIX = "__TERMINAL_TOOL_OUTPUT__:strategy_analysis:"
+_TERMINAL_PREDICTION_PREFIX = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
 
 
 def _wrap_terminal_strategy_output(output: str, kind: str) -> str:
     """Wrap terminal strategy output in a rigid marker for the hub."""
     return f"{_TERMINAL_STRATEGY_OUTPUT_PREFIX}{kind}\n\n{output}"
 
+
+def _wrap_terminal_prediction_output(output: str) -> str:
+    """Wrap terminal prediction-market output with rendering control line."""
+    control = (
+        f"{_TERMINAL_PREDICTION_PREFIX}"
+        "render=light_cleanup_allowed; "
+        "preserve=market_url,slug,condition_id,token_id; "
+        "no_new_polymarket_identifiers=true"
+    )
+    return f"{control}\n\n{output}"
+
+
+_PREDICTION_TOOL_DESCRIPTION = (
+    "Polymarket prediction market analysis. "
+    "Use for market discovery, understanding, and comparison; "
+    "executable pricing with bid/ask/spread/depth; "
+    "trade flow and holder analysis; "
+    "trader leaderboard and wallet tracing; "
+    "manual trade thesis generation; "
+    "and setup-based backtesting over resolved prediction markets. "
+    "Route here for Polymarket, prediction market odds, "
+    "YES/NO market pricing, event resolution, top traders on "
+    "Polymarket, and prediction-market trade ideas. "
+    "Do NOT route prediction-market backtests to strategy_analysis. "
+    "This tool returns a finished user-facing deliverable. "
+    "If it does, your final answer must relay the tool output unchanged. "
+    "Do not summarize it, reformat it, or add commentary."
+)
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
     # Technical strategy families
@@ -277,13 +349,24 @@ _STRATEGY_QUERY_KEYWORDS = re.compile(
 )
 
 
+_PREDICTION_MARKET_KEYWORDS = re.compile(
+    r"\b(polymarket|prediction\s+market|prediction[-\s]market|event\s+odds"
+    r"|YES/NO|yes.no\s+market)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_strategy_query(query: str) -> bool:
-    """Detect if the user query is a strategy/backtest request.
+    """Detect if the user query is an equity strategy/backtest request.
 
     Used to inject a routing hint so the hub doesn't answer
-    strategy questions from training data.
+    strategy questions from training data. Does NOT match
+    prediction-market backtest requests.
     """
-    return bool(_STRATEGY_QUERY_KEYWORDS.search(query))
+    if not _STRATEGY_QUERY_KEYWORDS.search(query):
+        return False
+    # Prediction-market backtests should route to prediction_market_analysis
+    return not _PREDICTION_MARKET_KEYWORDS.search(query)
 
 
 def _get_missing_strategy_inputs(input_text: str) -> list[str]:
@@ -537,6 +620,7 @@ class CentralHubAgent:
         self.portfolio_agent: PortfolioAgent | None = None
         self.strategy_agent: StrategyAgent | None = None
         self.research_agent: ResearchAgent | None = None
+        self.prediction_markets_agent: PredictionMarketsAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -718,6 +802,9 @@ class CentralHubAgent:
                     )
                 )
 
+            if self.prediction_markets_agent and self.prediction_markets_agent.agent:
+                specialist_tools.append(self._build_prediction_tool())
+
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
             specialist_tools.append(set_preferences)
@@ -769,6 +856,7 @@ class CentralHubAgent:
         self.portfolio_agent = PortfolioAgent()
         self.strategy_agent = StrategyAgent()
         self.research_agent = ResearchAgent()
+        self.prediction_markets_agent = PredictionMarketsAgent()
 
         required = [
             self.fundamentals_agent,
@@ -780,7 +868,8 @@ class CentralHubAgent:
             self.strategy_agent,
         ]
 
-        all_agents = [*required, self.research_agent]
+        optional = [self.research_agent, self.prediction_markets_agent]
+        all_agents = [*required, *optional]
         results = await asyncio.gather(
             *[a.initialize() for a in all_agents],
             return_exceptions=True,
@@ -799,6 +888,13 @@ class CentralHubAgent:
                         "Other agents unaffected.",
                     )
                     self.research_agent = None
+                elif agent is self.prediction_markets_agent:
+                    logger.warning(
+                        "Prediction Markets Agent unavailable — "
+                        "prediction_market_analysis tool disabled. "
+                        "Other agents unaffected.",
+                    )
+                    self.prediction_markets_agent = None
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result
@@ -826,6 +922,7 @@ class CentralHubAgent:
         self.portfolio_agent = None
         self.strategy_agent = None
         self.research_agent = None
+        self.prediction_markets_agent = None
         self.agent = None
         self._initialized = False
 
@@ -850,6 +947,52 @@ class CentralHubAgent:
         if self._cache:
             return await self._cache.clear()
         return True
+
+    def _build_prediction_tool(self) -> Tool:
+        """Build prediction-market tool wrapper that marks output as terminal.
+
+        The prediction-market agent is a terminal author: its output is
+        a complete, formatted analysis (market snapshots, trade memos,
+        comparisons) that the hub should relay unchanged.
+        """
+        if self.prediction_markets_agent is None or self.prediction_markets_agent.agent is None:
+            msg = "Prediction Markets Agent not initialized"
+            raise ValueError(msg)
+
+        pred_agent = self.prediction_markets_agent.agent
+        stream_handler = _create_stream_handler(
+            "prediction_market_analysis", "Prediction Markets Agent"
+        )
+
+        @function_tool(
+            name_override="prediction_market_analysis",
+            description_override=_PREDICTION_TOOL_DESCRIPTION,
+            strict_mode=False,
+        )
+        async def prediction_market_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            result = Runner.run_streamed(
+                starting_agent=pred_agent,
+                input=input,
+                context=ctx.context,
+                max_turns=25,
+            )
+
+            async for event in result.stream_events():
+                await stream_handler({"agent": pred_agent, "event": event})
+
+            final_output = getattr(result, "final_output", None)
+            output = ""
+            if isinstance(final_output, str):
+                output = final_output
+            elif final_output is not None:
+                output = str(final_output)
+
+            if not output:
+                return output
+            _set_prediction_passthrough(output)
+            return _wrap_terminal_prediction_output(output)
+
+        return prediction_market_analysis
 
     def _build_strategy_tool(self) -> Tool:
         """Build guarded strategy tool wrapper for hub routing.
@@ -945,6 +1088,7 @@ class CentralHubAgent:
             "portfolio": self.portfolio_agent,
             "strategy": self.strategy_agent,
             "research": self.research_agent,
+            "prediction_markets": self.prediction_markets_agent,
         }
 
         if specialist_name not in specialists:
@@ -998,9 +1142,10 @@ class CentralHubAgent:
             msg = "Central Hub not initialized. Call initialize() first."
             raise ValueError(msg)
 
-        # Reset agent activity tracking and strategy passthrough for this query
+        # Reset agent activity tracking and passthrough state for this query
         _clear_active_agents()
         _clear_strategy_passthrough()
+        _clear_prediction_passthrough()
 
         # RAG-style cache: search for similar cached response
         query_to_run = query
@@ -1033,6 +1178,29 @@ class CentralHubAgent:
             )
             logger.info("Strategy intent detected — injected routing hint")
 
+        # Inject durable prediction context for follow-up disambiguation
+        session_id = getattr(session, "session_id", None) if session else None
+        if session_id:
+            try:
+                ctx_store = get_context_store()
+                await ctx_store.initialize()
+                contexts = await ctx_store.read_context(
+                    session_id,
+                    "prediction_market",
+                    limit=3,
+                )
+                if contexts:
+                    context_block = format_context_for_hub(contexts)
+                    if context_block:
+                        query_to_run = context_block + "\n\n" + query_to_run
+                        logger.info(
+                            "Injected prediction context for session %s (%d entries)",
+                            session_id,
+                            len(contexts),
+                        )
+            except Exception:
+                logger.exception("Failed to load prediction context")
+
         # Run streamed
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
         result = Runner.run_streamed(
@@ -1043,6 +1211,11 @@ class CentralHubAgent:
 
         # Buffer response text for caching
         response_buffer: list[str] = []
+
+        # Buffered hub-mediated relay: after prediction fires, buffer hub
+        # text synthesis and validate before emitting to clients.
+        prediction_fired = False
+        buffered_events: list[Any] = []
 
         async for event in result.stream_events():
             # Buffer streaming text deltas for caching
@@ -1061,7 +1234,34 @@ class CentralHubAgent:
                     if text and not response_buffer:
                         response_buffer.append(text)
 
+            # Detect prediction firing: passthrough set by tool wrapper
+            if not prediction_fired and _prediction_passthrough is not None:
+                prediction_fired = True
+
+            # After prediction fires, buffer hub text synthesis
+            if prediction_fired:
+                if isinstance(event, RawResponsesStreamEvent):
+                    buffered_events.append(event)
+                    continue
+                if isinstance(event, RunItemStreamEvent) and isinstance(
+                    getattr(event, "item", None), MessageOutputItem
+                ):
+                    buffered_events.append(event)
+                    continue
+
             yield event
+
+        # Validation gate: emit buffered events or passthrough
+        if prediction_fired and _prediction_passthrough:
+            hub_final_text = "".join(response_buffer)
+            if validate_prediction_relay(hub_final_text, _prediction_passthrough):
+                for evt in buffered_events:
+                    yield evt
+            else:
+                logger.warning("Hub relay failed validation — using passthrough")
+                yield PredictionPassthroughEvent(content=_prediction_passthrough)
+                response_buffer.clear()
+                response_buffer.append(_prediction_passthrough)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)
@@ -1071,11 +1271,27 @@ class CentralHubAgent:
                 response=final_response,
             )
 
+        # Write prediction context to durable store
+        if prediction_fired and session_id and _inner_tool_outputs:
+            try:
+                payload = extract_prediction_context(list(_inner_tool_outputs))
+                if payload:
+                    store = get_context_store()
+                    await store.initialize()
+                    await store.write_context(
+                        session_id,
+                        "prediction_market",
+                        payload,
+                    )
+                    logger.info("Prediction context saved for session %s", session_id)
+            except Exception:
+                logger.exception("Failed to save prediction context")
+
 
 async def create_central_hub() -> CentralHubAgent:
     """Create and initialize a Central Hub Agent.
 
-    This will also initialize all 8 specialist agents:
+    This will also initialize all 9 specialist agents:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
@@ -1084,6 +1300,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Portfolio Agent (FMP)
     - Strategy Agent (backtest-server)
     - Research Agent (Exa)
+    - Prediction Markets Agent (Polymarket)
 
     Opik tracing is automatically initialized before agent creation
     if OPIK_ENABLED=true (default). Traces are sent to the Opik UI.

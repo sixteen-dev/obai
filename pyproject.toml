@@ -74,7 +74,7 @@ exclude-newer = "14 days"
 exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
-    "pypdf>=6.9.2",          # GHSA-87mj-5ggw-8qc3: infinite loop fix
+    "pypdf>=6.10.0",         # GHSA-87mj-5ggw-8qc3 + Dependabot: infinite loop fix
     "requests>=2.33.0",      # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
     "onnx>=1.21.0",          # CVE-2026-34447, GHSA-q56x: symlink traversal + TOCTOU
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape

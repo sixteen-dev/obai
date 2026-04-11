@@ -1,8 +1,9 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 167 test cases across 7 active categories (A-E, G, H; F pending).
+# 180 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
+#   prediction markets,
 # Category H: Deep company research — Exa-powered research agent queries.
 #   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
 #
@@ -516,6 +517,14 @@ test_cases:
     expected_tools: [market_data_analysis, events_news_analysis]
     description: Valid sector-performance question
 
+  - id: C9
+    query: "What are the Polymarket odds on the Super Bowl, and how liquid is that market?"
+    category: C
+    query_type: guardrail_accept_prediction_market
+    expect_rejection: false
+    expected_tools: [prediction_market_analysis]
+    description: Sports should be accepted when the user is explicitly asking about a Polymarket market
+
   # ─────────────────────────────────────────────
   # Category D: Error Handling
   # ─────────────────────────────────────────────
@@ -861,7 +870,8 @@ test_cases:
 
   # ─────────────────────────────────────────────
   # Category G: New Capabilities (Portfolio Risk, Options Analytics,
-  #   Walk-Forward, Shared-Capital, Commodities, Expanded Indicators)
+  #   Walk-Forward, Shared-Capital, Commodities, Expanded Indicators,
+  #   Prediction Markets)
   # ─────────────────────────────────────────────
 
   # G.1 — Portfolio Risk & Allocation (P2)
@@ -1097,6 +1107,94 @@ test_cases:
     query_type: portfolio_risk_plus_news
     expected_tools: [portfolio_analysis, events_news_analysis]
     description: Concentrated single-stock portfolio risk + catalyst awareness — retail investor reality check
+
+  # G.7 — Prediction Markets (P1)
+
+  - id: G31
+    query: "Find the most liquid Polymarket market on the next Fed decision and explain what it is actually asking, how it resolves, and what it is pricing right now."
+    category: G
+    query_type: prediction_market_explainer
+    expected_tools: [prediction_market_analysis]
+    description: Finance-market explainer with resolution criteria, pricing, and liquidity
+    smoke: true
+
+  - id: G32
+    query: "Show me a Polymarket market on Bitcoin hitting a price target and tell me whether it looks clean enough for a manual trader to enter right now."
+    category: G
+    query_type: prediction_market_crypto_execution
+    expected_tools: [prediction_market_analysis]
+    description: Crypto prediction-market query focused on executable pricing and manual-trade feasibility
+
+  - id: G33
+    query: "Compare the leading Polymarket markets related to the next Fed move and tell me which one has cleaner execution for a manual trader."
+    category: G
+    query_type: prediction_market_compare_execution
+    expected_tools: [prediction_market_analysis]
+    description: Market-comparison query emphasizing spread, depth, and liquidity
+
+  - id: G34
+    query: "I bought YES at 0.40 on a Polymarket market about the next Fed rate cut. Review the position for me — what would invalidate the thesis and should I hold or exit?"
+    category: G
+    query_type: prediction_market_trade_review
+    expected_tools: [prediction_market_analysis]
+    description: Existing-position review with invalidation and risk framing
+
+  - id: G35
+    query: "Show me the top Polymarket traders right now and summarize what kinds of markets they seem most active in."
+    category: G
+    query_type: prediction_market_leaderboard
+    expected_tools: [prediction_market_analysis]
+    description: Leaderboard-driven trader discovery and descriptive activity summary
+
+  - id: G36
+    query: "Pick a top trader from the Polymarket leaderboard and trace their recent activity for me. I want a descriptive summary, not blind copy-trading advice."
+    category: G
+    query_type: prediction_market_wallet_trace
+    expected_tools: [prediction_market_analysis]
+    description: Wallet-tracing scenario with explicit anti-alpha framing
+
+  - id: G37
+    query: "Find me a current Polymarket finance market where the spread and liquidity are good enough for manual execution, then give me a trade memo with entry, exit, invalidation, and risks."
+    category: G
+    query_type: prediction_market_trade_memo
+    expected_tools: [prediction_market_analysis]
+    description: Human-executable trade memo for a live finance-themed market
+    smoke: true
+
+  - id: G38
+    query: "Run a Polymarket setup test for markets where YES traded around 0.45 with decent liquidity. I want sample size, forward behavior, and limitations."
+    category: G
+    query_type: prediction_market_setup_backtest
+    expected_tools: [prediction_market_analysis]
+    description: Setup-based historical test with explicit expectations about sample size and limitations
+
+  - id: G38b
+    query: "Backtest this setup on Polymarket: markets where YES was under 0.30 with at least $50K volume in the crypto category. Show me forward behavior at 1 day and to resolution, and flag any data quality issues."
+    category: G
+    query_type: prediction_market_backtest_data_quality
+    expected_tools: [prediction_market_analysis]
+    description: Backtest with explicit data-quality expectations — tests drift detection, sparse-history handling, and limitations disclosure
+
+  - id: G39
+    query: "Polymarket is pricing odds on the next Fed move. How does that line up with TLT right now?"
+    category: G
+    query_type: prediction_market_macro_crosscheck
+    expected_tools: [prediction_market_analysis, market_data_analysis]
+    description: Mixed-domain query comparing prediction-market odds with bond ETF price action
+
+  - id: G40
+    query: "Compare the most liquid Polymarket election-related markets and tell me which one looks easiest to trade manually right now."
+    category: G
+    query_type: prediction_market_politics_compare
+    expected_tools: [prediction_market_analysis]
+    description: Politics-market comparison centered on tradability and execution quality
+
+  - id: G41
+    query: "Who is the top performing trader on Polymarket right now? Show me their recent trades and active positions so I can figure out what to copy."
+    category: G
+    query_type: prediction_market_copy_trader
+    expected_tools: [prediction_market_analysis]
+    description: Top-performer discovery with copy-trade intent — tests leaderboard, wallet trace, and anti-alpha guardrails
 
 
   # ─────────────────────────────────────────────
