@@ -285,7 +285,13 @@ def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
     if str(obai_root) not in sys.path:
         sys.path.insert(0, str(obai_root))
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    log_fmt = "%(asctime)s %(name)s %(levelname)s %(message)s"
+    log_dir = Path.home() / ".obai" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_dir / "web.log")
+    file_handler.setFormatter(logging.Formatter(log_fmt))
+    handlers: list[logging.Handler] = [logging.StreamHandler(), file_handler]
+    logging.basicConfig(level=logging.INFO, format=log_fmt, handlers=handlers)
 
     uvicorn.run(
         create_app(),
