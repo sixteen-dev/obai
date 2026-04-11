@@ -645,7 +645,7 @@ def status(
         help="Output structured JSON",
     ),
 ) -> None:
-    """Check connectivity to all 8 MCP data servers."""
+    """Check connectivity to all 9 MCP data servers."""
 
     async def _main() -> int:
         import httpx
@@ -662,6 +662,7 @@ def status(
             ("Portfolio", config.mcp_portfolio_url),
             ("Backtest", config.mcp_backtest_url),
             ("Research", config.mcp_research_url),
+            ("Prediction Markets", config.mcp_prediction_markets_url),
         ]
 
         results: list[dict[str, Any]] = []
