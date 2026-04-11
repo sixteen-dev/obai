@@ -10,12 +10,15 @@ DB path: ~/.obai/app_state.db
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from asyncio import to_thread
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = Path.home() / ".obai" / "app_state.db"
 
@@ -53,12 +56,14 @@ class SessionContextStore:
         self._initialized = True
 
     def _init_db(self) -> None:
+        logger.info("Initializing context store at %s", self.db_path)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        logger.info("Context store initialized (tables ready)")
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -95,6 +100,12 @@ class SessionContextStore:
             (session_id, context_type, json.dumps(payload), now),
         )
         conn.commit()
+        logger.info(
+            "Context written: session=%s type=%s keys=%s",
+            session_id,
+            context_type,
+            list(payload.keys()),
+        )
 
     async def read_context(
         self,
@@ -131,6 +142,12 @@ class SessionContextStore:
         for row in rows:
             parsed: dict[str, Any] = json.loads(row["payload_json"])
             results.append(parsed)
+        logger.info(
+            "Context read: session=%s type=%s rows=%d",
+            session_id,
+            context_type,
+            len(results),
+        )
         return results
 
     async def clear_session(self, session_id: str) -> int:
