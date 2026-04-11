@@ -8,10 +8,13 @@ and hub input injection.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 _PREDICTION_SPECIALIST = "Prediction Markets Agent"
 _TERMINAL_PREDICTION_MARKER = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
@@ -182,18 +185,30 @@ def validate_prediction_relay(hub_text: str, passthrough: str) -> bool:
     required = _extract_relay_identifiers(clean)
     actual = _extract_relay_identifiers(hub_text)
 
-    if not required["urls"].issubset(actual["urls"]):
+    missing_urls = required["urls"] - actual["urls"]
+    if missing_urls:
+        logger.warning("Relay validation: hub dropped URLs: %s", missing_urls)
         return False
-    if not required["slugs"].issubset(actual["slugs"]):
+    missing_slugs = required["slugs"] - actual["slugs"]
+    if missing_slugs:
+        logger.warning("Relay validation: hub dropped slugs: %s", missing_slugs)
         return False
-    if not required["condition_ids"].issubset(actual["condition_ids"]):
+    missing_cids = required["condition_ids"] - actual["condition_ids"]
+    if missing_cids:
+        logger.warning("Relay validation: hub dropped condition_ids: %s", missing_cids)
         return False
 
     # Hub may rephrase dynamic analysis, but it must not introduce durable
     # Polymarket identifiers that were not in the specialist output.
-    if not actual["urls"].issubset(required["urls"]):
+    invented_urls = actual["urls"] - required["urls"]
+    if invented_urls:
+        logger.warning("Relay validation: hub invented URLs: %s", invented_urls)
         return False
-    return actual["explicit_slugs"].issubset(required["slugs"])
+    invented_slugs = actual["explicit_slugs"] - required["slugs"]
+    if invented_slugs:
+        logger.warning("Relay validation: hub invented slugs: %s", invented_slugs)
+        return False
+    return True
 
 
 def _strip_terminal_prediction_marker(text: str) -> str:
