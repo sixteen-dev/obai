@@ -1,12 +1,17 @@
 """Tests for prediction market tool implementations."""
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.config import load_settings
 from src.tools.backtest import backtest_prediction_setup
-from src.tools.discovery import get_market_details, search_prediction_markets
+from src.tools.discovery import (
+    explore_trending_markets,
+    get_market_details,
+    search_prediction_markets,
+)
 from src.tools.market_state import compare_prediction_markets, get_market_snapshot
 
 
@@ -20,6 +25,7 @@ def _mock_gamma_market():
         "condition_id": "0xabc123",
         "question_id": "0xdef456",
         "slug": "will-btc-hit-100k",
+        "market_url": "https://polymarket.com/event/btc-100k",
         "question": "Will Bitcoin hit $100K?",
         "description": "Resolves Yes if...",
         "outcomes": ["Yes", "No"],
@@ -67,6 +73,7 @@ class TestSearchPredictionMarkets:
         assert result["count"] == 1
         assert result["markets"][0]["question"] == "Will Bitcoin hit $100K?"
         assert result["markets"][0]["condition_id"] == "0xabc123"
+        assert result["markets"][0]["slug"] == "will-btc-hit-100k"
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self):
@@ -80,6 +87,86 @@ class TestSearchPredictionMarkets:
 
         assert result["count"] == 0
         assert result["markets"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_filters_unrelated_high_volume_results_for_specific_query(self):
+        unrelated = [
+            _mock_gamma_market()
+            | {
+                "condition_id": "0xfed",
+                "question": "Will the Fed decrease interest rates by 50+ bps?",
+                "slug": "will-the-fed-decrease-interest-rates-by-50-bps",
+            },
+            _mock_gamma_market()
+            | {
+                "condition_id": "0xipl",
+                "question": "IPL: Rajasthan Royals vs Royal Challengers Bangalore",
+                "slug": "cricipl-raj-roy-2026-04-10",
+            },
+        ]
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_markets = AsyncMock(return_value=unrelated)
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await search_prediction_markets(
+                "Atletico Madrid win 2025-26 Champions League",
+                limit=10,
+            )
+
+        assert result["raw_count"] == 2
+        assert result["relevance_filter_applied"] is True
+        assert result["count"] == 0
+        assert result["markets"] == []
+        assert "no relevant market found" in result["note"]
+
+    @pytest.mark.asyncio
+    async def test_search_keeps_relevant_specific_result(self):
+        relevant = _mock_gamma_market() | {
+            "condition_id": "0xatm",
+            "question": "Will Atletico Madrid win the 2025-26 Champions League?",
+            "slug": "will-atletico-madrid-win-the-2025-26-champions-league",
+        }
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_markets = AsyncMock(return_value=[relevant])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await search_prediction_markets(
+                "Atletico Madrid win 2025-26 Champions League",
+                limit=10,
+            )
+
+        assert result["count"] == 1
+        assert result["markets"][0]["slug"] == (
+            "will-atletico-madrid-win-the-2025-26-champions-league"
+        )
+
+
+    @pytest.mark.asyncio
+    async def test_search_prefix_matches_stem_variants(self):
+        """'rate' should match 'rates', 'cut' should match 'cutting'."""
+        fed_market = _mock_gamma_market() | {
+            "condition_id": "0xfed",
+            "question": "Will the Fed decrease interest rates by 25 bps?",
+            "slug": "will-the-fed-decrease-interest-rates-by-25-bps",
+        }
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_markets = AsyncMock(return_value=[fed_market])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await search_prediction_markets("fed rate cut", limit=10)
+
+        # "fed" exact-matches, "rate" prefix-matches "rates" → score=2 >= min_score=2
+        assert result["count"] == 1
+        assert result["markets"][0]["condition_id"] == "0xfed"
 
 
 class TestGetMarketDetails:
@@ -114,6 +201,26 @@ class TestGetMarketDetails:
 
         assert result["tool"] == "get_market_details"
         assert result["slug"] == "will-btc-hit-100k"
+
+    @pytest.mark.asyncio
+    async def test_get_prefers_slug_when_both_identifiers_present(self):
+        mock_market = _mock_gamma_market()
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.get_market_by_slug = AsyncMock(return_value=mock_market)
+            instance.get_market = AsyncMock()
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await get_market_details(
+                condition_id="0xwrong",
+                slug="will-btc-hit-100k",
+            )
+
+        instance.get_market_by_slug.assert_called_once_with("will-btc-hit-100k")
+        instance.get_market.assert_not_called()
+        assert result["condition_id"] == "0xabc123"
 
     @pytest.mark.asyncio
     async def test_get_requires_identifier(self):
@@ -196,6 +303,7 @@ class TestGetMarketSnapshot:
             result = await get_market_snapshot("0xabc123")
 
         assert result["tool"] == "get_market_snapshot"
+        assert result["slug"] == "will-btc-hit-100k"
         assert len(result["outcome_books"]) == 2
         assert result["outcome_books"][0]["outcome"] == "Yes"
         assert result["outcome_books"][1]["outcome"] == "No"
@@ -274,6 +382,7 @@ class TestSlugBasedLookups:
         assert result["count"] == 2
         # get_market routes slugs through get_market_by_slug internally
         assert gamma.get_market.call_count == 2
+        assert result["markets"][0]["slug"] == "will-btc-hit-100k"
 
 
 class TestBacktestPredictionSetup:
@@ -317,3 +426,135 @@ class TestBacktestPredictionSetup:
         assert result["window_stats"]["1d"]["avg_price_change"] == 0.15
         assert result["window_stats"]["to_resolution"]["avg_price_change"] == 0.55
         assert "structured price/liquidity filters only" in result["limitations"][0]
+
+
+def _mock_gamma_event(
+    *,
+    title: str = "Fed decision in April?",
+    slug: str = "fed-decision-in-april",
+    tags: list[str] | None = None,
+    markets: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if tags is None:
+        tags = ["economy", "politics"]
+    if markets is None:
+        markets = [_mock_gamma_market()]
+    return {
+        "id": "12345",
+        "slug": slug,
+        "title": title,
+        "description": "Will the Fed change rates?",
+        "category": "",
+        "start_date": "2026-04-01T00:00:00Z",
+        "end_date": "2026-04-30T00:00:00Z",
+        "active": True,
+        "closed": False,
+        "volume": 6_800_000,
+        "liquidity": 2_000_000,
+        "open_interest": None,
+        "tags": tags,
+        "markets": markets,
+        "comment_count": 42,
+    }
+
+
+class TestExploreTrendingMarkets:
+    @pytest.mark.asyncio
+    async def test_trending_returns_events_with_markets(self):
+        event = _mock_gamma_event()
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_events = AsyncMock(return_value=[event])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await explore_trending_markets(limit=5)
+
+        assert result["tool"] == "explore_trending_markets"
+        assert result["count"] == 1
+        assert result["events"][0]["title"] == "Fed decision in April?"
+        assert result["events"][0]["event_url"] == (
+            "https://polymarket.com/event/fed-decision-in-april"
+        )
+        assert result["events"][0]["market_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_trending_passes_tag_slug(self):
+        event = _mock_gamma_event(
+            title="Bitcoin above $100K?",
+            slug="bitcoin-above-100k",
+            tags=["bitcoin", "crypto"],
+        )
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_events = AsyncMock(return_value=[event])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await explore_trending_markets(
+                tag_slug="bitcoin", limit=5,
+            )
+
+        instance.search_events.assert_called_once_with(
+            limit=5,
+            active=True,
+            order="volume24hr",
+            ascending=False,
+            tag_slug="bitcoin",
+        )
+        assert result["count"] == 1
+        assert result["tag_slug"] == "bitcoin"
+
+    @pytest.mark.asyncio
+    async def test_trending_caps_limit_at_20(self):
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_events = AsyncMock(return_value=[])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            await explore_trending_markets(limit=50)
+
+        instance.search_events.assert_called_once()
+        assert instance.search_events.call_args.kwargs["limit"] == 20
+
+
+class TestSearchFetchLimit:
+    """Search fetches a broad set for client-side filtering."""
+
+    @pytest.mark.asyncio
+    async def test_search_fetches_more_than_requested_limit(self):
+        mock_market = _mock_gamma_market()
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_markets = AsyncMock(return_value=[mock_market])
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            await search_prediction_markets("bitcoin", limit=5)
+
+        # Should fetch at least _SEARCH_FETCH_LIMIT (100), not 5
+        call_kwargs = instance.search_markets.call_args.kwargs
+        assert call_kwargs["limit"] >= 100
+
+    @pytest.mark.asyncio
+    async def test_search_trims_results_to_requested_limit(self):
+        # Create 10 matching markets
+        markets = [
+            _mock_gamma_market()
+            | {"condition_id": f"0x{i}", "question": f"Bitcoin question {i}"}
+            for i in range(10)
+        ]
+
+        with patch("src.tools.discovery.GammaClient") as MockGamma:
+            instance = AsyncMock()
+            instance.search_markets = AsyncMock(return_value=markets)
+            instance.close = AsyncMock()
+            MockGamma.return_value = instance
+
+            result = await search_prediction_markets("bitcoin", limit=3)
+
+        assert result["count"] == 3

@@ -1,4 +1,4 @@
-"""FastMCP server for Polymarket prediction market analysis — 11 tools.
+"""FastMCP server for Polymarket prediction market analysis — 12 tools.
 
 Design doc: docs/design/POLYMARKET_ANALYSIS_SYSTEM.md
 """
@@ -22,6 +22,7 @@ from .response_utils import format_api_error, truncate_response
 from .tools import (
     backtest_prediction_setup,
     compare_prediction_markets,
+    explore_trending_markets,
     get_market_details,
     get_market_snapshot,
     get_price_history,
@@ -63,7 +64,11 @@ async def search_prediction_markets_tool(
     """Search and rank Polymarket prediction markets.
 
     Find markets by topic, keyword, or category. Returns markets with
-    current pricing, volume, and liquidity data.
+    current pricing, volume, liquidity data, slug, and market_url when
+    available from Polymarket. For specific queries, unrelated high-volume
+    fallback results are filtered out; if no relevant market remains, treat
+    the result as no relevant market found rather than inferring from raw
+    unrelated markets.
 
     Args:
         query: Search text (e.g., "election", "bitcoin", "fed rate").
@@ -77,7 +82,8 @@ async def search_prediction_markets_tool(
             Pass "none" to disable and include expired markets.
 
     Returns:
-        Ranked list of matching markets with pricing snapshots.
+        Ranked list of relevant matching markets with pricing snapshots
+        and durable identifiers. Does not synthesize slugs or URLs.
 
     """
     try:
@@ -95,7 +101,51 @@ async def search_prediction_markets_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 2: Market Details ---------------------------------------------------
+# -- Tool 2: Explore Trending Markets -----------------------------------------
+
+
+@mcp.tool(
+    annotations={
+        "title": "Explore Trending Markets",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def explore_trending_markets_tool(
+    tag_slug: str = "",
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Browse trending Polymarket events ranked by 24-hour volume.
+
+    Returns event groups (topics) with their nested markets and
+    pricing. Use this tool for broad discovery: "what's trending",
+    "show me top sports bets", "what prediction markets are active
+    in crypto right now".
+
+    Use ``tag_slug`` to narrow by category. Known tags include:
+    bitcoin, crypto, politics, economy, geopolitics, sports, nba,
+    soccer, esports, golf, and more.
+
+    Args:
+        tag_slug: Category filter (e.g., "bitcoin", "politics").
+            Empty for all categories.
+        limit: Max events (1-20). Default 10.
+
+    Returns:
+        Ranked events with nested markets, pricing, and event URLs.
+
+    """
+    try:
+        result = await explore_trending_markets(tag_slug=tag_slug, limit=limit)
+        return truncate_response(result)
+    except Exception as exc:
+        log_error(logger, exc, context={"tool": "explore_trending_markets", "tag_slug": tag_slug})
+        return format_api_error(exc, "Polymarket")
+
+
+# -- Tool 3: Market Details ---------------------------------------------------
 
 
 @mcp.tool(
@@ -114,14 +164,14 @@ async def get_market_details_tool(
     """Get full details for a Polymarket market.
 
     Returns question, outcomes, resolution criteria, timing, status,
-    category, and current pricing.
+    category, current pricing, slug, and market_url when available.
 
     Args:
-        condition_id: Market condition ID (hex). Preferred.
-        slug: Market URL slug (e.g., "will-trump-win-2024"). Fallback.
+        condition_id: Market condition ID (hex). Fallback.
+        slug: Market URL slug from tool data or user-provided Polymarket URL. Preferred.
 
     Returns:
-        Complete market details including resolution info.
+        Complete market details including resolution info and durable identifiers.
 
     """
     try:
@@ -153,13 +203,17 @@ async def get_market_snapshot_tool(
     Returns the actual executable pricing from the order book,
     not just the midpoint. Includes per-outcome top-of-book depth
     so a manual trader can assess fill quality for YES or NO.
+    Returns the tool-provided slug and market_url when available so
+    follow-up queries can reuse exact identifiers.
 
     Args:
         condition_id: Market condition ID (fallback).
-        slug: Market URL slug (preferred — fast and reliable).
+        slug: Market URL slug from tool data or user-provided Polymarket URL
+            (preferred — fast and reliable). Do not invent from a title.
 
     Returns:
-        Per-outcome bid, ask, midpoint, spread, depth, volume, liquidity.
+        Per-outcome bid, ask, midpoint, spread, depth, volume, liquidity,
+        and durable identifiers.
 
     """
     try:
@@ -194,12 +248,13 @@ async def get_price_history_tool(
 
     Args:
         condition_id: Market condition ID (fallback).
-        slug: Market URL slug (preferred — fast and reliable).
+        slug: Market URL slug from tool data or user-provided Polymarket URL
+            (preferred — fast and reliable). Do not invent from a title.
         interval: Time interval (1m, 5m, 1h, 6h, 1d, 1w, max).
         fidelity: Number of data points. Default 60.
 
     Returns:
-        YES/NO price history arrays with timestamps.
+        YES/NO price history arrays with timestamps and durable identifiers.
 
     """
     try:
@@ -233,11 +288,12 @@ async def compare_prediction_markets_tool(
     liquidity, volume, and time to resolution across multiple markets.
 
     Args:
-        identifiers: List of 2-5 market slugs or condition IDs.
-            Slugs preferred for reliable lookups.
+        identifiers: List of 2-5 exact market slugs or condition IDs from
+            tool data or user-provided Polymarket URLs. Slugs are preferred
+            for reliable lookups. Do not invent identifiers from titles.
 
     Returns:
-        Side-by-side comparison table.
+        Side-by-side comparison table with durable identifiers.
 
     """
     try:
@@ -270,7 +326,9 @@ async def get_trade_flow_tool(
     Includes caveat that flow is not proof of edge.
 
     Args:
-        condition_id: Market condition ID.
+        condition_id: Exact market condition ID from tool data. If you only
+            have a slug, first resolve it with get_market_details or
+            get_market_snapshot; do not pass a slug here.
         limit: Max trades to analyze (1-100). Default 50.
 
     Returns:
@@ -304,7 +362,9 @@ async def get_top_holders_tool(
     """Show holder concentration and risk for a market.
 
     Args:
-        condition_id: Market condition ID.
+        condition_id: Exact market condition ID from tool data. If you only
+            have a slug, first resolve it with get_market_details or
+            get_market_snapshot; do not pass a slug here.
         limit: Max holders (1-50). Default 20.
 
     Returns:

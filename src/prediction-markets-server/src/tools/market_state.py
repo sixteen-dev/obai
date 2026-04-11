@@ -120,6 +120,7 @@ async def get_market_snapshot(
             return {
                 "tool": "get_market_snapshot",
                 "condition_id": resolved_cid,
+                "slug": market.get("slug", slug),
                 "error": "No CLOB token IDs found for this market",
             }
 
@@ -128,6 +129,7 @@ async def get_market_snapshot(
         return {
             "tool": "get_market_snapshot",
             "condition_id": resolved_cid,
+            "slug": market.get("slug", slug),
             "question": market["question"],
             "outcomes": market["outcomes"],
             "outcome_prices": market["outcome_prices"],
@@ -183,6 +185,7 @@ async def get_price_history(
             return {
                 "tool": "get_price_history",
                 "condition_id": resolved_cid,
+                "slug": market.get("slug", slug),
                 "error": "No CLOB token IDs found",
             }
 
@@ -211,6 +214,7 @@ async def get_price_history(
         return {
             "tool": "get_price_history",
             "condition_id": resolved_cid,
+            "slug": market.get("slug", slug),
             "question": market["question"],
             "interval": interval,
             "fidelity": fidelity,
@@ -265,6 +269,7 @@ async def compare_prediction_markets(
             comparisons.append(
                 {
                     "condition_id": market["condition_id"],
+                    "slug": market.get("slug", identifiers[i]),
                     "question": market["question"],
                     "outcomes": market["outcomes"],
                     "outcome_prices": market["outcome_prices"],

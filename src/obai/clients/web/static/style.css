@@ -599,6 +599,16 @@ body {
     box-shadow: none;
 }
 
+.message-bubble a[href] {
+    color: var(--accent, #60a5fa);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.message-bubble a[href]:hover {
+    opacity: 0.8;
+}
+
 .message-user .message-bubble {
     max-width: min(520px, 100%);
     padding: 12px 16px;

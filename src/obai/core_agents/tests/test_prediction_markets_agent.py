@@ -74,12 +74,20 @@ class TestPredictionMarketsAgentInitialization:
         assert "edge" in prompt.lower()
         assert "If these conditions are not met, output No trade" in prompt
 
-    def test_central_hub_prompt_has_prediction_market_synthesis_rules(self) -> None:
-        """Hub prompt should preserve executable, exact-market synthesis."""
+    def test_prediction_markets_prompt_forbids_invented_market_urls(self) -> None:
+        """Prediction-market prompt should prevent synthesized slugs or URLs."""
+        prompt = self._read_prompt_file("prediction_markets")
+        assert "Construct or guess a Polymarket slug or URL" in prompt
+        assert "Only show `slug` or `market_url` values that came from tool data" in prompt
+        assert "no relevant active market was found" in prompt
+
+    def test_central_hub_prompt_has_prediction_market_terminal_rules(self) -> None:
+        """Hub prompt should relay prediction-market output verbatim."""
         prompt = self._read_prompt_file("central_hub")
         assert "**Prediction-market synthesis**" in prompt
-        assert "Do not relabel a narrow resolution condition" in prompt
-        assert "For odds/liquidity questions" in prompt
+        assert "terminal author" in prompt
+        assert "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:" in prompt
+        assert "NEVER answer prediction-market questions directly" in prompt
 
     @pytest.mark.asyncio
     async def test_agent_initialize_without_mcp_server(self) -> None:

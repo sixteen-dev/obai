@@ -7,4 +7,11 @@
 |----|------|---|-------|------|
 | #240 | 8:23 PM | 🔵 | BaseAgent Class for MCP-Integrated Specialist Agents | ~613 |
 | #239 | " | 🔵 | Central Hub Agent Implementation and Agents-as-Tools Pattern | ~629 |
+
+### Apr 10, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #367 | 11:05 PM | 🔵 | Central Hub Specialist Tool Registration and Parallel Initialization | ~564 |
+| #366 | " | 🔵 | Central Hub Agents-as-Tools Architecture | ~518 |
 </claude-mem-context>

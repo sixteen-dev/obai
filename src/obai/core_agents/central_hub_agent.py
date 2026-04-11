@@ -110,6 +110,30 @@ def _clear_strategy_passthrough() -> None:
     _strategy_passthrough = None
 
 
+# Prediction-market passthrough (same pattern as strategy)
+_prediction_passthrough: str | None = None
+
+
+def _set_prediction_passthrough(content: str) -> None:
+    """Store prediction-market output for tracing and potential passthrough."""
+    global _prediction_passthrough
+    _prediction_passthrough = content
+    logger.info("Prediction passthrough set (len=%d)", len(content))
+    _inner_tool_outputs.append(
+        {
+            "specialist": "Prediction Markets Agent",
+            "tool_name": "prediction_passthrough",
+            "output": content,
+        }
+    )
+
+
+def _clear_prediction_passthrough() -> None:
+    """Reset prediction passthrough state (call between queries)."""
+    global _prediction_passthrough
+    _prediction_passthrough = None
+
+
 def _is_completed_strategy_output(output: str) -> bool:
     """Detect if strategy output is a completed response (not error/missing)."""
     return "#### 1. Verdict" in output or "## Verdict" in output
@@ -169,12 +193,35 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "Do not summarize it, reformat it, or add commentary."
 )
 _TERMINAL_STRATEGY_OUTPUT_PREFIX = "__TERMINAL_TOOL_OUTPUT__:strategy_analysis:"
+_TERMINAL_PREDICTION_PREFIX = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
 
 
 def _wrap_terminal_strategy_output(output: str, kind: str) -> str:
     """Wrap terminal strategy output in a rigid marker for the hub."""
     return f"{_TERMINAL_STRATEGY_OUTPUT_PREFIX}{kind}\n\n{output}"
 
+
+def _wrap_terminal_prediction_output(output: str) -> str:
+    """Wrap terminal prediction-market output in a rigid marker for the hub."""
+    return f"{_TERMINAL_PREDICTION_PREFIX}\n\n{output}"
+
+
+_PREDICTION_TOOL_DESCRIPTION = (
+    "Polymarket prediction market analysis. "
+    "Use for market discovery, understanding, and comparison; "
+    "executable pricing with bid/ask/spread/depth; "
+    "trade flow and holder analysis; "
+    "trader leaderboard and wallet tracing; "
+    "manual trade thesis generation; "
+    "and setup-based backtesting over resolved prediction markets. "
+    "Route here for Polymarket, prediction market odds, "
+    "YES/NO market pricing, event resolution, top traders on "
+    "Polymarket, and prediction-market trade ideas. "
+    "Do NOT route prediction-market backtests to strategy_analysis. "
+    "This tool returns a finished user-facing deliverable. "
+    "If it does, your final answer must relay the tool output unchanged. "
+    "Do not summarize it, reformat it, or add commentary."
+)
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
     # Technical strategy families
@@ -733,28 +780,7 @@ class CentralHubAgent:
                 )
 
             if self.prediction_markets_agent and self.prediction_markets_agent.agent:
-                specialist_tools.append(
-                    self.prediction_markets_agent.agent.as_tool(
-                        tool_name="prediction_market_analysis",
-                        tool_description=(
-                            "Polymarket prediction market analysis. "
-                            "Use for market discovery, understanding, and comparison; "
-                            "executable pricing with bid/ask/spread/depth; "
-                            "trade flow and holder analysis; "
-                            "trader leaderboard and wallet tracing; "
-                            "manual trade thesis generation; "
-                            "and setup-based backtesting over resolved prediction markets. "
-                            "Route here for Polymarket, prediction market odds, "
-                            "YES/NO market pricing, event resolution, top traders on "
-                            "Polymarket, and prediction-market trade ideas. "
-                            "Do NOT route prediction-market backtests to strategy_analysis."
-                        ),
-                        max_turns=25,
-                        on_stream=_create_stream_handler(
-                            "prediction_market_analysis", "Prediction Markets Agent"
-                        ),
-                    )
-                )
+                specialist_tools.append(self._build_prediction_tool())
 
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
@@ -898,6 +924,52 @@ class CentralHubAgent:
         if self._cache:
             return await self._cache.clear()
         return True
+
+    def _build_prediction_tool(self) -> Tool:
+        """Build prediction-market tool wrapper that marks output as terminal.
+
+        The prediction-market agent is a terminal author: its output is
+        a complete, formatted analysis (market snapshots, trade memos,
+        comparisons) that the hub should relay unchanged.
+        """
+        if self.prediction_markets_agent is None or self.prediction_markets_agent.agent is None:
+            msg = "Prediction Markets Agent not initialized"
+            raise ValueError(msg)
+
+        pred_agent = self.prediction_markets_agent.agent
+        stream_handler = _create_stream_handler(
+            "prediction_market_analysis", "Prediction Markets Agent"
+        )
+
+        @function_tool(
+            name_override="prediction_market_analysis",
+            description_override=_PREDICTION_TOOL_DESCRIPTION,
+            strict_mode=False,
+        )
+        async def prediction_market_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            result = Runner.run_streamed(
+                starting_agent=pred_agent,
+                input=input,
+                context=ctx.context,
+                max_turns=25,
+            )
+
+            async for event in result.stream_events():
+                await stream_handler({"agent": pred_agent, "event": event})
+
+            final_output = getattr(result, "final_output", None)
+            output = ""
+            if isinstance(final_output, str):
+                output = final_output
+            elif final_output is not None:
+                output = str(final_output)
+
+            if not output:
+                return output
+            _set_prediction_passthrough(output)
+            return _wrap_terminal_prediction_output(output)
+
+        return prediction_market_analysis
 
     def _build_strategy_tool(self) -> Tool:
         """Build guarded strategy tool wrapper for hub routing.
@@ -1047,9 +1119,10 @@ class CentralHubAgent:
             msg = "Central Hub not initialized. Call initialize() first."
             raise ValueError(msg)
 
-        # Reset agent activity tracking and strategy passthrough for this query
+        # Reset agent activity tracking and passthrough state for this query
         _clear_active_agents()
         _clear_strategy_passthrough()
+        _clear_prediction_passthrough()
 
         # RAG-style cache: search for similar cached response
         query_to_run = query

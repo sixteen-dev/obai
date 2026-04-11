@@ -55,7 +55,7 @@ def sample_market_response():
         "orderMinSize": 5,
         "orderPriceMinTickSize": 0.01,
         "oneWeekPriceChange": 0.05,
-        "events": [{"category": "crypto"}],
+        "events": [{"slug": "btc-100k", "category": "crypto"}],
     }
 
 
@@ -121,6 +121,26 @@ class TestGammaClientNormalization:
         client = GammaClient()
         result = client._normalize_market({"volume": "500000.50"})
         assert result["volume"] == 500000.50
+
+    def test_normalize_market_uses_event_slug_for_url(self):
+        """market_url should use the parent event slug, not the market slug."""
+        client = GammaClient()
+        result = client._normalize_market(
+            {
+                "slug": "will-btc-hit-100k-by-end-of-2026",
+                "events": [{"slug": "btc-100k", "category": "crypto"}],
+            }
+        )
+        assert result["market_url"] == "https://polymarket.com/event/btc-100k"
+        assert result["slug"] == "will-btc-hit-100k-by-end-of-2026"
+
+    def test_normalize_market_empty_url_when_no_event_slug(self):
+        """No event slug means no market_url."""
+        client = GammaClient()
+        result = client._normalize_market(
+            {"slug": "some-market", "events": [{"category": "crypto"}]}
+        )
+        assert result["market_url"] == ""
 
 
 class TestGammaClientSearchMarkets:

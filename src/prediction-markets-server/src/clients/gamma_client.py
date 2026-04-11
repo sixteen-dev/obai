@@ -184,13 +184,22 @@ class GammaClient:
         query: str = "",
         limit: int = 10,
         active: bool = True,
+        order: str = "volume24hr",
+        ascending: bool = False,
+        tag_slug: str = "",
     ) -> list[dict[str, Any]]:
         """Search events.
 
         Args:
-            query: Search text.
+            query: Search text (currently ignored by the Gamma API).
             limit: Maximum results.
             active: Only active events.
+            order: Sort field (volume24hr, liquidity, startDate).
+            ascending: Sort direction. Must be False for volume/liquidity
+                ordering to return meaningful results.
+            tag_slug: Filter by tag slug (e.g., "bitcoin", "politics",
+                "sports", "economy"). Only events tagged with this
+                slug are returned.
 
         Returns:
             List of normalized event dicts.
@@ -199,9 +208,13 @@ class GammaClient:
         params: dict[str, Any] = {
             "limit": min(limit, 100),
             "active": str(active).lower(),
+            "order": order,
+            "ascending": str(ascending).lower(),
         }
         if query:
             params["_q"] = query
+        if tag_slug:
+            params["tag_slug"] = tag_slug
 
         raw = await self._get("/events", params)
         if not isinstance(raw, list):
@@ -239,10 +252,24 @@ class GammaClient:
         # Parse clobTokenIds which may also be a JSON string
         clob_token_ids = self._parse_json_field(raw.get("clobTokenIds", []))
 
+        slug = raw.get("slug", "")
+
+        # Polymarket URLs use the event slug, not the market slug.
+        # Extract from the parent event when available.
+        event_slug = ""
+        events = raw.get("events", [])
+        if isinstance(events, list):
+            for event in events:
+                if isinstance(event, dict) and event.get("slug"):
+                    event_slug = event["slug"]
+                    break
+        market_url = f"https://polymarket.com/event/{event_slug}" if event_slug else ""
+
         return {
             "condition_id": raw.get("conditionId", ""),
             "question_id": raw.get("questionID", ""),
-            "slug": raw.get("slug", ""),
+            "slug": slug,
+            "market_url": market_url,
             "question": raw.get("question", ""),
             "description": raw.get("description", ""),
             "outcomes": outcomes,

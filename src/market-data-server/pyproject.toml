@@ -61,6 +61,11 @@ warn_unused_ignores = true
 show_error_codes = true
 no_warn_unreachable = true
 
+[tool.uv]
+exclude-newer = "14 days"
+exclude-newer-package = { cryptography = "0 days", fastmcp = "0 days", pygments = "0 days" }
+constraint-dependencies = ["cryptography>=46.0.7", "fastmcp>=3.2.0", "pygments>=2.20.0"]
+
 [dependency-groups]
 dev = [
     "types-pyyaml>=6.0.12.20250915",

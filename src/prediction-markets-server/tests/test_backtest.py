@@ -258,6 +258,7 @@ def _mock_gamma_market(**overrides: object):
         "condition_id": "0xabc",
         "question": "Will X happen?",
         "slug": "will-x-happen",
+        "market_url": "https://polymarket.com/event/will-x-happen",
         "outcomes": ["Yes", "No"],
         "outcome_prices": [0.5, 0.5],
         "volume": 50000,

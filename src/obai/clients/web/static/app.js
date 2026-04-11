@@ -249,6 +249,11 @@ function renderMarkdownInto(element, markdownText) {
     while (doc.body.firstChild) {
         element.appendChild(doc.body.firstChild);
     }
+    // Open all links in a new tab so the user stays in the app
+    for (const link of element.querySelectorAll("a[href]")) {
+        link.target = "_blank";
+        link.rel = "noopener";
+    }
     enhanceCodeBlocks(element);
 }
 
