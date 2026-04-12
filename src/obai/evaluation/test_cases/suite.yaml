@@ -1,6 +1,6 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 180 test cases across 7 active categories (A-E, G, H; F pending).
+# 181 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 #   prediction markets,
@@ -1195,6 +1195,21 @@ test_cases:
     query_type: prediction_market_copy_trader
     expected_tools: [prediction_market_analysis]
     description: Top-performer discovery with copy-trade intent — tests leaderboard, wallet trace, and anti-alpha guardrails
+
+  - id: G42
+    query: >
+      Previous: Search active Polymarket markets related to 2026 World Cup group-stage outcomes,
+      especially group winner or qualification markets, and return the top tradable candidates
+      with their slugs. Current query: For the top 3 candidates from that prior Polymarket result,
+      use the prior slugs as the market identifiers and drill into execution quality and trader flow.
+      Compare slippage for about $2,000 notional, ability to scale in and out, spread behavior,
+      recent large prints, and catalyst clarity. Pick the best trade or say no trade. Give side,
+      entry limit, max size, exit plan, invalidation, resolution risk, confidence, and what new
+      information would change it to no trade.
+    category: G
+    query_type: prediction_market_followup_slug_trade_memo
+    expected_tools: [prediction_market_analysis]
+    description: "Single-turn regression for prediction-market follow-up routing: prior World Cup group markets should be drilled down through prediction_market_analysis using slugs, not rephrased market names."
 
 
   # ─────────────────────────────────────────────

@@ -87,11 +87,13 @@ class TestPredictionMarketsAgentInitialization:
         assert "include the tool-provided `market_url`" in prompt
         assert "Use `slug` only as a fallback when `market_url` is absent" in prompt
 
-    def test_central_hub_prompt_has_prediction_market_terminal_rules(self) -> None:
-        """Hub prompt should relay prediction-market output verbatim."""
+    def test_central_hub_prompt_has_prediction_market_formatting_rules(self) -> None:
+        """Hub prompt should format prediction-market output with ID guardrails."""
         prompt = self._read_prompt_file("central_hub")
         assert "**Prediction-market synthesis**" in prompt
-        assert "terminal author" in prompt
+        assert "light readability cleanup is allowed" in prompt
+        assert "Keep the human-facing analysis prominent" in prompt
+        assert "Do not show `condition_id` or `token_id` unless the user asks" in prompt
         assert "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:" in prompt
         assert "NEVER answer prediction-market questions directly" in prompt
 

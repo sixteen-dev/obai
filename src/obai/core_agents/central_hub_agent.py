@@ -54,18 +54,13 @@ from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
 from .options_agent import OptionsAgent
 from .portfolio_agent import PortfolioAgent
-from .prediction_context import (
-    extract_prediction_context,
-    format_context_for_hub,
-    validate_prediction_relay,
-)
+from .prediction_context import validate_prediction_relay
 from .prediction_markets_agent import PredictionMarketsAgent
 from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .research_agent import ResearchAgent
 from .screener_agent import ScreenerAgent
-from .session_context import get_context_store
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
 
@@ -223,7 +218,11 @@ def _wrap_terminal_prediction_output(output: str) -> str:
     control = (
         f"{_TERMINAL_PREDICTION_PREFIX}"
         "render=light_cleanup_allowed; "
-        "preserve=market_url,slug,condition_id,token_id; "
+        "display=analysis,prices,liquidity,volume,timing,risks,market_url; "
+        "preserve_for_followup=slug,market_url; "
+        "routing_key_priority=slug,market_url; "
+        "hide_by_default=condition_id,token_id; "
+        "lookup_ids_internal_only=true; "
         "no_new_polymarket_identifiers=true"
     )
     return f"{control}\n\n{output}"
@@ -241,9 +240,16 @@ _PREDICTION_TOOL_DESCRIPTION = (
     "YES/NO market pricing, event resolution, top traders on "
     "Polymarket, and prediction-market trade ideas. "
     "Do NOT route prediction-market backtests to strategy_analysis. "
-    "This tool returns a finished user-facing deliverable. "
-    "If it does, your final answer must relay the tool output unchanged. "
-    "Do not summarize it, reformat it, or add commentary."
+    "Use the tool output as source analysis for the final answer. "
+    "Light readability formatting is allowed, but surface the analysis, "
+    "market URL, prices, liquidity, timing, risks, and actionable implications. "
+    "For follow-ups about prior prediction markets, pass exact slugs from prior "
+    "prediction output as the primary routing key; use market URLs only when "
+    "slugs are unavailable. Do not send only titles, descriptions, or "
+    "paraphrases when routing keys are available. "
+    "Do not show condition_id or token_id unless the user asks for raw "
+    "identifiers, execution payloads, or debugging details. "
+    "Do not invent Polymarket identifiers."
 )
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
@@ -570,37 +576,6 @@ def get_inner_tool_outputs() -> list[dict[str, Any]]:
         List of dicts with specialist, tool_name, and output keys.
     """
     return list(_inner_tool_outputs)
-
-
-async def _persist_prediction_context(
-    *,
-    prediction_fired: bool,
-    session_id: str | None,
-) -> None:
-    """Persist prediction-market identifiers captured during this turn."""
-    logger.info(
-        "Context write gate: prediction_fired=%s session_id=%s outputs=%d",
-        prediction_fired,
-        session_id,
-        len(_inner_tool_outputs),
-    )
-    if not prediction_fired or not session_id or not _inner_tool_outputs:
-        return
-
-    try:
-        payload = extract_prediction_context(list(_inner_tool_outputs))
-        logger.info("Context extraction: payload=%s", "present" if payload else "None")
-        if payload:
-            store = get_context_store()
-            await store.initialize()
-            await store.write_context(
-                session_id,
-                "prediction_market",
-                payload,
-            )
-            logger.info("Prediction context saved for session %s", session_id)
-    except Exception:
-        logger.exception("Failed to save prediction context")
 
 
 def clear_agent_activity_tracking() -> None:
@@ -980,12 +955,7 @@ class CentralHubAgent:
         return True
 
     def _build_prediction_tool(self) -> Tool:
-        """Build prediction-market tool wrapper that marks output as terminal.
-
-        The prediction-market agent is a terminal author: its output is
-        a complete, formatted analysis (market snapshots, trade memos,
-        comparisons) that the hub should relay unchanged.
-        """
+        """Build prediction-market tool wrapper with identifier guardrails."""
         if self.prediction_markets_agent is None or self.prediction_markets_agent.agent is None:
             msg = "Prediction Markets Agent not initialized"
             raise ValueError(msg)
@@ -1209,28 +1179,7 @@ class CentralHubAgent:
             )
             logger.info("Strategy intent detected — injected routing hint")
 
-        # Inject durable prediction context for follow-up disambiguation
-        session_id = getattr(session, "session_id", None) if session else None
-        if session_id:
-            try:
-                ctx_store = get_context_store()
-                await ctx_store.initialize()
-                contexts = await ctx_store.read_context(
-                    session_id,
-                    "prediction_market",
-                    limit=3,
-                )
-                if contexts:
-                    context_block = format_context_for_hub(contexts)
-                    if context_block:
-                        query_to_run = context_block + "\n\n" + query_to_run
-                        logger.info(
-                            "Injected prediction context for session %s (%d entries)",
-                            session_id,
-                            len(contexts),
-                        )
-            except Exception:
-                logger.exception("Failed to load prediction context")
+        prediction_context_block = ""
 
         # Run streamed
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
@@ -1282,18 +1231,18 @@ class CentralHubAgent:
 
             yield event
 
-        # Persist before yielding buffered/fallback final output. Some clients
-        # stop consuming once final text is rendered, which would otherwise
-        # skip durable context writes placed after those yields.
-        await _persist_prediction_context(
-            prediction_fired=prediction_fired,
-            session_id=session_id,
-        )
+        # Context persistence disabled — the SDK session already carries
+        # conversation history for follow-ups, and tool-output-based context
+        # was injecting stale market identifiers that biased followup queries.
 
         # Validation gate: emit buffered events or passthrough
         if prediction_fired and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
-            if validate_prediction_relay(hub_final_text, _prediction_passthrough):
+            if validate_prediction_relay(
+                hub_final_text,
+                _prediction_passthrough,
+                allowed_context=prediction_context_block,
+            ):
                 for evt in buffered_events:
                     yield evt
             else:

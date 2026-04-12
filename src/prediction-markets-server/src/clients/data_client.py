@@ -98,9 +98,13 @@ class DataClient:
     ) -> dict[str, Any]:
         """Get top holders for a market.
 
+        The API returns token buckets (one per outcome token), each
+        containing a nested ``holders`` array.  We flatten them into a
+        single list and tag each holder with its token_id.
+
         Args:
             condition_id: Market condition ID.
-            limit: Maximum holders to return.
+            limit: Maximum holders per token bucket.
 
         Returns:
             Dict with holders array and concentration summary.
@@ -114,17 +118,17 @@ class DataClient:
 
         holders: list[dict[str, Any]] = []
         if isinstance(raw, list):
-            for h in raw:
-                if isinstance(h, dict):
-                    holders.append(self._normalize_holder(h))
-        elif isinstance(raw, dict):
-            raw_holders = raw.get("holders", raw.get("data", []))
-            if isinstance(raw_holders, list):
-                for h in raw_holders:
-                    if isinstance(h, dict):
-                        holders.append(self._normalize_holder(h))
+            for bucket in raw:
+                if not isinstance(bucket, dict):
+                    continue
+                token_id = bucket.get("token", "")
+                nested = bucket.get("holders", [])
+                if isinstance(nested, list):
+                    for h in nested:
+                        if isinstance(h, dict):
+                            holders.append(self._normalize_holder(h, token_id))
 
-        # Concentration analysis
+        # Concentration analysis across all outcome tokens
         total_held = sum(h.get("amount", 0) for h in holders)
         top5_held = sum(h.get("amount", 0) for h in holders[:5])
         concentration_top5 = round(top5_held / total_held, 4) if total_held > 0 else 0
@@ -137,33 +141,48 @@ class DataClient:
             "holders": holders,
         }
 
-    _VALID_PERIODS = {"daily", "weekly", "monthly", "all"}
+    _VALID_TIME_PERIODS = {"DAY", "WEEK", "MONTH", "ALL"}
+    _VALID_ORDER_BY = {"PNL", "VOL"}
 
     async def get_leaderboard(
         self,
         *,
-        period: str = "all",
+        time_period: str = "ALL",
+        order_by: str = "PNL",
         limit: int = 20,
     ) -> dict[str, Any]:
         """Get the trader leaderboard.
 
         Args:
-            period: Time window — daily, weekly, monthly, or all.
-            limit: Maximum traders to return.
+            time_period: DAY, WEEK, MONTH, or ALL.
+            order_by: PNL or VOL.
+            limit: Maximum traders to return (1-50).
 
         Returns:
             Dict with ranked trader list.
 
         Raises:
-            ValueError: If period is not a valid option.
+            ValueError: If time_period or order_by is invalid.
 
         """
-        if period not in self._VALID_PERIODS:
-            valid = ", ".join(sorted(self._VALID_PERIODS))
-            msg = f"Invalid period '{period}'. Must be one of: {valid}"
+        upper_period = time_period.upper()
+        if upper_period not in self._VALID_TIME_PERIODS:
+            valid = ", ".join(sorted(self._VALID_TIME_PERIODS))
+            msg = f"Invalid time_period '{time_period}'. Must be one of: {valid}"
             raise ValueError(msg)
 
-        params: dict[str, Any] = {"limit": min(limit, 50), "window": period}
+        upper_order = order_by.upper()
+        if upper_order not in self._VALID_ORDER_BY:
+            valid = ", ".join(sorted(self._VALID_ORDER_BY))
+            msg = f"Invalid order_by '{order_by}'. Must be one of: {valid}"
+            raise ValueError(msg)
+
+        params: dict[str, Any] = {
+            "timePeriod": upper_period,
+            "category": "OVERALL",
+            "orderBy": upper_order,
+            "limit": min(limit, 50),
+        }
         raw = await self._get(self._data_url, "/v1/leaderboard", params)
 
         traders: list[dict[str, Any]] = []
@@ -171,15 +190,10 @@ class DataClient:
             for t in raw:
                 if isinstance(t, dict):
                     traders.append(self._normalize_leaderboard_entry(t))
-        elif isinstance(raw, dict):
-            raw_traders = raw.get("leaderboard", raw.get("data", raw.get("traders", [])))
-            if isinstance(raw_traders, list):
-                for t in raw_traders:
-                    if isinstance(t, dict):
-                        traders.append(self._normalize_leaderboard_entry(t))
 
         return {
-            "period": period,
+            "time_period": upper_period,
+            "order_by": upper_order,
             "trader_count": len(traders),
             "traders": traders,
         }
@@ -286,29 +300,12 @@ class DataClient:
             }
 
         return {
-            "wallet": raw.get("walletAddress") or raw.get("proxyWallet") or wallet_address,
-            "display_name": (
-                raw.get("name")
-                or raw.get("displayName")
-                or raw.get("userName")
-                or raw.get("username")
-                or raw.get("pseudonym")
-            ),
-            "username": raw.get("userName") or raw.get("username"),
+            "wallet": raw.get("proxyWallet") or wallet_address,
+            "display_name": raw.get("name") or raw.get("pseudonym"),
             "x_username": raw.get("xUsername"),
-            "bio": raw.get("bio", ""),
-            "profile_image": (
-                raw.get("profileImage") or raw.get("profileImageUrl") or raw.get("image")
-            ),
-            "volume_traded": self._maybe_float(
-                raw.get("volumeTraded") or raw.get("volume") or raw.get("vol")
-            ),
-            "pnl": self._maybe_float(
-                raw.get("pnl") or raw.get("profit") or raw.get("profitAndLoss")
-            ),
-            "markets_traded": (
-                raw.get("marketsTraded") or raw.get("marketCount") or raw.get("numMarketsTraded")
-            ),
+            "verified_badge": raw.get("verifiedBadge"),
+            "bio": raw.get("bio"),
+            "profile_image": raw.get("profileImage"),
             "created_at": raw.get("createdAt"),
             "profile_available": True,
         }
@@ -316,49 +313,44 @@ class DataClient:
     def _normalize_trade(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Normalize a trade record."""
         return {
-            "id": raw.get("id") or raw.get("transactionHash", ""),
+            "id": raw.get("transactionHash") or raw.get("id", ""),
             "side": raw.get("side", "").lower(),
             "price": self._safe_float(raw.get("price")),
             "size": self._safe_float(raw.get("size") or raw.get("amount")),
             "timestamp": raw.get("timestamp") or raw.get("createdAt"),
-            "wallet": raw.get("maker") or raw.get("user") or raw.get("wallet", ""),
+            "wallet": (
+                raw.get("proxyWallet")
+                or raw.get("maker")
+                or raw.get("user")
+                or raw.get("wallet", "")
+            ),
             "outcome": raw.get("outcome", ""),
+            "outcome_index": raw.get("outcomeIndex"),
+            "slug": raw.get("slug", ""),
+            "event_slug": raw.get("eventSlug", ""),
         }
 
-    def _normalize_holder(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Normalize a holder record."""
+    def _normalize_holder(self, raw: dict[str, Any], token_id: str = "") -> dict[str, Any]:
+        """Normalize a holder record from a token bucket."""
         return {
-            "wallet": raw.get("address") or raw.get("user") or raw.get("wallet", ""),
-            "amount": self._safe_float(raw.get("amount") or raw.get("balance")),
-            "outcome": raw.get("outcome", ""),
+            "wallet": raw.get("proxyWallet") or raw.get("address") or raw.get("wallet", ""),
+            "display_name": raw.get("name") or raw.get("pseudonym"),
+            "amount": self._safe_float(raw.get("amount")),
+            "outcome_index": raw.get("outcomeIndex"),
+            "token_id": token_id,
         }
 
     def _normalize_leaderboard_entry(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Normalize a leaderboard entry."""
         return {
             "rank": raw.get("rank"),
-            "wallet": (
-                raw.get("proxyWallet")
-                or raw.get("walletAddress")
-                or raw.get("address")
-                or raw.get("user")
-                or raw.get("wallet", "")
-            ),
-            "display_name": (
-                raw.get("userName")
-                or raw.get("username")
-                or raw.get("name")
-                or raw.get("displayName")
-            ),
-            "volume": self._maybe_float(
-                raw.get("vol") or raw.get("volume") or raw.get("volumeTraded")
-            ),
-            "pnl": self._maybe_float(raw.get("pnl") or raw.get("profit")),
-            "markets_traded": (
-                raw.get("marketsTraded") or raw.get("marketCount") or raw.get("numMarketsTraded")
-            ),
-            "positions_won": raw.get("positionsWon") or raw.get("wins") or raw.get("numWon"),
-            "positions_lost": (raw.get("positionsLost") or raw.get("losses") or raw.get("numLost")),
+            "wallet": raw.get("proxyWallet", ""),
+            "display_name": raw.get("userName"),
+            "profile_image": raw.get("profileImage"),
+            "x_username": raw.get("xUsername"),
+            "verified_badge": raw.get("verifiedBadge"),
+            "volume": self._maybe_float(raw.get("vol")),
+            "pnl": self._maybe_float(raw.get("pnl")),
         }
 
     def _normalize_activity(self, raw: dict[str, Any]) -> dict[str, Any]:
@@ -375,15 +367,26 @@ class DataClient:
         }
 
     def _normalize_position(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Normalize a position record."""
+        """Normalize a position record from /positions."""
         return {
-            "market": raw.get("market") or raw.get("conditionId", ""),
-            "title": raw.get("title") or raw.get("question", ""),
+            "condition_id": raw.get("conditionId", ""),
+            "title": raw.get("title", ""),
+            "slug": raw.get("slug", ""),
+            "event_slug": raw.get("eventSlug", ""),
             "outcome": raw.get("outcome", ""),
-            "size": self._safe_float(raw.get("size") or raw.get("amount")),
-            "avg_price": self._safe_float(raw.get("avgPrice") or raw.get("averagePrice")),
-            "current_price": self._safe_float(raw.get("currentPrice") or raw.get("price")),
-            "pnl": self._safe_float(raw.get("pnl") or raw.get("profit")),
+            "outcome_index": raw.get("outcomeIndex"),
+            "asset": raw.get("asset", ""),
+            "opposite_asset": raw.get("oppositeAsset", ""),
+            "size": self._safe_float(raw.get("size")),
+            "avg_price": self._safe_float(raw.get("avgPrice")),
+            "cur_price": self._safe_float(raw.get("curPrice")),
+            "initial_value": self._safe_float(raw.get("initialValue")),
+            "current_value": self._safe_float(raw.get("currentValue")),
+            "cash_pnl": self._safe_float(raw.get("cashPnl")),
+            "percent_pnl": self._safe_float(raw.get("percentPnl")),
+            "realized_pnl": self._safe_float(raw.get("realizedPnl")),
+            "redeemable": raw.get("redeemable", False),
+            "end_date": raw.get("endDate"),
         }
 
     @staticmethod

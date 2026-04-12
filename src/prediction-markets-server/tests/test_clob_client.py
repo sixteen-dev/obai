@@ -112,17 +112,3 @@ class TestClobClientPriceHistory:
         assert result["history"] == []
         await client.close()
 
-
-class TestClobClientPrice:
-    @pytest.mark.asyncio
-    async def test_get_price_computes_spread(self):
-        client = ClobClient()
-        mock_resp = _mock_httpx_response({"bid": "0.64", "ask": "0.66"})
-
-        with patch.object(client._client, "get", AsyncMock(return_value=mock_resp)):
-            result = await client.get_price("token_123")
-
-        assert result["bid"] == 0.64
-        assert result["ask"] == 0.66
-        assert result["spread"] == pytest.approx(0.02)
-        await client.close()

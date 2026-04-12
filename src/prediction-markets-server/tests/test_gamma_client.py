@@ -143,14 +143,14 @@ class TestGammaClientNormalization:
         assert result["market_url"] == ""
 
 
-class TestGammaClientSearchMarkets:
+class TestGammaClientListMarkets:
     @pytest.mark.asyncio
-    async def test_search_markets_returns_normalized_results(self, sample_market_response):
+    async def test_list_markets_returns_normalized_results(self, sample_market_response):
         client = GammaClient()
         mock_resp = _mock_httpx_response([sample_market_response])
 
         with patch.object(client._client, "get", AsyncMock(return_value=mock_resp)):
-            results = await client.search_markets(query="bitcoin", limit=5)
+            results = await client.list_markets(limit=5)
 
         assert len(results) == 1
         assert results[0]["question"] == "Will Bitcoin hit $100K by end of 2026?"
@@ -158,12 +158,12 @@ class TestGammaClientSearchMarkets:
         await client.close()
 
     @pytest.mark.asyncio
-    async def test_search_markets_empty_response(self):
+    async def test_list_markets_empty_response(self):
         client = GammaClient()
         mock_resp = _mock_httpx_response([])
 
         with patch.object(client._client, "get", AsyncMock(return_value=mock_resp)):
-            results = await client.search_markets(query="nonexistent")
+            results = await client.list_markets()
 
         assert results == []
         await client.close()
@@ -172,10 +172,8 @@ class TestGammaClientSearchMarkets:
 class TestGammaClientGetMarket:
     @pytest.mark.asyncio
     async def test_get_market_by_condition_id(self, sample_market_response):
-        """Condition ID (0x...) triggers broad search + client-side match."""
+        """Condition ID (0x...) uses condition_ids filter param."""
         client = GammaClient()
-        # The conditionId branch calls /markets?limit=100 and matches client-side,
-        # so the response must be a list containing the target market.
         mock_resp = _mock_httpx_response([sample_market_response])
 
         with patch.object(client._client, "get", AsyncMock(return_value=mock_resp)):
@@ -189,7 +187,7 @@ class TestGammaClientGetMarket:
     async def test_get_market_by_slug(self, sample_market_response):
         """Non-0x, non-numeric identifiers route through slug lookup."""
         client = GammaClient()
-        mock_resp = _mock_httpx_response([sample_market_response])
+        mock_resp = _mock_httpx_response(sample_market_response)
 
         with patch.object(client._client, "get", AsyncMock(return_value=mock_resp)):
             result = await client.get_market("will-btc-hit-100k")
@@ -205,7 +203,7 @@ class TestGammaClientGetMarket:
 
         with (
             patch.object(client._client, "get", AsyncMock(side_effect=error)),
-            pytest.raises(httpx.HTTPStatusError),
+            pytest.raises(ValueError, match="No market found for slug"),
         ):
             await client.get_market("nonexistent")
 
