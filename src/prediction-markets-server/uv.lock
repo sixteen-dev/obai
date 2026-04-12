@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-03-27T04:17:34.268862543Z"
+exclude-newer = "2026-03-29T01:42:40.449694394Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-anthropic = { timestamp = "2026-04-10T04:17:34.268875126Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-04-10T04:17:34.268875667Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-10T04:17:34.268875427Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-10T04:17:34.268875878Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-04-10T04:17:34.268876088Z", span = "PT0S" }
-pypdf = { timestamp = "2026-04-10T04:17:34.268874666Z", span = "PT0S" }
-onnx = { timestamp = "2026-04-10T04:17:34.268874906Z", span = "PT0S" }
-requests = { timestamp = "2026-04-10T04:17:34.268870448Z", span = "PT0S" }
+anthropic = { timestamp = "2026-04-12T01:42:40.44970848Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-12T01:42:40.449709131Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-12T01:42:40.449708921Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-12T01:42:40.449709352Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-12T01:42:40.449709552Z", span = "PT0S" }
+pypdf = { timestamp = "2026-04-12T01:42:40.449708009Z", span = "PT0S" }
+onnx = { timestamp = "2026-04-12T01:42:40.44970824Z", span = "PT0S" }
+requests = { timestamp = "2026-04-12T01:42:40.44970332Z", span = "PT0S" }
 
 [[package]]
 name = "aiofile"
@@ -847,7 +847,7 @@ wheels = [
 
 [[package]]
 name = "prediction-markets-server"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },

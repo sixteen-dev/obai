@@ -281,7 +281,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[])
+            gamma.list_markets = AsyncMock(return_value=[])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -289,7 +289,7 @@ class TestBacktestDataQuality:
             clob.close = AsyncMock()
             MockClob.return_value = clob
 
-            result = await backtest_prediction_setup("test", category="crypto")
+            result = await backtest_prediction_setup("test")
 
         assert result["sample_size"] == 0
         assert result["markets_scanned"] == 0
@@ -303,7 +303,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -326,7 +326,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -349,7 +349,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -385,7 +385,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -421,7 +421,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -459,7 +459,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -500,7 +500,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -546,7 +546,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[market])
+            gamma.list_markets = AsyncMock(return_value=[market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -593,7 +593,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[clean_market, drift_market])
+            gamma.list_markets = AsyncMock(return_value=[clean_market, drift_market])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -630,7 +630,7 @@ class TestBacktestDataQuality:
             patch("src.tools.backtest.ClobClient") as MockClob,
         ):
             gamma = AsyncMock()
-            gamma.search_markets = AsyncMock(return_value=[])
+            gamma.list_markets = AsyncMock(return_value=[])
             gamma.close = AsyncMock()
             MockGamma.return_value = gamma
 
@@ -640,5 +640,5 @@ class TestBacktestDataQuality:
 
             result = await backtest_prediction_setup("test")
 
-        assert len(result["limitations"]) == 5
+        assert len(result["limitations"]) == 6
         assert "descriptive" in result["limitations"][-1].lower()

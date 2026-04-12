@@ -12,14 +12,16 @@ logger = get_logger(__name__)
 
 async def get_trader_leaderboard(
     *,
-    period: str = "all",
+    time_period: str = "ALL",
+    order_by: str = "PNL",
     limit: int = 20,
 ) -> dict[str, Any]:
     """Discover top traders from the official leaderboard.
 
     Args:
-        period: Time window — daily, weekly, monthly, or all.
-        limit: Maximum traders to return.
+        time_period: DAY, WEEK, MONTH, or ALL.
+        order_by: PNL or VOL.
+        limit: Maximum traders to return (1-50).
 
     Returns:
         Dict with ranked trader list and relevant metrics.
@@ -27,7 +29,11 @@ async def get_trader_leaderboard(
     """
     client = DataClient()
     try:
-        result = await client.get_leaderboard(period=period, limit=min(limit, 50))
+        result = await client.get_leaderboard(
+            time_period=time_period,
+            order_by=order_by,
+            limit=min(limit, 50),
+        )
         return {
             "tool": "get_trader_leaderboard",
             **result,
@@ -134,9 +140,8 @@ async def get_wallet_profile(
             "tool": "get_wallet_profile",
             "wallet": wallet_address,
             "display_name": profile.get("display_name"),
-            "volume_traded": profile.get("volume_traded"),
-            "pnl": profile.get("pnl"),
-            "markets_traded": profile.get("markets_traded"),
+            "x_username": profile.get("x_username"),
+            "verified_badge": profile.get("verified_badge"),
             "open_positions": positions.get("position_count", 0),
             "recent_activity_level": activity_level,
             "recent_activity_count": count,

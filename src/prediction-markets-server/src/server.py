@@ -56,45 +56,24 @@ _server_start_time = time.time()
 async def search_prediction_markets_tool(
     query: str = "",
     limit: int = 10,
-    active: bool = True,
-    closed: bool = False,
-    order: str = "volume24hr",
-    end_date_min: str = "",
 ) -> dict[str, Any]:
-    """Search and rank Polymarket prediction markets.
+    """Search Polymarket events and markets by keyword.
 
-    Find markets by topic, keyword, or category. Returns markets with
-    current pricing, volume, liquidity data, slug, and market_url when
-    available from Polymarket. For specific queries, unrelated high-volume
-    fallback results are filtered out; if no relevant market remains, treat
-    the result as no relevant market found rather than inferring from raw
-    unrelated markets.
+    Returns events grouped by topic, each containing nested markets
+    with pricing, slugs, and condition IDs. For browsing by
+    category or volume without a keyword, use explore_trending_markets.
 
     Args:
         query: Search text (e.g., "election", "bitcoin", "fed rate").
-        limit: Max results (1-50). Default 10.
-        active: Include active markets. Default true.
-        closed: Include resolved markets. Default false.
-        order: Sort by volume24hr, liquidity, or endDate.
-        end_date_min: ISO date (YYYY-MM-DD). Exclude markets ending
-            before this date. Defaults to today when searching active
-            markets, so expired markets are automatically filtered out.
-            Pass "none" to disable and include expired markets.
+        limit: Max events (1-50). Default 10.
 
     Returns:
-        Ranked list of relevant matching markets with pricing snapshots
-        and durable identifiers. Does not synthesize slugs or URLs.
+        Events with nested markets, outcome prices, and identifiers
+        (slug, condition_id, event_url).
 
     """
     try:
-        result = await search_prediction_markets(
-            query,
-            limit=limit,
-            active=active,
-            closed=closed,
-            order=order,
-            end_date_min=end_date_min,
-        )
+        result = await search_prediction_markets(query, limit=limit)
         return truncate_response(result)
     except Exception as exc:
         log_error(logger, exc, context={"tool": "search_prediction_markets", "query": query})
@@ -119,22 +98,18 @@ async def explore_trending_markets_tool(
 ) -> dict[str, Any]:
     """Browse trending Polymarket events ranked by 24-hour volume.
 
-    Returns event groups (topics) with their nested markets and
-    pricing. Use this tool for broad discovery: "what's trending",
-    "show me top sports bets", "what prediction markets are active
-    in crypto right now".
-
-    Use ``tag_slug`` to narrow by category. Known tags include:
-    bitcoin, crypto, politics, economy, geopolitics, sports, nba,
-    soccer, esports, golf, and more.
+    Returns events with nested markets and pricing. Use for broad
+    discovery without a keyword: "what's trending", "top crypto
+    bets", "active politics markets".
 
     Args:
-        tag_slug: Category filter (e.g., "bitcoin", "politics").
-            Empty for all categories.
+        tag_slug: Filter by tag (e.g., "politics", "crypto",
+            "sports", "bitcoin", "elections", "nba", "soccer",
+            "economy", "technology", "us-election"). Empty for all.
         limit: Max events (1-20). Default 10.
 
     Returns:
-        Ranked events with nested markets, pricing, and event URLs.
+        Events ranked by volume with nested markets and event URLs.
 
     """
     try:
@@ -161,17 +136,18 @@ async def get_market_details_tool(
     condition_id: str = "",
     slug: str = "",
 ) -> dict[str, Any]:
-    """Get full details for a Polymarket market.
+    """Get full metadata for a single Polymarket market.
 
     Returns question, outcomes, resolution criteria, timing, status,
-    category, current pricing, slug, and market_url when available.
+    category, pricing, and volume. Use slug from prior tool results
+    or a Polymarket URL — do not fabricate slugs from titles.
 
     Args:
-        condition_id: Market condition ID (hex). Fallback.
-        slug: Market URL slug from tool data or user-provided Polymarket URL. Preferred.
+        condition_id: Market condition ID (0x hex). Fallback.
+        slug: Market URL slug from tool data or Polymarket URL.
 
     Returns:
-        Complete market details including resolution info and durable identifiers.
+        Complete market metadata with resolution info and identifiers.
 
     """
     try:
@@ -182,7 +158,7 @@ async def get_market_details_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 3: Market Snapshot ---------------------------------------------------
+# -- Tool 4: Market Snapshot ---------------------------------------------------
 
 
 @mcp.tool(
@@ -198,22 +174,20 @@ async def get_market_snapshot_tool(
     condition_id: str = "",
     slug: str = "",
 ) -> dict[str, Any]:
-    """Get executable outcome-aware market state with live bid/ask and depth.
+    """Get live order-book state with per-outcome bid/ask and depth.
 
-    Returns the actual executable pricing from the order book,
-    not just the midpoint. Includes per-outcome top-of-book depth
-    so a manual trader can assess fill quality for YES or NO.
-    Returns the tool-provided slug and market_url when available so
-    follow-up queries can reuse exact identifiers.
+    Returns executable pricing from the CLOB order book — not just
+    midpoint. Includes per-outcome top-of-book depth for assessing
+    fill quality on YES or NO sides.
 
     Args:
-        condition_id: Market condition ID (fallback).
-        slug: Market URL slug from tool data or user-provided Polymarket URL
-            (preferred — fast and reliable). Do not invent from a title.
+        condition_id: Market condition ID (0x hex). Fallback.
+        slug: Market URL slug from tool data or Polymarket URL.
+            Do not fabricate from a title.
 
     Returns:
-        Per-outcome bid, ask, midpoint, spread, depth, volume, liquidity,
-        and durable identifiers.
+        Per-outcome bid, ask, midpoint, spread, depth, volume,
+        liquidity, and identifiers.
 
     """
     try:
@@ -226,7 +200,7 @@ async def get_market_snapshot_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 4: Price History ---------------------------------------------------
+# -- Tool 5: Price History ---------------------------------------------------
 
 
 @mcp.tool(
@@ -247,14 +221,15 @@ async def get_price_history_tool(
     """Get historical price timeseries for a market's outcomes.
 
     Args:
-        condition_id: Market condition ID (fallback).
-        slug: Market URL slug from tool data or user-provided Polymarket URL
-            (preferred — fast and reliable). Do not invent from a title.
-        interval: Time interval (1m, 5m, 1h, 6h, 1d, 1w, max).
-        fidelity: Number of data points. Default 60.
+        condition_id: Market condition ID (0x hex). Fallback.
+        slug: Market URL slug from tool data or Polymarket URL.
+            Do not fabricate from a title.
+        interval: Lookback window (1m, 1h, 6h, 1d, 1w, max, all).
+        fidelity: Sampling resolution in minutes. 1 = per-minute,
+            60 = hourly (default), 1440 = daily.
 
     Returns:
-        YES/NO price history arrays with timestamps and durable identifiers.
+        YES/NO price arrays with timestamps.
 
     """
     try:
@@ -267,7 +242,7 @@ async def get_price_history_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 5: Compare Markets --------------------------------------------------
+# -- Tool 6: Compare Markets --------------------------------------------------
 
 
 @mcp.tool(
@@ -282,18 +257,15 @@ async def get_price_history_tool(
 async def compare_prediction_markets_tool(
     identifiers: list[str],
 ) -> dict[str, Any]:
-    """Compare 2-5 markets side by side.
-
-    Compares displayed odds, per-outcome executable spread/depth,
-    liquidity, volume, and time to resolution across multiple markets.
+    """Compare 2-5 markets side by side on odds, depth, and volume.
 
     Args:
-        identifiers: List of 2-5 exact market slugs or condition IDs from
-            tool data or user-provided Polymarket URLs. Slugs are preferred
-            for reliable lookups. Do not invent identifiers from titles.
+        identifiers: 2-5 market slugs or condition IDs from tool data.
+            Slugs preferred. Do not fabricate from titles.
 
     Returns:
-        Side-by-side comparison table with durable identifiers.
+        Side-by-side comparison with per-outcome spread/depth,
+        liquidity, volume, and time to resolution.
 
     """
     try:
@@ -304,7 +276,7 @@ async def compare_prediction_markets_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 6: Trade Flow -------------------------------------------------------
+# -- Tool 7: Trade Flow -------------------------------------------------------
 
 
 @mcp.tool(
@@ -320,19 +292,17 @@ async def get_trade_flow_tool(
     condition_id: str,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Summarize recent buy/sell flow and notable large trades.
+    """Summarize recent buy/sell flow and large trades for a market.
 
-    Shows recent trade direction, size distribution, and large prints.
-    Includes caveat that flow is not proof of edge.
+    Requires condition_id. If you only have a slug, resolve it first
+    with get_market_details or get_market_snapshot.
 
     Args:
-        condition_id: Exact market condition ID from tool data. If you only
-            have a slug, first resolve it with get_market_details or
-            get_market_snapshot; do not pass a slug here.
+        condition_id: Market condition ID (0x hex) from tool data.
         limit: Max trades to analyze (1-100). Default 50.
 
     Returns:
-        Flow summary with buy/sell counts, large trades, recent prints.
+        Buy/sell counts, size distribution, large prints.
 
     """
     try:
@@ -343,7 +313,7 @@ async def get_trade_flow_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 7: Top Holders ------------------------------------------------------
+# -- Tool 8: Top Holders ------------------------------------------------------
 
 
 @mcp.tool(
@@ -359,16 +329,17 @@ async def get_top_holders_tool(
     condition_id: str,
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Show holder concentration and risk for a market.
+    """Show holder concentration and whale risk for a market.
+
+    Requires condition_id. If you only have a slug, resolve it first
+    with get_market_details or get_market_snapshot.
 
     Args:
-        condition_id: Exact market condition ID from tool data. If you only
-            have a slug, first resolve it with get_market_details or
-            get_market_snapshot; do not pass a slug here.
+        condition_id: Market condition ID (0x hex) from tool data.
         limit: Max holders (1-50). Default 20.
 
     Returns:
-        Top holders, concentration metrics, and risk level.
+        Top holders, concentration metrics, risk assessment.
 
     """
     try:
@@ -379,7 +350,7 @@ async def get_top_holders_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 8: Trader Leaderboard -----------------------------------------------
+# -- Tool 9: Trader Leaderboard -----------------------------------------------
 
 
 @mcp.tool(
@@ -392,28 +363,34 @@ async def get_top_holders_tool(
     },
 )
 async def get_trader_leaderboard_tool(
-    period: str = "all",
+    time_period: str = "ALL",
+    order_by: str = "PNL",
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Discover top Polymarket traders from the official leaderboard.
+    """Top Polymarket traders ranked by PnL or volume.
 
     Args:
-        period: Time window — daily, weekly, monthly, or all (default).
+        time_period: DAY, WEEK, MONTH, or ALL (default).
+        order_by: PNL (default) or VOL.
         limit: Max traders (1-50). Default 20.
 
     Returns:
-        Ranked trader list with volume, PnL, and win metrics.
+        Ranked traders with volume, PnL, and profile info.
 
     """
     try:
-        result = await get_trader_leaderboard(period=period, limit=limit)
+        result = await get_trader_leaderboard(
+            time_period=time_period,
+            order_by=order_by,
+            limit=limit,
+        )
         return truncate_response(result)
     except Exception as exc:
         log_error(logger, exc, context={"tool": "get_trader_leaderboard"})
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 9: Wallet Activity --------------------------------------------------
+# -- Tool 10: Wallet Activity --------------------------------------------------
 
 
 @mcp.tool(
@@ -429,14 +406,14 @@ async def get_wallet_activity_tool(
     wallet_address: str,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Show a wallet's recent trades and active markets.
+    """Recent trades and open positions for a wallet.
 
     Args:
-        wallet_address: Ethereum wallet address (0x...).
+        wallet_address: Ethereum address (0x...).
         limit: Max activity entries (1-100). Default 50.
 
     Returns:
-        Recent trades, open positions, and directional behavior.
+        Recent trades, open positions, directional behavior.
 
     """
     try:
@@ -447,7 +424,7 @@ async def get_wallet_activity_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 10: Wallet Profile --------------------------------------------------
+# -- Tool 11: Wallet Profile --------------------------------------------------
 
 
 @mcp.tool(
@@ -462,16 +439,14 @@ async def get_wallet_activity_tool(
 async def get_wallet_profile_tool(
     wallet_address: str,
 ) -> dict[str, Any]:
-    """Descriptive summary of a wallet's trading profile.
-
-    Shows preferred categories, activity level, and directional tendency.
-    Does not claim durable alpha without proper historical controls.
+    """Descriptive summary of a wallet's trading behavior.
 
     Args:
-        wallet_address: Ethereum wallet address (0x...).
+        wallet_address: Ethereum address (0x...).
 
     Returns:
-        Descriptive wallet summary (not a performance claim).
+        Category preferences, activity level, directional tendency.
+        Descriptive only — not a performance claim.
 
     """
     try:
@@ -482,7 +457,7 @@ async def get_wallet_profile_tool(
         return format_api_error(exc, "Polymarket")
 
 
-# -- Tool 11: Backtest Prediction Setup ----------------------------------------
+# -- Tool 12: Backtest Prediction Setup ----------------------------------------
 
 
 @mcp.tool(
@@ -496,7 +471,6 @@ async def get_wallet_profile_tool(
 )
 async def backtest_prediction_setup_tool(
     setup_description: str,
-    category: str = "",
     min_volume: float = 1000,
     min_liquidity: float = 500,
     price_threshold_min: float = 0.0,
@@ -504,36 +478,30 @@ async def backtest_prediction_setup_tool(
     forward_windows: list[str] | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """Run a descriptive event-study over resolved markets.
+    """Event-study over resolved markets with structured filters.
 
-    V1 evaluates explicit filters only:
-    - category
-    - minimum volume / liquidity
-    - YES entry price band
-    - forward windows over historical YES price series
-
-    The free-text setup description is preserved for context, but is
-    not parsed into arbitrary rule logic. Does NOT use end-of-history
-    wallet rankings or assume historical book depth.
+    Scans closed markets and evaluates price movement after entry
+    points matching the filter criteria. Does not parse free-text
+    into rules — only the structured filters below are applied.
 
     Args:
-        setup_description: What setup to test (human description).
-        category: Category filter (politics, crypto, etc.).
-        min_volume: Minimum volume filter. Default 1000.
-        min_liquidity: Minimum liquidity filter. Default 500.
+        setup_description: What setup to test (context only).
+        min_volume: Minimum lifetime volume. Default 1000.
+        min_liquidity: Minimum liquidity (documentation only — not
+            applied to closed markets whose books are gone).
         price_threshold_min: Min YES price at entry (0-1).
         price_threshold_max: Max YES price at entry (0-1).
-        forward_windows: Evaluation windows (e.g., ["24h", "72h"]).
+        forward_windows: Windows to measure (e.g., ["24h", "72h",
+            "to_resolution"]). Default ["24h", "72h", "to_resolution"].
         limit: Max resolved markets to scan. Default 100.
 
     Returns:
-        Sample size, forward-window stats, examples, and limitations.
+        Sample size, per-window stats, examples, and limitations.
 
     """
     try:
         result = await backtest_prediction_setup(
             setup_description,
-            category=category,
             min_volume=min_volume,
             min_liquidity=min_liquidity,
             price_threshold_min=price_threshold_min,

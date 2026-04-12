@@ -72,33 +72,6 @@ class ClobClient:
             "midpoint": float(mid) if mid is not None else None,
         }
 
-    async def get_price(self, token_id: str) -> dict[str, Any]:
-        """Get best bid/ask for a token.
-
-        Args:
-            token_id: CLOB token ID.
-
-        Returns:
-            Dict with bid, ask, and spread.
-
-        """
-        raw = await self._get("/price", {"token_id": token_id})
-        if not isinstance(raw, dict):
-            return {"token_id": token_id, "bid": None, "ask": None, "spread": None}
-
-        bid = raw.get("bid")
-        ask = raw.get("ask")
-        bid_f = float(bid) if bid is not None else None
-        ask_f = float(ask) if ask is not None else None
-        spread = round(ask_f - bid_f, 6) if bid_f is not None and ask_f is not None else None
-
-        return {
-            "token_id": token_id,
-            "bid": bid_f,
-            "ask": ask_f,
-            "spread": spread,
-        }
-
     async def get_spread(self, token_id: str) -> dict[str, Any]:
         """Get spread for a token.
 
@@ -144,8 +117,9 @@ class ClobClient:
 
         Args:
             token_id: CLOB token ID.
-            interval: Time interval (1m, 5m, 1h, 6h, 1d, 1w, max).
-            fidelity: Number of data points to return.
+            interval: Lookback window (1m, 1h, 6h, 1d, 1w, max, all).
+            fidelity: Sampling resolution in minutes. E.g., 1 = one
+                point per minute, 60 = one point per hour.
 
         Returns:
             Dict with token_id and history array of {t, p} points.
@@ -179,14 +153,22 @@ class ClobClient:
         }
 
     def _normalize_book(self, raw: Any, token_id: str) -> dict[str, Any]:
-        """Normalize order book response."""
+        """Normalize order book response.
+
+        The CLOB API returns bids ascending (worst first) and asks
+        descending (worst first). We sort bids descending and asks
+        ascending so index 0 is always the best price on each side.
+        """
         if not isinstance(raw, dict):
             return {"token_id": token_id, "bids": [], "asks": [], "bid_depth": 0, "ask_depth": 0}
 
         bids = self._parse_book_side(raw.get("bids", []))
         asks = self._parse_book_side(raw.get("asks", []))
 
-        # Calculate depth (total size at top N levels)
+        # Sort so best prices are first: bids high→low, asks low→high
+        bids.sort(key=lambda x: x["price"], reverse=True)
+        asks.sort(key=lambda x: x["price"])
+
         bid_depth = sum(b["size"] for b in bids[:5])
         ask_depth = sum(a["size"] for a in asks[:5])
         best_bid = bids[0]["price"] if bids else None
@@ -208,7 +190,7 @@ class ClobClient:
             "spread": spread,
             "bid_depth_top5": round(bid_depth, 2),
             "ask_depth_top5": round(ask_depth, 2),
-            "bids": bids[:10],  # Top 10 levels
+            "bids": bids[:10],
             "asks": asks[:10],
         }
 

@@ -44,10 +44,9 @@ class GammaClient:
 
     _PAGE_SIZE = 100
 
-    async def search_markets(
+    async def list_markets(
         self,
         *,
-        query: str = "",
         limit: int = 10,
         active: bool = True,
         closed: bool = False,
@@ -55,17 +54,18 @@ class GammaClient:
         ascending: bool = False,
         end_date_min: str = "",
     ) -> list[dict[str, Any]]:
-        """Search for prediction markets.
+        """List markets with filters.
+
+        For text search, use ``public_search`` instead.
 
         Args:
-            query: Search text to filter markets by question/title.
             limit: Maximum number of results (1-500).
             active: Include active markets.
             closed: Include closed/resolved markets.
             order: Sort field (volume24hr, liquidity, startDate, endDate).
             ascending: Sort direction.
             end_date_min: ISO date string (YYYY-MM-DD). Exclude markets
-                ending before this date. Use today's date to filter expired markets.
+                ending before this date.
 
         Returns:
             List of market dicts with core metadata and pricing.
@@ -84,8 +84,6 @@ class GammaClient:
                 "order": order,
                 "ascending": str(ascending).lower(),
             }
-            if query:
-                params["_q"] = query
             if end_date_min:
                 params["end_date_min"] = end_date_min
 
@@ -95,11 +93,9 @@ class GammaClient:
 
             all_markets.extend(self._normalize_market(m) for m in raw_markets)
 
-            # Fewer results than requested — no more pages
             if len(raw_markets) < page_size:
                 break
 
-        # Client-side end_date_min filter as safety net
         if end_date_min:
             all_markets = [
                 m for m in all_markets if not m.get("end_date") or m["end_date"] >= end_date_min
@@ -110,13 +106,14 @@ class GammaClient:
     async def get_market(self, identifier: str) -> dict[str, Any]:
         """Get a single market by slug, numeric ID, or condition ID.
 
-        The Gamma API /markets/{id} only accepts numeric IDs.
-        conditionId is not a supported path or filter param.
-        Slugs are the most reliable lookup key.
+        Routing:
+        - Numeric ID → ``GET /markets/{id}``
+        - Slug (non-0x) → ``GET /markets/slug/{slug}``
+        - Condition ID (0x…) → ``GET /markets?condition_ids={cid}``
 
         Args:
             identifier: Market slug (preferred), numeric ID, or
-                condition ID (0x... hex — will search by slug fallback).
+                condition ID (0x… hex).
 
         Returns:
             Normalized market dict.
@@ -125,29 +122,31 @@ class GammaClient:
             ValueError: If no market found.
 
         """
-        # Numeric database ID — use path lookup
+        # Numeric database ID — direct path lookup
         if identifier.isdigit():
             raw = await self._get(f"/markets/{identifier}")
             return self._normalize_market(raw)
 
-        # Slug — use slug filter (most reliable)
+        # Slug — dedicated slug endpoint (works for active + inactive)
         if not identifier.startswith("0x"):
             return await self.get_market_by_slug(identifier)
 
-        # conditionId (0x...) — search all markets and match client-side.
-        # The Gamma API ignores conditionId as a filter param, so we
-        # fetch a broad set and find the match ourselves.
-        results = await self._get("/markets", {"limit": 100})
-        if isinstance(results, list):
-            for m in results:
-                if isinstance(m, dict) and m.get("conditionId") == identifier:
-                    return self._normalize_market(m)
+        # Condition ID — use the condition_ids filter param
+        results = await self._get(
+            "/markets",
+            {"condition_ids": identifier, "limit": 1},
+        )
+        if isinstance(results, list) and len(results) > 0:
+            return self._normalize_market(results[0])
 
-        msg = f"No market found for identifier: {identifier}"
+        msg = f"No market found for condition_id: {identifier}"
         raise ValueError(msg)
 
     async def get_market_by_slug(self, slug: str) -> dict[str, Any]:
         """Get a market by its URL slug.
+
+        Uses the dedicated path endpoint ``/markets/slug/{slug}``
+        which returns any market regardless of active status.
 
         Args:
             slug: Market slug (e.g., "will-trump-win-2024").
@@ -159,11 +158,14 @@ class GammaClient:
             ValueError: If no market found for slug.
 
         """
-        results = await self._get("/markets", {"slug": slug, "limit": 1})
-        if not isinstance(results, list) or len(results) == 0:
-            msg = f"No market found for slug: {slug}"
-            raise ValueError(msg)
-        return self._normalize_market(results[0])
+        try:
+            raw = await self._get(f"/markets/slug/{slug}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                msg = f"No market found for slug: {slug}"
+                raise ValueError(msg) from exc
+            raise
+        return self._normalize_market(raw)
 
     async def get_event(self, event_id: str) -> dict[str, Any]:
         """Get an event with its markets.
@@ -178,22 +180,67 @@ class GammaClient:
         raw = await self._get(f"/events/{event_id}")
         return self._normalize_event(raw)
 
+    async def public_search(
+        self,
+        query: str,
+        *,
+        limit_per_type: int = 10,
+        events_status: str = "",
+        events_tag: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Text search across markets, events, and profiles.
+
+        Uses the ``/public-search`` endpoint which supports keyword
+        queries — the only text-search endpoint in the Gamma API.
+
+        Args:
+            query: Search text (required).
+            limit_per_type: Max results per entity type.
+            events_status: Filter by event status.
+            events_tag: Filter by event tag slugs.
+
+        Returns:
+            Dict with ``events`` (list of normalized events),
+            ``pagination``, and raw ``tags``/``profiles`` lists.
+
+        """
+        params: dict[str, Any] = {"q": query, "limit_per_type": limit_per_type}
+        if events_status:
+            params["events_status"] = events_status
+        if events_tag:
+            params["events_tag"] = events_tag
+
+        raw = await self._get("/public-search", params)
+        if not isinstance(raw, dict):
+            return {"events": [], "pagination": {}}
+
+        raw_events = raw.get("events", [])
+        events = (
+            [self._normalize_event(e) for e in raw_events] if isinstance(raw_events, list) else []
+        )
+        return {
+            "events": events,
+            "pagination": raw.get("pagination", {}),
+        }
+
     async def search_events(
         self,
         *,
-        query: str = "",
         limit: int = 10,
         active: bool = True,
+        closed: bool = False,
         order: str = "volume24hr",
         ascending: bool = False,
         tag_slug: str = "",
     ) -> list[dict[str, Any]]:
-        """Search events.
+        """List events with tag and volume filters.
+
+        For text search, use ``public_search`` instead.
 
         Args:
-            query: Search text (currently ignored by the Gamma API).
             limit: Maximum results.
             active: Only active events.
+            closed: Include closed events.
             order: Sort field (volume24hr, liquidity, startDate).
             ascending: Sort direction. Must be False for volume/liquidity
                 ordering to return meaningful results.
@@ -208,11 +255,10 @@ class GammaClient:
         params: dict[str, Any] = {
             "limit": min(limit, 100),
             "active": str(active).lower(),
+            "closed": str(closed).lower(),
             "order": order,
             "ascending": str(ascending).lower(),
         }
-        if query:
-            params["_q"] = query
         if tag_slug:
             params["tag_slug"] = tag_slug
 
@@ -254,14 +300,21 @@ class GammaClient:
 
         slug = raw.get("slug", "")
 
-        # Polymarket URLs use the event slug, not the market slug.
-        # Extract from the parent event when available.
+        # Extract parent event metadata when available.
         event_slug = ""
+        event_title = ""
+        event_tags: list[str] = []
         events = raw.get("events", [])
         if isinstance(events, list):
             for event in events:
                 if isinstance(event, dict) and event.get("slug"):
                     event_slug = event["slug"]
+                    event_title = event.get("title", "")
+                    for t in event.get("tags", []):
+                        if isinstance(t, dict):
+                            label = t.get("label") or t.get("slug")
+                            if label:
+                                event_tags.append(str(label))
                     break
         market_url = f"https://polymarket.com/event/{event_slug}" if event_slug else ""
 
@@ -285,14 +338,20 @@ class GammaClient:
             "liquidity": self._safe_float(raw.get("liquidity")),
             "start_date": raw.get("startDate"),
             "end_date": raw.get("endDate"),
+            "closed_time": raw.get("closedTime"),
             "active": raw.get("active", False),
             "closed": raw.get("closed", False),
             "archived": raw.get("archived", False),
+            "enable_order_book": raw.get("enableOrderBook"),
+            "restricted": raw.get("restricted", False),
             "neg_risk": raw.get("negRisk", False),
             "clob_token_ids": clob_token_ids,
             "group_item_title": raw.get("groupItemTitle", ""),
             "resolution_source": raw.get("resolutionSource", ""),
             "category": self._extract_category(raw),
+            "event_title": event_title,
+            "event_slug": event_slug,
+            "event_tags": event_tags,
             "accepting_orders": raw.get("acceptingOrders", False),
             "order_min_size": raw.get("orderMinSize"),
             "tick_size": raw.get("orderPriceMinTickSize"),

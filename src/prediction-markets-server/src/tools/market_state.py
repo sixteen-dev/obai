@@ -20,8 +20,9 @@ async def _resolve_market(
 ) -> dict[str, Any]:
     """Resolve a market by slug (preferred) or condition_id.
 
-    Slug lookups are single-request and reliable.
-    ConditionId lookups may require a broad search fallback.
+    Both paths use the Gamma API:
+    - Slug → ``GET /markets/slug/{slug}`` (works for active + inactive)
+    - Condition ID → ``GET /markets?condition_ids={cid}``
 
     Args:
         gamma: GammaClient instance.
@@ -32,7 +33,7 @@ async def _resolve_market(
         Normalized market dict.
 
     Raises:
-        ValueError: If neither identifier is provided.
+        ValueError: If neither identifier is provided or market not found.
 
     """
     if slug:
@@ -167,8 +168,9 @@ async def get_price_history(
     Args:
         condition_id: Market condition ID (fallback).
         slug: Market URL slug (preferred — reliable single-request lookup).
-        interval: Time interval (1m, 5m, 1h, 6h, 1d, 1w, max).
-        fidelity: Number of data points.
+        interval: Lookback window (1m, 1h, 6h, 1d, 1w, max, all).
+        fidelity: Sampling resolution in minutes. 1 = per-minute,
+            60 = hourly, 1440 = daily.
 
     Returns:
         Dict with YES/NO price history arrays.

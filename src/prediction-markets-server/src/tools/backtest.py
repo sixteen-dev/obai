@@ -112,7 +112,6 @@ def _summarize_window_moves(moves: list[float]) -> dict[str, Any]:
 async def backtest_prediction_setup(
     setup_description: str,
     *,
-    category: str = "",
     min_volume: float = 1000,
     min_liquidity: float = 500,
     price_threshold_min: float = 0.0,
@@ -136,8 +135,7 @@ async def backtest_prediction_setup(
     gamma = GammaClient()
     clob = ClobClient()
     try:
-        markets = await gamma.search_markets(
-            query=category,
+        markets = await gamma.list_markets(
             limit=limit,
             active=False,
             closed=True,
@@ -149,15 +147,7 @@ async def backtest_prediction_setup(
         # so we filter on lifetime volume only.  min_liquidity is kept
         # in the tool signature for documentation but is NOT applied to
         # resolved markets — it would filter out everything.
-        filtered = [
-            m
-            for m in markets
-            if m.get("volume", 0) >= min_volume
-            and (
-                not category
-                or str(m.get("category", "")).strip().lower() == category.strip().lower()
-            )
-        ]
+        filtered = [m for m in markets if m.get("volume", 0) >= min_volume]
 
         window_moves: dict[str, list[float]] = {window: [] for window in forward_windows}
         examples: list[dict[str, Any]] = []
@@ -273,7 +263,6 @@ async def backtest_prediction_setup(
             "tool": "backtest_prediction_setup",
             "setup_description": setup_description,
             "evaluated_setup": {
-                "category": category or "all",
                 "min_volume": min_volume,
                 "min_liquidity": min_liquidity,
                 "yes_entry_price_range": [price_threshold_min, price_threshold_max],
@@ -296,6 +285,8 @@ async def backtest_prediction_setup(
                 "Historical order book depth is not available, "
                 "so this does not estimate fill quality or slippage.",
                 "Historical volume trend conditions are not reconstructed from intraday snapshots.",
+                "Price history is sampled at ~500-minute (~8-hour) intervals; "
+                "short-lived price moves between samples are not captured.",
                 "Results are descriptive event-study summaries, not proof of causal edge.",
             ],
         }
