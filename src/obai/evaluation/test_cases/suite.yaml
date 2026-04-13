@@ -1200,12 +1200,12 @@ test_cases:
     query: >
       Previous: Search active Polymarket markets related to 2026 World Cup group-stage outcomes,
       especially group winner or qualification markets, and return the top tradable candidates
-      with their slugs. Current query: For the top 3 candidates from that prior Polymarket result,
-      use the prior slugs as the market identifiers and drill into execution quality and trader flow.
-      Compare slippage for about $2,000 notional, ability to scale in and out, spread behavior,
-      recent large prints, and catalyst clarity. Pick the best trade or say no trade. Give side,
-      entry limit, max size, exit plan, invalidation, resolution risk, confidence, and what new
-      information would change it to no trade.
+      with their slugs. Current query: Drill into the best 2 from that prior list using live
+      order-book conditions. Use the prior slugs as the market identifiers. Is either one actually
+      worth trading now? Compare slippage for about $2,000 notional, ability to scale in and out,
+      spread behavior, recent large prints, and catalyst clarity. Give me a concise trade memo with
+      side, entry limit, max size, execution notes, exit plan, invalidation, resolution risk,
+      confidence, and what new information would change it to no trade.
     category: G
     query_type: prediction_market_followup_slug_trade_memo
     expected_tools: [prediction_market_analysis]

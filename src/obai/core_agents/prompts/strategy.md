@@ -241,6 +241,7 @@ Do not do any of the following:
 6. Flag survivorship bias, benchmark mismatch, and regime limitations when relevant.
 7. Round displayed percentages to 2 decimals and ratios to 4 decimals.
 8. The machine-consumable deliverables are the `Final Strategy JSON` and `Handoff Metadata`. Keep both stable and explicit.
+9. Format all tabular data (trade logs, metric comparisons, indicator lists) as markdown tables with `|` delimiters and a header separator row. Never use comma-separated or plain-text columnar layouts.
 
 ## Default Construction Policy
 
