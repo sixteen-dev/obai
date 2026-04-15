@@ -187,13 +187,19 @@ class FMPClient:
         price_more_than: float | None = None,
         price_lower_than: float | None = None,
         volume_more_than: int | None = None,
+        volume_lower_than: int | None = None,
         beta_more_than: float | None = None,
         beta_lower_than: float | None = None,
+        dividend_more_than: float | None = None,
+        dividend_lower_than: float | None = None,
         sector: str | None = None,
         industry: str | None = None,
         country: str | None = None,
         exchange: str | None = None,
         is_etf: bool | None = None,
+        is_fund: bool | None = None,
+        is_actively_trading: bool = True,
+        include_all_share_classes: bool = False,
         limit: int = 25,
     ) -> list[dict[str, Any]]:
         """Screen stocks with various filters.
@@ -204,20 +210,30 @@ class FMPClient:
             price_more_than: Minimum price
             price_lower_than: Maximum price
             volume_more_than: Minimum volume
+            volume_lower_than: Maximum volume
             beta_more_than: Minimum beta
             beta_lower_than: Maximum beta
+            dividend_more_than: Minimum dividend yield
+            dividend_lower_than: Maximum dividend yield
             sector: Sector filter (e.g., "Technology")
             industry: Industry filter
             country: Country code (e.g., "US")
             exchange: Exchange (e.g., "NASDAQ")
             is_etf: Filter for ETFs only
+            is_fund: Filter for mutual funds only
+            is_actively_trading: Only actively traded stocks (default: True)
+            include_all_share_classes: Include all share classes (default: False)
             limit: Maximum results (default: 25, max: 100)
 
         Returns:
             List of matching stocks with key metrics
         """
         endpoint = "/company-screener"
-        params: dict[str, Any] = {"limit": min(limit, 100)}
+        params: dict[str, Any] = {
+            "limit": min(limit, 100),
+            "isActivelyTrading": str(is_actively_trading).lower(),
+            "includeAllShareClasses": str(include_all_share_classes).lower(),
+        }
 
         if market_cap_more_than is not None:
             params["marketCapMoreThan"] = market_cap_more_than
@@ -229,10 +245,16 @@ class FMPClient:
             params["priceLowerThan"] = price_lower_than
         if volume_more_than is not None:
             params["volumeMoreThan"] = volume_more_than
+        if volume_lower_than is not None:
+            params["volumeLowerThan"] = volume_lower_than
         if beta_more_than is not None:
             params["betaMoreThan"] = beta_more_than
         if beta_lower_than is not None:
             params["betaLowerThan"] = beta_lower_than
+        if dividend_more_than is not None:
+            params["dividendMoreThan"] = dividend_more_than
+        if dividend_lower_than is not None:
+            params["dividendLowerThan"] = dividend_lower_than
         if sector is not None:
             params["sector"] = sector
         if industry is not None:
@@ -243,6 +265,8 @@ class FMPClient:
             params["exchange"] = exchange
         if is_etf is not None:
             params["isEtf"] = str(is_etf).lower()
+        if is_fund is not None:
+            params["isFund"] = str(is_fund).lower()
 
         return await self._get(endpoint, params)
 

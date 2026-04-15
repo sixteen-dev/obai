@@ -3,16 +3,16 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-03-29T20:37:48.247399396Z"
+exclude-newer = "2026-04-01T02:25:40.270243049Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-fastmcp = { timestamp = "2026-04-12T20:37:48.247418752Z", span = "PT0S" }
-litellm = { timestamp = "2026-04-12T20:37:48.247409956Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-04-12T20:37:48.247418512Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-12T20:37:48.247418993Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-12T20:37:48.247419314Z", span = "PT0S" }
-requests = { timestamp = "2026-04-12T20:37:48.247419534Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-15T02:25:40.270253228Z", span = "PT0S" }
+litellm = { timestamp = "2026-04-15T02:25:40.27024933Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-15T02:25:40.270252987Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-15T02:25:40.270253578Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-15T02:25:40.270253929Z", span = "PT0S" }
+requests = { timestamp = "2026-04-15T02:25:40.27025425Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1688,7 +1688,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.3.3"
+version = "1.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

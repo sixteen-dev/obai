@@ -153,13 +153,19 @@ async def screening_screen_stocks_tool(
     price_more_than: float | None = None,
     price_lower_than: float | None = None,
     volume_more_than: int | None = None,
+    volume_lower_than: int | None = None,
     beta_more_than: float | None = None,
     beta_lower_than: float | None = None,
+    dividend_more_than: float | None = None,
+    dividend_lower_than: float | None = None,
     sector: str | None = None,
     industry: str | None = None,
     country: str | None = None,
     exchange: str | None = None,
     is_etf: bool | None = None,
+    is_fund: bool | None = None,
+    is_actively_trading: bool = True,
+    include_all_share_classes: bool = False,
     limit: int = 25,
 ) -> dict[str, Any]:
     """Screen stocks with various filters for idea generation.
@@ -170,7 +176,7 @@ async def screening_screen_stocks_tool(
     Common use cases:
     - "Find tech stocks under $50B market cap"
     - "Show me high-volume stocks with low beta"
-    - "Screen for healthcare stocks in the US"
+    - "Screen for dividend stocks yielding above 3%"
 
     Args:
         market_cap_more_than: Minimum market cap (e.g., 10000000000 for $10B)
@@ -178,13 +184,19 @@ async def screening_screen_stocks_tool(
         price_more_than: Minimum stock price
         price_lower_than: Maximum stock price
         volume_more_than: Minimum daily volume
+        volume_lower_than: Maximum daily volume
         beta_more_than: Minimum beta (volatility relative to market)
         beta_lower_than: Maximum beta
+        dividend_more_than: Minimum dividend yield (e.g., 0.5 for 0.5%)
+        dividend_lower_than: Maximum dividend yield
         sector: Sector filter (Technology, Healthcare, Financial Services, etc.)
         industry: Industry filter (more specific than sector)
         country: Country code (US, CN, GB, etc.)
         exchange: Exchange (NASDAQ, NYSE, AMEX)
         is_etf: True to filter for ETFs only
+        is_fund: True to filter for mutual funds only
+        is_actively_trading: Only actively traded stocks (default: True)
+        include_all_share_classes: Include all share classes, e.g. GOOG and GOOGL (default: False)
         limit: Maximum results (default: 25, max: 100)
 
     Returns:
@@ -197,13 +209,19 @@ async def screening_screen_stocks_tool(
             price_more_than=price_more_than,
             price_lower_than=price_lower_than,
             volume_more_than=volume_more_than,
+            volume_lower_than=volume_lower_than,
             beta_more_than=beta_more_than,
             beta_lower_than=beta_lower_than,
+            dividend_more_than=dividend_more_than,
+            dividend_lower_than=dividend_lower_than,
             sector=sector,
             industry=industry,
             country=country,
             exchange=exchange,
             is_etf=is_etf,
+            is_fund=is_fund,
+            is_actively_trading=is_actively_trading,
+            include_all_share_classes=include_all_share_classes,
             limit=limit,
         )
         return truncate_response(result)

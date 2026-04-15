@@ -19,18 +19,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-03-29T18:39:55.081682925Z"
+exclude-newer = "2026-04-01T02:22:27.789248865Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-anthropic = { timestamp = "2026-04-12T18:39:55.081696972Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-04-12T18:39:55.081697543Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-12T18:39:55.081697292Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-12T18:39:55.081697773Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-04-12T18:39:55.081697984Z", span = "PT0S" }
-pypdf = { timestamp = "2026-04-12T18:39:55.081696421Z", span = "PT0S" }
-onnx = { timestamp = "2026-04-12T18:39:55.081696731Z", span = "PT0S" }
-requests = { timestamp = "2026-04-12T18:39:55.081691421Z", span = "PT0S" }
+anthropic = { timestamp = "2026-04-15T02:22:27.789261259Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-15T02:22:27.7892618Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-15T02:22:27.789261569Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-15T02:22:27.78926202Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-15T02:22:27.78926222Z", span = "PT0S" }
+pypdf = { timestamp = "2026-04-15T02:22:27.789260758Z", span = "PT0S" }
+onnx = { timestamp = "2026-04-15T02:22:27.789260998Z", span = "PT0S" }
+requests = { timestamp = "2026-04-15T02:22:27.789257221Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -2327,7 +2327,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.3.4"
+version = "1.3.6"
 source = { virtual = "." }
 dependencies = [
     { name = "qdrant-client" },
