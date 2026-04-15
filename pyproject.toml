@@ -37,7 +37,7 @@ dev = [
     "ruff>=0.12.7",
 
     # Testing
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.1",
@@ -62,16 +62,16 @@ dev = [
 
 test = [
     {include-group = "all"},
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.1",
 ]
 
 [tool.uv]
-exclude-newer = "14 days"
+exclude-newer = "7 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days" }
+exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
     "pypdf>=6.10.0",         # GHSA-87mj-5ggw-8qc3 + Dependabot: infinite loop fix
