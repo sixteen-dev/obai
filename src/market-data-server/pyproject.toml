@@ -16,7 +16,7 @@ dependencies = [
 dev = [
     "ruff>=0.8.4",
     "mypy>=1.13.0",
-    "pytest>=8.3.4",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.25.2",
     "pytest-cov>=6.0.0",
 ]
@@ -62,8 +62,8 @@ show_error_codes = true
 no_warn_unreachable = true
 
 [tool.uv]
-exclude-newer = "14 days"
-exclude-newer-package = { cryptography = "0 days", fastmcp = "0 days", pygments = "0 days" }
+exclude-newer = "7 days"
+exclude-newer-package = { cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", pytest = "0 days" }
 constraint-dependencies = ["cryptography>=46.0.7", "fastmcp>=3.2.0", "pygments>=2.20.0"]
 
 [dependency-groups]

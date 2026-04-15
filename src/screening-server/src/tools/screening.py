@@ -28,13 +28,19 @@ async def screen_stocks(
     price_more_than: float | None = None,
     price_lower_than: float | None = None,
     volume_more_than: int | None = None,
+    volume_lower_than: int | None = None,
     beta_more_than: float | None = None,
     beta_lower_than: float | None = None,
+    dividend_more_than: float | None = None,
+    dividend_lower_than: float | None = None,
     sector: str | None = None,
     industry: str | None = None,
     country: str | None = None,
     exchange: str | None = None,
     is_etf: bool | None = None,
+    is_fund: bool | None = None,
+    is_actively_trading: bool = True,
+    include_all_share_classes: bool = False,
     limit: int = 25,
 ) -> dict[str, Any]:
     """Screen stocks with various filters for idea generation.
@@ -49,13 +55,19 @@ async def screen_stocks(
         price_more_than: Minimum price
         price_lower_than: Maximum price
         volume_more_than: Minimum volume
+        volume_lower_than: Maximum volume
         beta_more_than: Minimum beta
         beta_lower_than: Maximum beta
+        dividend_more_than: Minimum dividend yield
+        dividend_lower_than: Maximum dividend yield
         sector: Sector filter (e.g., "Technology", "Healthcare", "Financial Services")
         industry: Industry filter
         country: Country code (e.g., "US", "CN", "GB")
         exchange: Exchange (e.g., "NASDAQ", "NYSE", "AMEX")
         is_etf: Filter for ETFs only
+        is_fund: Filter for mutual funds only
+        is_actively_trading: Only actively traded stocks (default: True)
+        include_all_share_classes: Include all share classes (default: False)
         limit: Maximum results (default: 25, max: 100)
 
     Returns:
@@ -73,13 +85,19 @@ async def screen_stocks(
                 price_more_than=price_more_than,
                 price_lower_than=price_lower_than,
                 volume_more_than=volume_more_than,
+                volume_lower_than=volume_lower_than,
                 beta_more_than=beta_more_than,
                 beta_lower_than=beta_lower_than,
+                dividend_more_than=dividend_more_than,
+                dividend_lower_than=dividend_lower_than,
                 sector=sector,
                 industry=industry,
                 country=country,
                 exchange=exchange,
                 is_etf=is_etf,
+                is_fund=is_fund,
+                is_actively_trading=is_actively_trading,
+                include_all_share_classes=include_all_share_classes,
                 limit=limit,
             )
 
@@ -97,10 +115,16 @@ async def screen_stocks(
                 filters_applied["price_lower_than"] = price_lower_than
             if volume_more_than is not None:
                 filters_applied["volume_more_than"] = volume_more_than
+            if volume_lower_than is not None:
+                filters_applied["volume_lower_than"] = volume_lower_than
             if beta_more_than is not None:
                 filters_applied["beta_more_than"] = beta_more_than
             if beta_lower_than is not None:
                 filters_applied["beta_lower_than"] = beta_lower_than
+            if dividend_more_than is not None:
+                filters_applied["dividend_more_than"] = dividend_more_than
+            if dividend_lower_than is not None:
+                filters_applied["dividend_lower_than"] = dividend_lower_than
             if sector is not None:
                 filters_applied["sector"] = sector
             if industry is not None:
@@ -111,6 +135,12 @@ async def screen_stocks(
                 filters_applied["exchange"] = exchange
             if is_etf is not None:
                 filters_applied["is_etf"] = is_etf
+            if is_fund is not None:
+                filters_applied["is_fund"] = is_fund
+            if not is_actively_trading:
+                filters_applied["is_actively_trading"] = False
+            if include_all_share_classes:
+                filters_applied["include_all_share_classes"] = True
 
             # Warn if no filters applied (could return too many results)
             warning = None

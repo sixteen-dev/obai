@@ -1,6 +1,6 @@
 [project]
 name = "screening-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server for stock screening and ticker discovery via FMP API"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 dev = [
     "ruff>=0.8.4",
     "mypy>=1.13.0",
-    "pytest>=8.3.4",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.25.2",
     "pytest-cov>=6.0.0",
 ]
