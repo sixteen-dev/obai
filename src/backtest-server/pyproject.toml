@@ -72,8 +72,8 @@ ignore = [
 
 [tool.uv]
 exclude-newer = "7 days"
-exclude-newer-package = { fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", pytest = "0 days" }
-constraint-dependencies = ["cryptography>=46.0.7"]
+exclude-newer-package = { fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", pytest = "0 days", python-multipart = "0 days" }
+constraint-dependencies = ["cryptography>=46.0.7", "python-multipart>=0.0.26"]
 
 [tool.mypy]
 strict = true
