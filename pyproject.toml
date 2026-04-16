@@ -3,7 +3,7 @@
 
 [project]
 name = "obai"
-version = "1.3.6"
+version = "1.3.7"
 description = "Development environment for OBaI monorepo"
 requires-python = ">=3.12"
 dependencies = [
@@ -20,6 +20,8 @@ all = [
     "pydantic-settings>=2.10.1",
     "mcp>=1.12.3",
     "pydantic>=2.10.1",
+    "structlog>=25.1.0",
+    "tavily-python>=0.7.0",
     # Web UI dependencies
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
@@ -57,7 +59,6 @@ dev = [
     "pdfplumber>=0.11.7",
     "pyspellchecker>=0.8.3",
     "langdetect>=1.0.9",
-    "unstructured[pdf]>=0.18.15",
 ]
 
 test = [
@@ -71,10 +72,10 @@ test = [
 [tool.uv]
 exclude-newer = "7 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { requests = "0 days", pypdf = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days" }
+exclude-newer-package = { requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
-    "pypdf>=6.10.0",         # GHSA-87mj-5ggw-8qc3 + Dependabot: infinite loop fix
+    "python-multipart>=0.0.26",  # GHSA-multipart-dos: large preamble/epilogue DoS
     "requests>=2.33.0",      # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
     "onnx>=1.21.0",          # CVE-2026-34447, GHSA-q56x: symlink traversal + TOCTOU
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape
