@@ -8,20 +8,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-09T04:22:05.081586455Z"
+exclude-newer = "2026-04-13T04:01:27.35915209Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-04-16T04:22:05.081615069Z", span = "PT0S" }
-pillow = { timestamp = "2026-04-16T04:22:05.08161548Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-04-16T04:22:05.08161582Z", span = "PT0S" }
-anthropic = { timestamp = "2026-04-16T04:22:05.081613466Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-04-16T04:22:05.081614177Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-16T04:22:05.081613787Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-16T04:22:05.081614478Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-04-16T04:22:05.081614768Z", span = "PT0S" }
-onnx = { timestamp = "2026-04-16T04:22:05.081613135Z", span = "PT0S" }
-requests = { timestamp = "2026-04-16T04:22:05.081598327Z", span = "PT0S" }
+pytest = { timestamp = "2026-04-20T04:01:27.359168541Z", span = "PT0S" }
+pillow = { timestamp = "2026-04-20T04:01:27.359169032Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-04-20T04:01:27.359169272Z", span = "PT0S" }
+anthropic = { timestamp = "2026-04-20T04:01:27.359167278Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-20T04:01:27.359167849Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-20T04:01:27.359167529Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-20T04:01:27.35916807Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-20T04:01:27.35916831Z", span = "PT0S" }
+authlib = { timestamp = "2026-04-20T04:01:27.359169503Z", span = "PT0S" }
+onnx = { timestamp = "2026-04-20T04:01:27.359167028Z", span = "PT0S" }
+requests = { timestamp = "2026-04-20T04:01:27.359161758Z", span = "PT0S" }
 
 [[package]]
 name = "aiofile"
@@ -68,14 +69,15 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.6.9"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
+    { name = "joserfc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/98/00d3dd826d46959ad8e32af2dbb2398868fd9fd0683c26e56d0789bd0e68/authlib-1.6.9.tar.gz", hash = "sha256:d8f2421e7e5980cc1ddb4e32d3f5fa659cfaf60d8eaf3281ebed192e4ab74f04", size = 165134, upload-time = "2026-03-02T07:44:01.998Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/82/4d0603f30c1b4629b1f091bb266b0d7986434891d6940a8c87f8098db24e/authlib-1.7.0.tar.gz", hash = "sha256:b3e326c9aa9cc3ea95fe7d89fd880722d3608da4d00e8a27e061e64b48d801d5", size = 175890, upload-time = "2026-04-18T11:00:28.559Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/23/b65f568ed0c22f1efacb744d2db1a33c8068f384b8c9b482b52ebdbc3ef6/authlib-1.6.9-py2.py3-none-any.whl", hash = "sha256:f08b4c14e08f0861dc18a32357b33fbcfd2ea86cfe3fe149484b4d764c4a0ac3", size = 244197, upload-time = "2026-03-02T07:44:00.307Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/48/c954218b2a250e23f178f10167c4173fecb5a75d2c206f0a67ba58006c26/authlib-1.7.0-py2.py3-none-any.whl", hash = "sha256:e36817afb02f6f0b6bf55f150782499ddd6ddf44b402bb055d3263cc65ac9ae0", size = 258779, upload-time = "2026-04-18T11:00:26.64Z" },
 ]
 
 [[package]]
@@ -780,6 +782,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/73/a009f41c5eed71c49bec53036c4b33555afcdee70682a18c6f66e396c039/jiter-0.13.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:ff732bd0a0e778f43d5009840f20b935e79087b4dc65bd36f1cd0f9b04b8ff7f", size = 303808, upload-time = "2026-02-02T12:37:52.092Z" },
     { url = "https://files.pythonhosted.org/packages/c4/10/528b439290763bff3d939268085d03382471b442f212dca4ff5f12802d43/jiter-0.13.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ab44b178f7981fcaea7e0a5df20e773c663d06ffda0198f1a524e91b2fde7e59", size = 337384, upload-time = "2026-02-02T12:37:53.582Z" },
     { url = "https://files.pythonhosted.org/packages/67/8a/a342b2f0251f3dac4ca17618265d93bf244a2a4d089126e81e4c1056ac50/jiter-0.13.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7bb00b6d26db67a05fe3e12c76edc75f32077fb51deed13822dc648fa373bc19", size = 343768, upload-time = "2026-02-02T12:37:55.055Z" },
+]
+
+[[package]]
+name = "joserfc"
+version = "1.6.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/90/b8cc8635c4ce2e5e8104bf26ef147f6e599478f6329107283cdc53aae97f/joserfc-1.6.3.tar.gz", hash = "sha256:c00c2830db969b836cba197e830e738dd9dda0955f1794e55d3c636f17f5c9a6", size = 229090, upload-time = "2026-02-25T15:33:38.167Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/4f/124b3301067b752f44f292f0b9a74e837dd75ff863ee39500a082fc4c733/joserfc-1.6.3-py3-none-any.whl", hash = "sha256:6beab3635358cbc565cb94fb4c53d0557e6d10a15b933e2134939351590bda9a", size = 70465, upload-time = "2026-02-25T15:33:36.997Z" },
 ]
 
 [[package]]
