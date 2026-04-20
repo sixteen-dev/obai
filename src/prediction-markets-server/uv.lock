@@ -3,20 +3,21 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-04-09T04:22:04.864308251Z"
+exclude-newer = "2026-04-13T04:01:28.064981953Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-04-16T04:22:04.864325825Z", span = "PT0S" }
-pillow = { timestamp = "2026-04-16T04:22:04.864326165Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-04-16T04:22:04.864326406Z", span = "PT0S" }
-anthropic = { timestamp = "2026-04-16T04:22:04.864324582Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-04-16T04:22:04.864325123Z", span = "PT0S" }
-cryptography = { timestamp = "2026-04-16T04:22:04.864324813Z", span = "PT0S" }
-pygments = { timestamp = "2026-04-16T04:22:04.864325354Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-04-16T04:22:04.864325584Z", span = "PT0S" }
-onnx = { timestamp = "2026-04-16T04:22:04.864324332Z", span = "PT0S" }
-requests = { timestamp = "2026-04-16T04:22:04.864317499Z", span = "PT0S" }
+pytest = { timestamp = "2026-04-20T04:01:28.064994937Z", span = "PT0S" }
+pillow = { timestamp = "2026-04-20T04:01:28.064995278Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-04-20T04:01:28.064995538Z", span = "PT0S" }
+anthropic = { timestamp = "2026-04-20T04:01:28.064993755Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-04-20T04:01:28.064994276Z", span = "PT0S" }
+cryptography = { timestamp = "2026-04-20T04:01:28.064993985Z", span = "PT0S" }
+pygments = { timestamp = "2026-04-20T04:01:28.064994496Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-04-20T04:01:28.064994717Z", span = "PT0S" }
+authlib = { timestamp = "2026-04-20T04:01:28.064995779Z", span = "PT0S" }
+onnx = { timestamp = "2026-04-20T04:01:28.064993505Z", span = "PT0S" }
+requests = { timestamp = "2026-04-20T04:01:28.064990008Z", span = "PT0S" }
 
 [[package]]
 name = "aiofile"
@@ -63,14 +64,15 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.6.9"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
+    { name = "joserfc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/98/00d3dd826d46959ad8e32af2dbb2398868fd9fd0683c26e56d0789bd0e68/authlib-1.6.9.tar.gz", hash = "sha256:d8f2421e7e5980cc1ddb4e32d3f5fa659cfaf60d8eaf3281ebed192e4ab74f04", size = 165134, upload-time = "2026-03-02T07:44:01.998Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/82/4d0603f30c1b4629b1f091bb266b0d7986434891d6940a8c87f8098db24e/authlib-1.7.0.tar.gz", hash = "sha256:b3e326c9aa9cc3ea95fe7d89fd880722d3608da4d00e8a27e061e64b48d801d5", size = 175890, upload-time = "2026-04-18T11:00:28.559Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/23/b65f568ed0c22f1efacb744d2db1a33c8068f384b8c9b482b52ebdbc3ef6/authlib-1.6.9-py2.py3-none-any.whl", hash = "sha256:f08b4c14e08f0861dc18a32357b33fbcfd2ea86cfe3fe149484b4d764c4a0ac3", size = 244197, upload-time = "2026-03-02T07:44:00.307Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/48/c954218b2a250e23f178f10167c4173fecb5a75d2c206f0a67ba58006c26/authlib-1.7.0-py2.py3-none-any.whl", hash = "sha256:e36817afb02f6f0b6bf55f150782499ddd6ddf44b402bb055d3263cc65ac9ae0", size = 258779, upload-time = "2026-04-18T11:00:26.64Z" },
 ]
 
 [[package]]
@@ -551,6 +553,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7b/6f/357efd7602486741aa73ffc0617fb310a29b588ed0fd69c2399acbb85b0c/jeepney-0.9.0.tar.gz", hash = "sha256:cf0e9e845622b81e4a28df94c40345400256ec608d0e55bb8a3feaa9163f5732", size = 106758, upload-time = "2025-02-27T18:51:01.684Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl", hash = "sha256:97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683", size = 49010, upload-time = "2025-02-27T18:51:00.104Z" },
+]
+
+[[package]]
+name = "joserfc"
+version = "1.6.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/90/b8cc8635c4ce2e5e8104bf26ef147f6e599478f6329107283cdc53aae97f/joserfc-1.6.3.tar.gz", hash = "sha256:c00c2830db969b836cba197e830e738dd9dda0955f1794e55d3c636f17f5c9a6", size = 229090, upload-time = "2026-02-25T15:33:38.167Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/4f/124b3301067b752f44f292f0b9a74e837dd75ff863ee39500a082fc4c733/joserfc-1.6.3-py3-none-any.whl", hash = "sha256:6beab3635358cbc565cb94fb4c53d0557e6d10a15b933e2134939351590bda9a", size = 70465, upload-time = "2026-02-25T15:33:36.997Z" },
 ]
 
 [[package]]
