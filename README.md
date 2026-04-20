@@ -6,7 +6,11 @@
   <sub>pronounced <i>"oww-bee"</i></sub>
   <br/><br/>
   <a href="https://medium.com/gopenai/i-built-a-wall-street-research-desk-with-ai-agents-32ac9e0221eb">Read the blog post →</a>
+  &nbsp;·&nbsp;
+  <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
+
+> 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
 ---
 
