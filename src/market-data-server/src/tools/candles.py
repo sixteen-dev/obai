@@ -9,6 +9,10 @@ from ..response_filters import filter_candles
 
 logger = get_logger(__name__)
 
+# Row cap keeps a single paginated response under response_utils.MAX_RESPONSE_CHARS.
+# Sized from ~178 chars/row observed for daily OHLCV.
+MAX_LIMIT = 130
+
 
 def _extract_candles_list(raw_data: Any) -> list[dict[str, Any]]:
     """Extract the candles list from FMP daily endpoint response.
@@ -57,6 +61,7 @@ async def get_candles(
         Exception: If candle fetch fails
     """
     try:
+        effective_limit = min(limit, MAX_LIMIT)
         settings = get_settings()
         async with FMPClient(settings) as client:
             if interval == "daily":
@@ -69,8 +74,8 @@ async def get_candles(
 
             # Apply pagination
             total_count = len(candles)
-            paginated_data = candles[offset : offset + limit]
-            has_more = total_count > offset + limit
+            paginated_data = candles[offset : offset + effective_limit]
+            has_more = total_count > offset + effective_limit
 
             # Filter candles data
             filtered_data = filter_candles(paginated_data)
@@ -82,12 +87,13 @@ async def get_candles(
                 "to_date": to_date,
                 "data": filtered_data,
                 "pagination": {
-                    "limit": limit,
+                    "limit": effective_limit,
+                    "requested_limit": limit,
                     "offset": offset,
                     "returned": len(paginated_data),
                     "total_count": total_count,
                     "has_more": has_more,
-                    "next_offset": offset + limit if has_more else None,
+                    "next_offset": offset + effective_limit if has_more else None,
                 },
             }
     except Exception as e:
