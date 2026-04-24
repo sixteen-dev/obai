@@ -233,7 +233,7 @@ class FMPClient:
         Args:
             symbol: Stock ticker symbol
             indicator_type: Type of indicator
-                ('RSI', 'SMA', 'EMA', 'MACD', 'WMA', 'DEMA', 'TEMA', 'ADX', 'CCI')
+                ('RSI', 'SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'ADX')
             period: Period for the indicator calculation (default: 10)
 
         Returns:

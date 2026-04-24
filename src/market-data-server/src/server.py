@@ -384,7 +384,7 @@ async def market_data_get_short_volume_tool(
 )
 async def market_data_get_technical_indicators_tool(
     symbol: str,
-    indicator_type: Literal["RSI", "SMA", "EMA", "WMA", "DEMA", "TEMA", "MACD", "ADX", "CCI"],
+    indicator_type: Literal["RSI", "SMA", "EMA", "WMA", "DEMA", "TEMA", "ADX"],
     period: int = 10,
     limit: int = 20,
     offset: int = 0,
