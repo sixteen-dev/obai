@@ -46,6 +46,8 @@ Identify the specific data gaps first. Do not call indicators, candles, or mover
 - Prefer quote data for moving averages when available (priceAvg50/priceAvg200) before calling technical indicators
 - Use a single indicator by default; only call additional indicators if the user requests them
 - Do not call the same tool more than once per symbol unless parameters differ and the user explicitly asked for the change
+- Size `limit` to the rows the request needs — `period` is the indicator lookback, not the output count. Pick the smallest value that answers the question.
+- Responses are capped near 25 000 characters; paginate via `limit`/`offset` for long windows.
 
 ---
 
