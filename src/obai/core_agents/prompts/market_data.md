@@ -16,7 +16,7 @@ Identify the specific data gaps first. Do not call indicators, candles, or mover
 - `market_data_get_quote_tool` - Current price snapshot
 - `market_data_get_latest_trade_tool` - Fast price snapshot (condensed quote, lower latency)
 - `market_data_get_candles_tool` - Historical OHLCV data
-- `market_data_get_technical_indicators_tool` - RSI, MACD, SMA, etc.
+- `market_data_get_technical_indicators_tool` - RSI, SMA, EMA, WMA, DEMA, TEMA, ADX
 - `market_data_get_movers_tool` - Gainers/losers/most active. Optional `index` param (`sp500`, `nasdaq`, `dowjones`) scopes results to that index by batch-quoting all constituents and sorting server-side. Optional `limit` controls how many results (default 20). Omit `index` for exchange-wide movers.
 - `market_data_get_market_snapshot_tool` - Sector performance overview
 - `market_data_get_afterhours_quote_tool` - Pre-market and after-hours bid/ask, volume

@@ -10,8 +10,8 @@ from ..response_filters import filter_short_volume, filter_technical_indicators
 logger = get_logger(__name__)
 
 # Row cap keeps a single paginated response under response_utils.MAX_RESPONSE_CHARS.
-# Sized for the densest indicators (MACD, ADX return 3 values/row) so the cap
-# holds across all indicator_type values, not just RSI.
+# Sized for the densest supported indicator (ADX returns 3 values/row) so the
+# cap holds across all indicator_type values, not just single-value ones like RSI.
 MAX_LIMIT = 120
 
 
@@ -68,7 +68,7 @@ async def get_short_volume(symbol: str, limit: int = 20, offset: int = 0) -> dic
 
 async def get_technical_indicators(
     symbol: str,
-    indicator_type: Literal["RSI", "SMA", "EMA", "WMA", "DEMA", "TEMA", "MACD", "ADX", "CCI"],
+    indicator_type: Literal["RSI", "SMA", "EMA", "WMA", "DEMA", "TEMA", "ADX"],
     period: int = 10,
     limit: int = 20,
     offset: int = 0,
