@@ -87,6 +87,9 @@ def validate_prompt(prompt: str, agent_name: str) -> None:
     if agent_name == "central_hub":
         # Central hub uses agents-as-tools pattern
         required_sections = ["Routing Logic", "Constraints"]
+    elif agent_name == "central_hub_base":
+        # Compact base prompt used when ENABLE_SANDBOX_HUB=true
+        required_sections = ["Hard rules", "Mandatory routing invariants", "Skill usage"]
     elif agent_name == "guardrail":
         # Guardrail is a simple classifier, minimal requirements
         required_sections = ["Valid Topics", "Invalid Topics"]

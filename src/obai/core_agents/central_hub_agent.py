@@ -31,17 +31,25 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import Agent, ModelSettings, Runner, Tool, function_tool
 from agents.agent import AgentToolStreamEvent
 from agents.items import ItemHelpers, MessageOutputItem
+from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
+from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
+from agents.sandbox.capabilities import Capabilities
+from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
+from agents.sandbox.entries import LocalDir
+from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import ResponseTextDeltaEvent
 
 if TYPE_CHECKING:
     from agents import Session
+    from agents.guardrail import InputGuardrail
 
 from .base_agent import BaseAgent
 from .cache import QueryCache
@@ -65,6 +73,8 @@ from .strategy_agent import StrategyAgent
 from .tracing import init_opik
 
 logger = logging.getLogger(__name__)
+
+HUB_SKILLS_DIR = Path(__file__).resolve().parent / "hub_skills"
 
 
 @dataclass(frozen=True)
@@ -289,10 +299,17 @@ _STRATEGY_FOLLOW_UP_PATTERNS = (
 )
 _STRATEGY_SYMBOL_LIST_PATTERNS = (
     re.compile(r'"symbols"\s*:\s*\[(?P<body>[^\]]+)\]', re.IGNORECASE),
-    # Match both "Universe: [AAPL, MSFT]" and "Universe: AAPL, MSFT (source: ...)"
     re.compile(r"Universe:\s*\[?(?P<body>[^\]\n(]+)", re.IGNORECASE),
     re.compile(
         r"\b(?:for|on|across|using)\s+(?P<body>(?:[A-Z]{1,5}(?:\.[A-Z])?\s*(?:,|\band\b)?\s*)+)"
+    ),
+    # Bulleted ticker list emitted by the obai-strategy-routing skill when
+    # listing a resolved universe. Requires the ticker to be followed by
+    # parenthesized text or end-of-line so non-ticker bullet headers
+    # (e.g. lines starting with descriptive prose) are skipped.
+    re.compile(
+        r"^\s*[-*•]\s*(?P<body>[A-Z]{1,5}(?:\.[A-Z])?)(?=\s*\(|\s*$)",
+        re.MULTILINE,
     ),
 )
 _NON_TICKER_TOKENS = {
@@ -587,6 +604,64 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
+def _build_plain_hub_agent(
+    *,
+    instructions: str,
+    model: str,
+    specialist_tools: list[Tool],
+    guardrails: list[InputGuardrail[Any]],
+) -> Agent[None]:
+    """Build the legacy plain-Agent Central Hub.
+
+    Used when ``ENABLE_SANDBOX_HUB`` is false. Behavior matches the pre-0.14
+    Hub: agents-as-tools, parallel tool calls, ``tool_choice="auto"``.
+    """
+    return Agent(
+        name="central_hub",
+        instructions=instructions,
+        model=model,
+        tools=specialist_tools,
+        input_guardrails=guardrails,
+        model_settings=ModelSettings(
+            parallel_tool_calls=True,
+            tool_choice="auto",
+        ),
+    )
+
+
+def _build_sandbox_hub_agent(
+    *,
+    instructions: str,
+    model: str,
+    specialist_tools: list[Tool],
+    guardrails: list[InputGuardrail[Any]],
+) -> Agent[None]:
+    """Build the SandboxAgent Central Hub with lazy hub_skills.
+
+    The Sandbox Hub keeps the same agents-as-tools wiring but exposes the
+    files in ``HUB_SKILLS_DIR`` as lazy skills. Skill metadata (name +
+    description) is loaded eagerly; full SKILL.md bodies are fetched only
+    when the model selects a skill. Critical routing/passthrough logic
+    stays in code; skills only carry verbose conditional instructions.
+    """
+    skills_capability = Skills(
+        lazy_from=LocalDirLazySkillSource(source=LocalDir(src=HUB_SKILLS_DIR)),
+    )
+    return SandboxAgent(
+        name="central_hub",
+        instructions=instructions,
+        model=model,
+        tools=specialist_tools,
+        input_guardrails=guardrails,
+        default_manifest=Manifest(),
+        capabilities=Capabilities.default() + [skills_capability],
+        model_settings=ModelSettings(
+            parallel_tool_calls=True,
+            tool_choice="auto",
+        ),
+    )
+
+
 class CentralHubAgent:
     """Central hub agent that coordinates specialist agents.
 
@@ -616,6 +691,8 @@ class CentralHubAgent:
         """
         self.config = get_config()
         self.agent: Agent[None] | None = None
+        # Populated to a sandbox-aware RunConfig when ENABLE_SANDBOX_HUB is true.
+        self._run_config: RunConfig | None = None
 
         # Specialist agents (initialized in initialize())
         self.fundamentals_agent: FundamentalsAgent | None = None
@@ -667,11 +744,13 @@ class CentralHubAgent:
             model = self.config.orchestrator_model
             logger.info(f"Central Hub Agent using model: {model}")
 
-            # Load instructions from prompt file with user preferences injected
-
+            # Load instructions from prompt file with user preferences injected.
+            # Sandbox Hub uses the compact base prompt; lazy skills carry the
+            # long conditional instructions. Plain Hub uses the legacy prompt.
             user_prefs = _prefs_store.load()
+            prompt_name = "central_hub_base" if self.config.enable_sandbox_hub else "central_hub"
             instructions = load_prompt(
-                "central_hub",
+                prompt_name,
                 USER_PREFERENCES=user_prefs.model_dump_json(indent=2),
             )
 
@@ -817,19 +896,33 @@ class CentralHubAgent:
 
             logger.info(f"Configured {len(specialist_tools)} specialist tools for central hub")
 
-            # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var)
-            # Using agents-as-tools pattern: orchestrator stays in control
-            self.agent = Agent(
-                name="central_hub",
-                instructions=instructions,
-                model=model,
-                tools=specialist_tools,  # Specialists as tools, not handoffs
-                input_guardrails=guardrails,  # Validate queries before processing
-                model_settings=ModelSettings(
-                    parallel_tool_calls=True,  # Call multiple specialists simultaneously
-                    tool_choice="auto",  # Let model decide which tools to use
-                ),
-            )
+            # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var).
+            # Using agents-as-tools pattern: orchestrator stays in control.
+            # ENABLE_SANDBOX_HUB selects between the legacy plain Agent and
+            # the SandboxAgent variant with lazy hub skills.
+            if self.config.enable_sandbox_hub:
+                self.agent = _build_sandbox_hub_agent(
+                    instructions=instructions,
+                    model=model,
+                    specialist_tools=specialist_tools,
+                    guardrails=guardrails,
+                )
+                self._run_config = RunConfig(
+                    sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
+                    workflow_name="OBaI Central Hub",
+                )
+                logger.info(
+                    "Central Hub running as SandboxAgent (lazy skills from %s)",
+                    HUB_SKILLS_DIR,
+                )
+            else:
+                self.agent = _build_plain_hub_agent(
+                    instructions=instructions,
+                    model=model,
+                    specialist_tools=specialist_tools,
+                    guardrails=guardrails,
+                )
+                self._run_config = None
 
             self._initialized = True
             logger.info("Central Hub Agent initialized successfully")
@@ -930,6 +1023,7 @@ class CentralHubAgent:
         self.research_agent = None
         self.prediction_markets_agent = None
         self.agent = None
+        self._run_config = None
         self._initialized = False
 
     async def close(self) -> None:
@@ -1168,25 +1262,33 @@ class CentralHubAgent:
                     }
                 )
 
-        # Routing hint: detect strategy/backtest intent and remind the hub
-        # to route to strategy_analysis instead of answering from training data.
-        if _is_strategy_query(query):
-            query_to_run = (
-                "[ROUTING REMINDER: This query involves strategy design, backtesting, "
-                "or trading systems. You MUST route to strategy_analysis per your "
-                "Strategy Routing instructions. Do not answer from training data.]\n\n"
-                + query_to_run
-            )
-            logger.info("Strategy intent detected — injected routing hint")
+        # DISABLED FOR SANDBOX HUB EVAL: regex-driven routing nudge bypasses
+        # the obai-strategy-routing skill's universe-resolution step (e.g. S02
+        # "large-cap semiconductor stocks" was handed straight to
+        # strategy_analysis without screener_lookup). Re-enable by
+        # uncommenting if Sandbox+skills cannot route strategy queries
+        # without the hint.
+        #
+        # if _is_strategy_query(query):
+        #     query_to_run = (
+        #         "[ROUTING REMINDER: This query involves strategy design, backtesting, "
+        #         "or trading systems. You MUST route to strategy_analysis per your "
+        #         "Strategy Routing instructions. Do not answer from training data.]\n\n"
+        #         + query_to_run
+        #     )
+        #     logger.info("Strategy intent detected — injected routing hint")
 
         prediction_context_block = ""
 
         # Run streamed
-        # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
+        # Opik tracing handled by OpikTracingProcessor (set up in init_opik).
+        # run_config is None for the plain Agent path; for the Sandbox Hub it
+        # carries a SandboxRunConfig with a UnixLocalSandboxClient.
         result = Runner.run_streamed(
             starting_agent=self.agent,
             input=query_to_run,
             session=session,
+            run_config=self._run_config,
         )
 
         # Buffer response text for caching
