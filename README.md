@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.png" alt="OBaI - Multi-agent AI for market research" width="600" />
+  <img src="assets/banner.png" alt="OBaI - Multi-agent AI for market research" width="100%" />
   <br/>
   <strong>Open-source multi-agent platform for stock research, strategy backtesting, and prediction market intelligence.</strong>
   <br/>
