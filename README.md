@@ -9,6 +9,7 @@
   &nbsp;·&nbsp;
   <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
+[![SafeSkill 60/100](https://img.shields.io/badge/SafeSkill-60%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/sixteen-dev-obai)
 
 > 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
