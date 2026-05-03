@@ -27,6 +27,7 @@ from src.models.strategy import (
     StrategyDefinition,
     Universe,
 )
+from src.server import backtest_run_strategy_tool
 
 
 def _make_strategy(

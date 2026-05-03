@@ -111,6 +111,18 @@ uv run mypy src/ --strict
 uv run pytest
 ```
 
+### Conformance Suite
+
+The calculation conformance suite is documented in
+[`docs/conformance.md`](docs/conformance.md). It is separate from the OBaI
+agent-level eval harness and focuses on deterministic indicator, metric,
+execution, cost, no-lookahead, portfolio, data-quality, and edge-case behavior.
+
+```bash
+cd src/backtest-server
+uv run pytest tests/test_conformance_*.py
+```
+
 ### Run Locally
 
 ```bash
