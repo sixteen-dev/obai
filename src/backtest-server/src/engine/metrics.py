@@ -130,7 +130,7 @@ def _build_result(  # noqa: PLR0913
     calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
     volatility = _annualized_volatility(returns, bars_per_year)
     var_95 = float(np.percentile(returns, 5)) * 100 if len(returns) > 0 else 0.0
-    downside = _compute_downside_deviation(returns, bars_per_year)
+    downside = _compute_downside_deviation(returns, bars_per_year, risk_free_rate)
 
     return BacktestResult(
         strategy_name=strategy_name,
@@ -378,32 +378,41 @@ def _compute_sortino(
 ) -> float:
     """Compute annualized Sortino ratio.
 
-    Uses per-bar downside std (not annualized) to avoid double-annualization.
-    Formula: (mean_excess / per_bar_downside_std) * sqrt(bars_per_year).
+    Uses downside semi-deviation over the full return series, matching the
+    empyrical/QuantStats convention. Computing the standard deviation of only
+    negative returns understates downside risk because it drops zero-upside
+    observations from the mean square.
     """
     if len(returns) < MIN_DATA_POINTS:
         return 0.0
-    negative = returns[returns < 0]
-    if len(negative) == 0:
-        return 0.0
-    downside_std = float(np.std(negative, ddof=1))
-    if downside_std == 0:
-        return 0.0
     bar_rf = risk_free_rate / bars_per_year
+    downside = _downside_risk(returns, bar_rf, bars_per_year)
+    if not np.isfinite(downside) or downside <= 0:
+        return 0.0
     excess = float(np.mean(returns)) - bar_rf
-    return float(excess / downside_std * np.sqrt(bars_per_year))
+    return float(excess * bars_per_year / downside)
 
 
 def _compute_downside_deviation(
     returns: np.ndarray[Any, np.dtype[np.float64]],
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> float:
     """Compute annualized downside deviation (percentage)."""
-    negative = returns[returns < 0]
-    if len(negative) == 0:
+    if len(returns) == 0:
         return 0.0
-    dd = float(np.std(negative, ddof=1))
-    return float(dd * np.sqrt(bars_per_year) * 100)
+    bar_rf = risk_free_rate / bars_per_year
+    return float(_downside_risk(returns, bar_rf, bars_per_year) * 100)
+
+
+def _downside_risk(
+    returns: np.ndarray[Any, np.dtype[np.float64]],
+    required_return: float,
+    bars_per_year: int,
+) -> float:
+    """Compute annualized downside semi-deviation as a decimal."""
+    downside_diff = np.minimum(returns - required_return, 0.0)
+    return float(np.sqrt(np.mean(np.square(downside_diff))) * np.sqrt(bars_per_year))
 
 
 def _compute_drawdown(
