@@ -33,7 +33,7 @@ def test_plain_hub_builder_returns_plain_agent() -> None:
     """Plain builder produces an ``Agent`` (not a ``SandboxAgent``)."""
     agent = _build_plain_hub_agent(
         instructions="hub instructions",
-        model="gpt-5.1",
+        model="gpt-5.5",
         specialist_tools=[],
         guardrails=[],
     )
@@ -48,7 +48,7 @@ def test_sandbox_hub_builder_returns_sandbox_agent_with_skills() -> None:
     """Sandbox builder attaches the lazy hub_skills capability."""
     agent = _build_sandbox_hub_agent(
         instructions="hub instructions",
-        model="gpt-5.1",
+        model="gpt-5.5",
         specialist_tools=[],
         guardrails=[],
     )

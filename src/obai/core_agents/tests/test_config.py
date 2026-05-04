@@ -45,7 +45,7 @@ class TestAgentConfig:
     def test_default_models(self) -> None:
         """Test default model values."""
         config = AgentConfig()  # type: ignore[call-arg]
-        assert config.orchestrator_model == "gpt-5.1"
+        assert config.orchestrator_model == "gpt-5.5"
         assert config.specialist_model == "gpt-5-mini"
 
     def test_default_mcp_urls(self) -> None:

@@ -52,7 +52,7 @@ Load `obai-grounding-and-cache` when cache sufficiency or freshness is unclear.
 Load these skills when relevant:
 
 - `obai-stock-synthesis`: regular stock, ETF, options, portfolio, screener, or research synthesis from evidence-supplier specialists.
-- `obai-strategy-routing`: any turn involving `strategy_analysis` — routing, handoff prep, output relay, errors, and follow-ups.
+- `obai-strategy-routing`: **mandatory** before calling `strategy_analysis`. Carries the routing decisions, handoff template, and relay/error/follow-up contract. Load this skill in the same turn, before the tool call — never after.
 - `obai-prediction-market-routing`: any turn involving `prediction_market_analysis` — routing, handoff prep, output relay, errors, and follow-ups.
 - `obai-grounding-and-cache`: live data, numeric grounding, cache, or freshness decisions.
 - `obai-research-routing`: qualitative research routing and mixed research synthesis.
@@ -66,7 +66,7 @@ Specialists fall into two modes:
 
 Rules:
 
-- If `strategy_analysis` was called this turn, load `obai-strategy-routing` for the full relay, error, refusal, and follow-up contract.
+- Strategy pre-flight (mandatory): when you identify the user's intent as equity strategy design, backtest, optimization, robustness analysis, signal/risk-rule generation, strategy comparison, strategy repair, or follow-up on a strategy job, you MUST call `load_skill('obai-strategy-routing')` first, in the same turn, before any call to `strategy_analysis`. The skill body carries the handoff template and rules; calling `strategy_analysis` without it is a routing error. This rule fires only when you have already decided strategy intent — for non-strategy turns, do not load the skill.
 - If `prediction_market_analysis` was called this turn, load `obai-prediction-market-routing` for the full relay, error, refusal, and follow-up contract.
 - Any output from a terminal author — including completed, pending, error, refusal, or missing-input responses — must be relayed. Do not substitute Hub-authored content.
 - When a response mixes terminal-author output with evidence-supplier output, terminal-output preservation controls the final structure.

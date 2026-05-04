@@ -379,8 +379,9 @@ When using `allocation_mode: portfolio`, the result includes a `portfolio_metric
 
 ## Data-Split Discipline
 
-- Iterations 1-4: set `data_config.end_date = train_end_date`.
-- Final validation: run the chosen final candidate on the full range.
+- Engine constraint: when `train_end_date` is set it must be strictly before `end_date` — equal values are rejected. When `train_end_date = null` the engine auto-splits the run window 75/25 and still emits both `train` and `test` metrics.
+- Iterations 1-4: set `end_date` to the chosen train-end so the run covers only the training range, and leave `train_end_date = null`. Read the `full` metrics block for iteration decisions.
+- Final full-period validation: set `end_date` to the full-range end and `train_end_date` to the user's train end so the engine emits genuine train vs out-of-sample metrics in one call.
 - Before calling `backtest_walk_forward_tool`: restore `data_config.end_date` to the original full-range end date and set `train_end_date` to `null`. The walk-forward engine creates its own expanding train/test windows internally — it needs the full date range, not the train-limited range.
 - When comparing train and full-period behavior, focus on degradation in Sharpe, drawdown, profit factor, and trade count.
 
@@ -597,3 +598,19 @@ Use `backtest_get_supported_indicators_tool` to discover available indicators, t
 - `before_time` — bar time < HH:MM (intraday only)
 - For range logic, combine `greater_than` and `less_than` with `AND`
 - For session-time windows, combine `after_time` and `before_time` with `AND`
+
+## Choosing the right operator from user wording
+
+Map the user's exact wording to the operator below.
+
+| User wording | Operator |
+|---|---|
+| "drops below X", "is below X", "falls below X", "under X", "< X" | `less_than` |
+| "rises above X", "is above X", "exceeds X", "over X", "> X" | `greater_than` |
+| "crosses below X", "crossover from above to below", "breaks below X" | `crosses_below` |
+| "crosses above X", "crossover from below to above", "breaks above X" | `crosses_above` |
+| "equals X", "= X" | `equals` |
+| "after HH:MM" | `after_time` |
+| "before HH:MM" | `before_time` |
+
+Threshold rule (load-bearing): threshold operators fire on every bar where the condition holds; crossover operators fire only on the bar of transition. Misclassifying a threshold check as a crossover often produces zero trades. Do not promote a threshold to a crossover because the Hub repeated the rule in `Strategy context:` or because the strategy family ("mean reversion") commonly uses crossovers — preserve the user's wording from the `User request` block.

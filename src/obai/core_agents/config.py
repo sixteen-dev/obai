@@ -102,7 +102,7 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.1",
+        default="gpt-5.5",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
@@ -134,7 +134,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.5",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -150,6 +150,17 @@ class AgentConfig(BaseSettings):
     enable_guardrails: bool = Field(
         default=True,
         description="Enable input guardrails to filter non-financial queries (cost optimization)",
+    )
+
+    # Strategy agent run-loop budget. Strategy turns commonly need
+    # screener + fundamentals + multiple backtest iterations + an optional
+    # walk-forward kickoff before composing the final memo, so the SDK
+    # default of 10 is undersized.
+    strategy_max_turns: int = Field(
+        default=25,
+        ge=5,
+        le=100,
+        description="Max turns for the strategy_analysis tool's inner Runner.run loop",
     )
 
     # SandboxAgent Hub (lazy-skill prompt modularity, SDK 0.14.x)

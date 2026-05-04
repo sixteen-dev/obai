@@ -207,8 +207,12 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "context (fundamentals, technicals, sentiment) to design "
     "informed strategies, then backtests and iterates. "
     "Use for strategy building, backtesting, or trading "
-    "system questions. Always follow the Strategy Routing "
-    "steps in your instructions before calling this tool. "
+    "system questions. "
+    "MANDATORY PRE-CONDITION: before calling this tool, you MUST first "
+    "call load_skill('obai-strategy-routing') in the same turn. The "
+    "skill body holds the handoff template and rules that govern this "
+    "call. Calling this tool without loading that skill first is "
+    "incorrect and will produce wrong handoffs. "
     "Do not call with unresolved critical inputs. "
     "This tool may return a finished user-facing deliverable. "
     "If it does, your final answer must be exactly the tool output. "
@@ -296,6 +300,12 @@ _STRATEGY_FOLLOW_UP_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:backtest|job)\s+(?:results?|output|done)\b", re.IGNORECASE),
+    # The strategy agent's pending-response template tells users to ask
+    # "Check job <id>" (gpt-5.5 phrasing). Match that wording and any bare
+    # bt_<hash> token so the hub doesn't reject its own follow-up handoff.
+    re.compile(r"\bcheck\s+job\b", re.IGNORECASE),
+    re.compile(r"\bjob\s+bt_\w+", re.IGNORECASE),
+    re.compile(r"\bbt_[a-z0-9]{6,}\b", re.IGNORECASE),
 )
 _STRATEGY_SYMBOL_LIST_PATTERNS = (
     re.compile(r'"symbols"\s*:\s*\[(?P<body>[^\]]+)\]', re.IGNORECASE),
@@ -392,6 +402,20 @@ def _is_strategy_query(query: str) -> bool:
     return not _PREDICTION_MARKET_KEYWORDS.search(query)
 
 
+def _build_strategy_routing_hint() -> str:
+    """Build the strategy routing reminder prepended to strategy-like queries."""
+    return (
+        "[ROUTING REMINDER: This query appears to involve equity strategy design, "
+        "backtesting, or trading systems. Follow Strategy Routing exactly: if the "
+        "user did not provide concrete tradable tickers, resolve the universe first "
+        "with screener_lookup; otherwise call strategy_analysis. When calling "
+        "strategy_analysis, include `User request:` with the user's original wording "
+        "verbatim, then add `Strategy context:` with resolved facts only. Do not "
+        "rewrite signal conditions, risk rules, thresholds, or order semantics. Do "
+        "not answer from training data.]\n\n"
+    )
+
+
 def _get_missing_strategy_inputs(input_text: str) -> list[str]:
     """Return missing critical strategy inputs for the hub-to-strategy call."""
     if _is_strategy_follow_up_request(input_text):
@@ -417,18 +441,92 @@ def _format_strategy_input_error(missing_inputs: list[str]) -> str:
     )
 
 
-def _prepare_strategy_handoff_input(input_text: str) -> str:
-    """Prefix strategy handoff with execution-governance note.
+def _normalize_strategy_handoff_text(text: str) -> str:
+    """Normalize text for faithful-handoff substring checks."""
+    return " ".join(text.casefold().split())
 
-    This reduces the chance that hub-authored context overrides the
-    strategy agent's own workflow, especially around mandatory backtesting.
+
+def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | None) -> str | None:
+    """Return an error when strategy handoff does not preserve the user request.
+
+    Strategy handoffs are allowed to add context, but the original user request
+    must remain present verbatim enough that signal semantics are not rewritten
+    by the Hub before the Strategy Agent sees them.
     """
+    if not original_query:
+        return None
+
+    normalized_query = _normalize_strategy_handoff_text(original_query)
+    normalized_input = _normalize_strategy_handoff_text(input_text)
+    threshold_below = (
+        "drops below" in normalized_query
+        or "falls below" in normalized_query
+        or "is below" in normalized_query
+        or "below" in normalized_query
+    )
+    original_cross_below = (
+        "crosses below" in normalized_query
+        or "cross below" in normalized_query
+        or "crosses_below" in normalized_query
+    )
+    input_cross_below = (
+        "crosses below" in normalized_input
+        or "cross below" in normalized_input
+        or "crosses_below" in normalized_input
+    )
+    if threshold_below and input_cross_below and not original_cross_below:
+        return (
+            "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis received a "
+            "handoff that appears to rewrite a threshold condition into a "
+            "crossover condition. Retry using the user's original wording in "
+            "`User request:` and keep any derived implementation details out of "
+            "the Hub handoff."
+        )
+
+    if not normalized_query or normalized_query in normalized_input:
+        return None
+
     return (
-        "Execution note: treat any hub-provided context below as factual context and "
-        "user constraints only. Follow your own system instructions for workflow and "
-        "tool use. Do not skip required backtesting or return design-only output for "
-        "a strategy-design or backtest request just because the hub phrased it that way.\n\n"
-        f"{input_text}"
+        "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis requires the "
+        "original user request to be preserved in the handoff. Retry the call "
+        "using the Strategy Hand-off Format with `User request:` set to the "
+        "user's original wording, then add any resolved context separately. "
+        "Do not rewrite threshold conditions into crossover conditions or add "
+        "operator semantics the user did not explicitly specify."
+    )
+
+
+def _get_strategy_handoff_format_error(input_text: str) -> str | None:
+    """Return an error when strategy handoff omits the required headers.
+
+    The skill mandates a literal two-block structure: `User request:` carrying
+    the user's wording verbatim, and `Strategy context:` carrying Hub-resolved
+    facts. Hub-authored briefs that substitute their own section names
+    (e.g. `Task intent:`, `Strategy concept:`, `Backtest preferences:`,
+    `Resolved context:`) leak design choices into the Strategy Agent's
+    reasoning and produce off-spec backtests. This gate fails closed and
+    forces the Hub to retry with the correct format.
+    """
+    has_user_request = "User request:" in input_text
+    has_strategy_context = "Strategy context:" in input_text
+    if has_user_request and has_strategy_context:
+        return None
+
+    missing: list[str] = []
+    if not has_user_request:
+        missing.append("`User request:`")
+    if not has_strategy_context:
+        missing.append("`Strategy context:`")
+    missing_text = " and ".join(missing)
+    return (
+        "STRATEGY_HANDOFF_FORMAT_ERROR: strategy_analysis input must use the "
+        "literal two-block structure from the obai-strategy-routing skill. "
+        f"Missing required header(s): {missing_text}. "
+        "Retry with `User request:` carrying the user's wording verbatim and "
+        "`Strategy context:` carrying only Hub-resolved facts. Do not "
+        "substitute hub-authored headers like `Task intent:`, `Strategy "
+        "concept:`, `Backtest preferences:`, `Resolved context:`, or "
+        "`Backtest request:` — those are forbidden."
     )
 
 
@@ -693,6 +791,7 @@ class CentralHubAgent:
         self.agent: Agent[None] | None = None
         # Populated to a sandbox-aware RunConfig when ENABLE_SANDBOX_HUB is true.
         self._run_config: RunConfig | None = None
+        self._current_user_query: str | None = None
 
         # Specialist agents (initialized in initialize())
         self.fundamentals_agent: FundamentalsAgent | None = None
@@ -1109,6 +1208,19 @@ class CentralHubAgent:
             strict_mode=False,
         )
         async def strategy_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            format_error = _get_strategy_handoff_format_error(input)
+            if format_error:
+                logger.info("Blocked strategy_analysis due to format violation")
+                return format_error
+
+            handoff_error = _get_strategy_handoff_fidelity_error(
+                input,
+                self._current_user_query,
+            )
+            if handoff_error:
+                logger.info("Blocked strategy_analysis due to unfaithful handoff")
+                return handoff_error
+
             missing_inputs = _get_missing_strategy_inputs(input)
             if missing_inputs:
                 logger.info(
@@ -1117,11 +1229,11 @@ class CentralHubAgent:
                 )
                 return _format_strategy_input_error(missing_inputs)
 
-            prepared_input = _prepare_strategy_handoff_input(input)
             result = Runner.run_streamed(
                 starting_agent=strategy_agent,
-                input=prepared_input,
+                input=input,
                 context=ctx.context,
+                max_turns=self.config.strategy_max_turns,
             )
 
             async for event in result.stream_events():
@@ -1241,6 +1353,7 @@ class CentralHubAgent:
         _clear_active_agents()
         _clear_strategy_passthrough()
         _clear_prediction_passthrough()
+        self._current_user_query = query
 
         # RAG-style cache: search for similar cached response
         query_to_run = query
@@ -1262,20 +1375,13 @@ class CentralHubAgent:
                     }
                 )
 
-        # DISABLED FOR SANDBOX HUB EVAL: regex-driven routing nudge bypasses
-        # the obai-strategy-routing skill's universe-resolution step (e.g. S02
-        # "large-cap semiconductor stocks" was handed straight to
-        # strategy_analysis without screener_lookup). Re-enable by
-        # uncommenting if Sandbox+skills cannot route strategy queries
-        # without the hint.
-        #
+        # Routing hint: detect strategy/backtest intent and remind the hub
+        # to route through the strategy specialist. Disabled while testing
+        # whether the new architecture (base-prompt pre-flight rule +
+        # mandatory load_skill + tightened tool description + skill body)
+        # is sufficient on its own. Re-enable if strategy turns regress.
         # if _is_strategy_query(query):
-        #     query_to_run = (
-        #         "[ROUTING REMINDER: This query involves strategy design, backtesting, "
-        #         "or trading systems. You MUST route to strategy_analysis per your "
-        #         "Strategy Routing instructions. Do not answer from training data.]\n\n"
-        #         + query_to_run
-        #     )
+        #     query_to_run = _build_strategy_routing_hint() + query_to_run
         #     logger.info("Strategy intent detected — injected routing hint")
 
         prediction_context_block = ""

@@ -130,6 +130,10 @@ class HubBridge:
             current_agent = "Central Hub"
             hub_analyzing = False
             hub_synthesizing = False
+            # Holds the text streamed since the last thinking_break (or query
+            # start). Becomes the final answer once the run completes; any
+            # text closed off by a hub tool_call_item was intermediate
+            # narration and is signalled to the UI via thinking_break.
             response_text = ""
             query_start = time.perf_counter()
             specialists_used: list[str] = []
@@ -202,6 +206,15 @@ class HubBridge:
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", "unknown")
                                 call_id = getattr(raw_item, "call_id", None)
+
+                                # Any text streamed before this hub tool call
+                                # was intermediate narration ("loading skill",
+                                # "retrying handoff"), not the final answer.
+                                # Tell the UI to close out the current segment
+                                # as thinking and start a new one.
+                                if response_text:
+                                    yield {"type": "thinking_break"}
+                                    response_text = ""
 
                                 if tool_name in SPECIALIST_TOOLS:
                                     display_name = SPECIALIST_TOOLS[tool_name]

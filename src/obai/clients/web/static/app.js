@@ -34,7 +34,6 @@ const toolTree = new ToolTree("tool-tree");
 
 let streamingBubble = null;
 let streamingText = "";
-let thinkingEl = null;
 let streamingMessage = null;
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -103,12 +102,19 @@ function handleMessage(msg) {
             }
             break;
 
-        case "agent_switch":
+        case "agent_switch": {
             if (!isActiveSession) break;
             toolTree.setActiveAgent(msg.agent);
-            updateThinking(thinkingVerb());
+            const messageDiv = ensureStreamingMessage();
+            const trail = ensureThinkingTrail(messageDiv);
+            setThinkingTrailLabel(
+                trail,
+                (msg.agent || "Central Hub") + " " + thinkingVerb()
+            );
             toolTree.scrollToBottom();
+            scrollChatToBottom();
             break;
+        }
 
         case "tool_start":
             if (!isActiveSession) break;
@@ -134,6 +140,11 @@ function handleMessage(msg) {
             handleTextDelta(msg.delta);
             break;
 
+        case "thinking_break":
+            if (!isActiveSession) break;
+            handleThinkingBreak();
+            break;
+
         case "complete":
             handleComplete(msg);
             break;
@@ -146,29 +157,123 @@ function handleMessage(msg) {
             updateSessionTitle(msg.session_id, msg.title);
             break;
 
-        case "queued":
+        case "queued": {
             if (!isActiveSession) break;
-            updateThinking("Queued, waiting...");
+            const messageDiv = ensureStreamingMessage();
+            const trail = ensureThinkingTrail(messageDiv);
+            setThinkingTrailLabel(trail, "Queued, waiting...");
             break;
+        }
     }
 }
 
 function handleTextDelta(delta) {
     if (!streamingBubble) {
-        removeThinking();
-        const msgDiv = createMessageDiv("assistant", new Date());
-        const bubble = msgDiv.querySelector(".message-bubble");
-        bubble.classList.add("streaming");
-        bubble.textContent = "";
-        messagesDiv.appendChild(msgDiv);
-        streamingMessage = msgDiv;
-        streamingBubble = bubble;
+        ensureStreamingMessage();
+        streamingBubble = appendSegmentBubble(streamingMessage);
+        streamingBubble.classList.add("streaming");
         streamingText = "";
     }
 
     streamingText += delta;
     streamingBubble.textContent = streamingText;
     scrollChatToBottom();
+}
+
+function ensureStreamingMessage() {
+    if (streamingMessage) {
+        return streamingMessage;
+    }
+    const msgDiv = createMessageDiv("assistant", new Date());
+    // Drop the bubble createMessageDiv pre-creates — text segments and the
+    // thinking trail are appended explicitly so the layout stays predictable.
+    const preBubble = msgDiv.querySelector(".message-bubble");
+    if (preBubble) {
+        preBubble.remove();
+    }
+    messagesDiv.appendChild(msgDiv);
+    streamingMessage = msgDiv;
+    return streamingMessage;
+}
+
+function setThinkingTrailLabel(trail, text) {
+    const label = trail.querySelector(".thinking-trail-label");
+    if (label) {
+        label.textContent = text;
+    }
+}
+
+function appendSegmentBubble(messageDiv) {
+    const stack = messageDiv.querySelector(".message-stack");
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+    stack.appendChild(bubble);
+    return bubble;
+}
+
+function handleThinkingBreak() {
+    if (!streamingBubble || !streamingMessage) {
+        return;
+    }
+    // Close out the current segment as intermediate narration and move it
+    // into a collapsible "Thinking" trail at the top of the message — same
+    // visual pattern as ChatGPT/Claude's reasoning section. Strip bubble
+    // styling so the segment renders as a small italic line.
+    streamingBubble.classList.remove("streaming", "message-bubble");
+    streamingBubble.classList.add("thinking-line");
+    const trail = ensureThinkingTrail(streamingMessage);
+    trail.querySelector(".thinking-trail-list").appendChild(streamingBubble);
+    streamingBubble = null;
+    streamingText = "";
+}
+
+function ensureThinkingTrail(messageDiv) {
+    let trail = messageDiv.querySelector(".thinking-trail");
+    if (trail) {
+        return trail;
+    }
+    trail = document.createElement("details");
+    trail.className = "thinking-trail";
+    trail.open = true;
+
+    const summary = document.createElement("summary");
+    summary.className = "thinking-trail-summary";
+
+    const chevron = document.createElement("span");
+    chevron.className = "thinking-trail-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "›";
+    summary.appendChild(chevron);
+
+    const label = document.createElement("span");
+    label.className = "thinking-trail-label";
+    label.textContent = "Thinking";
+    summary.appendChild(label);
+
+    const dots = document.createElement("span");
+    dots.className = "thinking-trail-dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 3; i += 1) {
+        const dot = document.createElement("span");
+        dot.textContent = ".";
+        dots.appendChild(dot);
+    }
+    summary.appendChild(dots);
+
+    const list = document.createElement("div");
+    list.className = "thinking-trail-list";
+
+    trail.appendChild(summary);
+    trail.appendChild(list);
+
+    const stack = messageDiv.querySelector(".message-stack");
+    const meta = stack.querySelector(".message-meta");
+    if (meta && meta.nextSibling) {
+        stack.insertBefore(trail, meta.nextSibling);
+    } else {
+        stack.appendChild(trail);
+    }
+    return trail;
 }
 
 function handleComplete(msg) {
@@ -183,10 +288,18 @@ function handleComplete(msg) {
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
-    removeThinking();
 
     if (msg.trace_id && msg.opik_url) {
         toolTree.addTraceLink(msg.trace_id, msg.opik_url);
+    }
+
+    if (streamingMessage) {
+        const trail = streamingMessage.querySelector(".thinking-trail");
+        if (trail) {
+            trail.open = false;
+            // Hides the animated dots — see .thinking-trail.is-done in CSS.
+            trail.classList.add("is-done");
+        }
     }
 
     if (streamingBubble && streamingText) {
@@ -228,7 +341,6 @@ function handleError(msg) {
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
-    removeThinking();
 
     const msgDiv = createMessageDiv("assistant", new Date());
     msgDiv.classList.add("message-error");
@@ -338,36 +450,6 @@ function looksLikeJsonBlock(codeEl) {
     }
 }
 
-function updateThinking(text) {
-    if (!thinkingEl) {
-        thinkingEl = document.createElement("div");
-        thinkingEl.className = "thinking-indicator";
-
-        for (let i = 0; i < 3; i += 1) {
-            const dot = document.createElement("span");
-            dot.className = "thinking-dot";
-            thinkingEl.appendChild(dot);
-        }
-
-        const label = document.createElement("span");
-        thinkingEl.appendChild(label);
-        messagesDiv.appendChild(thinkingEl);
-    }
-
-    const label = thinkingEl.lastElementChild;
-    if (label) {
-        label.textContent = text;
-    }
-    scrollChatToBottom();
-}
-
-function removeThinking() {
-    if (thinkingEl) {
-        thinkingEl.remove();
-        thinkingEl = null;
-    }
-}
-
 async function loadSessions() {
     try {
         const res = await fetch("/api/sessions");
@@ -449,7 +531,6 @@ async function switchSession(sessionId) {
     streamingMessage = null;
     streamingBubble = null;
     streamingText = "";
-    removeThinking();
 
     // Restore saved input for the new session
     queryInput.value = state.savedInputs[sessionId] || "";
@@ -676,16 +757,15 @@ function updateSendButton() {
 }
 
 const thinkingVerbsList = [
-    "OBaI is thinking...",
-    "OBaI is researching...",
-    "OBaI is analyzing...",
-    "OBaI is digging in...",
-    "OBaI is looking into it...",
-    "OBaI is crunching numbers...",
-    "OBaI is pulling data...",
-    "OBaI is connecting the dots...",
-    "OBaI is on it...",
-    "OBaI is working through this...",
+    "thinking",
+    "researching",
+    "analyzing",
+    "digging in",
+    "looking into it",
+    "crunching numbers",
+    "pulling data",
+    "connecting the dots",
+    "working through this",
 ];
 
 function thinkingVerb() {
