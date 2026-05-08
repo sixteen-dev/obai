@@ -49,7 +49,10 @@ def bootstrap() -> Settings:
     try:
         logger.info("loading_settings", source="env")
         settings = load_settings()
-        logger.info("settings_loaded", qdrant_url=settings.qdrant_url)
+        if settings.qdrant_enabled:
+            logger.info("settings_loaded", qdrant_url=settings.qdrant_url)
+        else:
+            logger.info("settings_loaded", qdrant="disabled")
 
         logger.info("bootstrap_complete")
         return settings
@@ -306,42 +309,50 @@ async def fundamentals_get_analyst_outlook_tool(
         return format_api_error(e, "FMP")
 
 
-@mcp.tool(
-    annotations={
-        "title": "Search Financial Education Content",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": True,
-    }
-)
-async def fundamentals_search_education_tool(
-    query: str,
-    top_k: int = 5,
-    source_filter: str | None = None,
-    offset: int = 0,
-) -> dict[str, Any]:
-    """Search educational content about financial fundamentals from processed PDFs.
+# Educational PDF search tool — registered only when Qdrant is enabled.
+# When QDRANT_ENABLED=false (the default), this tool is not exposed to the
+# hub, so the agent will not see or attempt to call it. The implementation
+# below is preserved verbatim for the enabled path.
+if load_settings().qdrant_enabled:
 
-    Use this to learn about financial concepts, investment strategies, and market fundamentals.
-    The vector database contains 19 financial PDFs including guides on options, ETFs, bonds,
-    ratios, asset allocation, and more.
+    @mcp.tool(
+        annotations={
+            "title": "Search Financial Education Content",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    async def fundamentals_search_education_tool(
+        query: str,
+        top_k: int = 5,
+        source_filter: str | None = None,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Search educational content about financial fundamentals from processed PDFs.
 
-    Args:
-        query: Natural language query (e.g., "What are option strategies for volatility?")
-        top_k: Number of results to return per page
-        source_filter: Optional filter by specific PDF source name
-        offset: Number of results to skip (for pagination)
+        Use this to learn about financial concepts, investment strategies, and market fundamentals.
+        The vector database contains 19 financial PDFs including guides on options, ETFs, bonds,
+        ratios, asset allocation, and more.
 
-    Returns:
-        Relevant educational content chunks with source citations and pagination metadata
-    """
-    try:
-        result = await search_fundamentals(query, top_k, source_filter, offset)
-        return truncate_response(result)
-    except Exception as e:
-        log_error(logger, e, context={"tool": "fundamentals_search_education_tool", "query": query})
-        return format_api_error(e, "FMP")
+        Args:
+            query: Natural language query (e.g., "What are option strategies for volatility?")
+            top_k: Number of results to return per page
+            source_filter: Optional filter by specific PDF source name
+            offset: Number of results to skip (for pagination)
+
+        Returns:
+            Relevant educational content chunks with source citations and pagination metadata
+        """
+        try:
+            result = await search_fundamentals(query, top_k, source_filter, offset)
+            return truncate_response(result)
+        except Exception as e:
+            log_error(
+                logger, e, context={"tool": "fundamentals_search_education_tool", "query": query}
+            )
+            return format_api_error(e, "FMP")
 
 
 @mcp.tool(

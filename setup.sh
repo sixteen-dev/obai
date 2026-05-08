@@ -355,18 +355,20 @@ if [ "$SKIP_MCP" = false ]; then
     fi
 
     info "Starting MCP servers..."
-    docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" up -d
+    # --remove-orphans drops containers (e.g. obai-qdrant) for services that
+    # were removed from docker-compose.yml since the last run.
+    docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" up -d --remove-orphans
 
     # Health check
     info "Waiting for servers to become healthy..."
     sleep 10
 
-    # Check Qdrant first (fundamentals-server depends on it)
-    if curl -sf "http://localhost:6333/healthz" >/dev/null 2>&1; then
-        ok "qdrant (port 6333)"
-    else
-        warn "qdrant (port 6333) — not healthy yet, may still be starting"
-    fi
+    # Qdrant disabled — re-enable here if QDRANT_ENABLED=true on fundamentals-server.
+    # if curl -sf "http://localhost:6333/healthz" >/dev/null 2>&1; then
+    #     ok "qdrant (port 6333)"
+    # else
+    #     warn "qdrant (port 6333) — not healthy yet, may still be starting"
+    # fi
 
     servers=(
         "fundamentals:8001"
@@ -389,18 +391,18 @@ if [ "$SKIP_MCP" = false ]; then
         fi
     done
 
-    # Check if Qdrant needs seeding
-    QDRANT_COUNT=$(curl -sf "http://localhost:6333/collections/financial-fundamentals" 2>/dev/null \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('points_count',0))" 2>/dev/null || echo "0")
-
-    if [ "$QDRANT_COUNT" = "0" ]; then
-        echo ""
-        warn "Qdrant collection is empty — educational search won't work until seeded."
-        info "Seed from local PDFs:"
-        echo "    uv run python scripts/vector_bucket/seed_qdrant.py --pdf-dir ./data/pdfs"
-    else
-        ok "Qdrant collection has $QDRANT_COUNT vectors"
-    fi
+    # Qdrant seeding check disabled — re-enable alongside the qdrant service.
+    # QDRANT_COUNT=$(curl -sf "http://localhost:6333/collections/financial-fundamentals" 2>/dev/null \
+    #     | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('points_count',0))" 2>/dev/null || echo "0")
+    #
+    # if [ "$QDRANT_COUNT" = "0" ]; then
+    #     echo ""
+    #     warn "Qdrant collection is empty — educational search won't work until seeded."
+    #     info "Seed from local PDFs:"
+    #     echo "    uv run python scripts/vector_bucket/seed_qdrant.py --pdf-dir ./data/pdfs"
+    # else
+    #     ok "Qdrant collection has $QDRANT_COUNT vectors"
+    # fi
 else
     step "5/8 Skipping MCP servers (--skip-mcp)"
 fi
@@ -541,8 +543,7 @@ fi
 
 if [ "$SKIP_MCP" = false ]; then
     echo ""
-    echo "  Qdrant:      http://localhost:6333/dashboard"
-    echo ""
+    # echo "  Qdrant:      http://localhost:6333/dashboard"  # disabled
     echo "  MCP Servers:"
     echo "    fundamentals    http://localhost:8001/mcp"
     echo "    market-data     http://localhost:8002/mcp"
