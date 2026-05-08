@@ -40,12 +40,12 @@ from agents.items import ItemHelpers, MessageOutputItem
 from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
 from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
-from agents.sandbox.capabilities import Capabilities
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 from agents.sandbox.entries import LocalDir
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import ResponseTextDeltaEvent
+from openai.types.shared import Reasoning
 
 if TYPE_CHECKING:
     from agents import Session
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 from .base_agent import BaseAgent
 from .cache import QueryCache
-from .config import get_cache_config, get_config
+from .config import ReasoningEffort, Verbosity, get_cache_config, get_config
 from .events_news_agent import EventsNewsAgent
 from .fundamentals_agent import FundamentalsAgent
 from .guardrails import create_input_guardrail
@@ -231,8 +231,10 @@ def _wrap_terminal_prediction_output(output: str) -> str:
     """Wrap terminal prediction-market output with rendering control line."""
     control = (
         f"{_TERMINAL_PREDICTION_PREFIX}"
-        "render=light_cleanup_allowed; "
-        "display=analysis,prices,liquidity,volume,timing,risks,market_url; "
+        "render=verbatim_relay; "
+        "no_renaming=true; "
+        "no_compression=true; "
+        "no_section_restructuring=true; "
         "preserve_for_followup=slug,market_url; "
         "routing_key_priority=slug,market_url; "
         "hide_by_default=condition_id,token_id; "
@@ -254,16 +256,8 @@ _PREDICTION_TOOL_DESCRIPTION = (
     "YES/NO market pricing, event resolution, top traders on "
     "Polymarket, and prediction-market trade ideas. "
     "Do NOT route prediction-market backtests to strategy_analysis. "
-    "Use the tool output as source analysis for the final answer. "
-    "Light readability formatting is allowed, but surface the analysis, "
-    "market URL, prices, liquidity, timing, risks, and actionable implications. "
-    "For follow-ups about prior prediction markets, pass exact slugs from prior "
-    "prediction output as the primary routing key; use market URLs only when "
-    "slugs are unavailable. Do not send only titles, descriptions, or "
-    "paraphrases when routing keys are available. "
-    "Do not show condition_id or token_id unless the user asks for raw "
-    "identifiers, execution payloads, or debugging details. "
-    "Do not invent Polymarket identifiers."
+    "This tool may return a finished user-facing deliverable; when it does, "
+    "relay it according to the obai-prediction-market-routing skill."
 )
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
@@ -708,6 +702,8 @@ def _build_plain_hub_agent(
     model: str,
     specialist_tools: list[Tool],
     guardrails: list[InputGuardrail[Any]],
+    reasoning_effort: ReasoningEffort,
+    verbosity: Verbosity,
 ) -> Agent[None]:
     """Build the legacy plain-Agent Central Hub.
 
@@ -723,6 +719,8 @@ def _build_plain_hub_agent(
         model_settings=ModelSettings(
             parallel_tool_calls=True,
             tool_choice="auto",
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=verbosity,
         ),
     )
 
@@ -733,6 +731,8 @@ def _build_sandbox_hub_agent(
     model: str,
     specialist_tools: list[Tool],
     guardrails: list[InputGuardrail[Any]],
+    reasoning_effort: ReasoningEffort,
+    verbosity: Verbosity,
 ) -> Agent[None]:
     """Build the SandboxAgent Central Hub with lazy hub_skills.
 
@@ -741,6 +741,20 @@ def _build_sandbox_hub_agent(
     description) is loaded eagerly; full SKILL.md bodies are fetched only
     when the model selects a skill. Critical routing/passthrough logic
     stays in code; skills only carry verbose conditional instructions.
+
+    Capabilities: ``Skills`` only. We deliberately do **not** include
+    ``Capabilities.default()`` (Filesystem + Shell + Compaction):
+
+    * Filesystem and Shell would expose model-side file/exec tools the
+      hub does not need — it routes via specialist MCP tools.
+    * The legacy ``Compaction`` capability injects ``context_management``
+      via ``extra_args``, which collides with the first-class
+      ``ModelSettings.context_management`` field that openai-agents
+      0.16+ adds to every Responses API call (the duplicate-key guard in
+      ``openai_responses.py`` raises ``TypeError``). If server-side
+      compaction is wanted later, pass ``context_management=[...]`` on
+      ``ModelSettings`` directly instead of using the Compaction
+      capability.
     """
     skills_capability = Skills(
         lazy_from=LocalDirLazySkillSource(source=LocalDir(src=HUB_SKILLS_DIR)),
@@ -752,10 +766,12 @@ def _build_sandbox_hub_agent(
         tools=specialist_tools,
         input_guardrails=guardrails,
         default_manifest=Manifest(),
-        capabilities=Capabilities.default() + [skills_capability],
+        capabilities=[skills_capability],
         model_settings=ModelSettings(
             parallel_tool_calls=True,
             tool_choice="auto",
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=verbosity,
         ),
     )
 
@@ -1005,6 +1021,8 @@ class CentralHubAgent:
                     model=model,
                     specialist_tools=specialist_tools,
                     guardrails=guardrails,
+                    reasoning_effort=self.config.orchestrator_reasoning_effort,
+                    verbosity=self.config.orchestrator_verbosity,
                 )
                 self._run_config = RunConfig(
                     sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
@@ -1020,6 +1038,8 @@ class CentralHubAgent:
                     model=model,
                     specialist_tools=specialist_tools,
                     guardrails=guardrails,
+                    reasoning_effort=self.config.orchestrator_reasoning_effort,
+                    verbosity=self.config.orchestrator_verbosity,
                 )
                 self._run_config = None
 
@@ -1443,21 +1463,26 @@ class CentralHubAgent:
         # conversation history for follow-ups, and tool-output-based context
         # was injecting stale market identifiers that biased followup queries.
 
-        # Validation gate: emit buffered events or passthrough
+        # Always-passthrough relay for prediction output.
+        # Prediction-market output is non-deterministic in shape (unlike the
+        # strategy 9-section deliverable), so the hub LLM consistently rewrites
+        # or compresses it regardless of how strongly the skill or control line
+        # frames the verbatim-relay contract. Bypass hub authoring entirely:
+        # emit the specialist output directly to the client and discard the
+        # buffered hub-authored text. validate_prediction_relay is still
+        # invoked for trace diagnostics; the boolean does not gate the choice.
         if prediction_fired and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
-            if validate_prediction_relay(
+            relay_ok = validate_prediction_relay(
                 hub_final_text,
                 _prediction_passthrough,
                 allowed_context=prediction_context_block,
-            ):
-                for evt in buffered_events:
-                    yield evt
-            else:
-                logger.warning("Hub relay failed validation — using passthrough")
-                yield PredictionPassthroughEvent(content=_prediction_passthrough)
-                response_buffer.clear()
-                response_buffer.append(_prediction_passthrough)
+            )
+            if not relay_ok:
+                logger.info("Hub authored invented identifiers — passthrough used")
+            yield PredictionPassthroughEvent(content=_prediction_passthrough)
+            response_buffer.clear()
+            response_buffer.append(_prediction_passthrough)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)

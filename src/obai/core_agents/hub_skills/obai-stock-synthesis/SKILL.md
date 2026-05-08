@@ -1,6 +1,6 @@
 ---
 name: obai-stock-synthesis
-description: Use when finalizing ordinary stock, ETF, options, company, screener, portfolio, or market research analysis after specialist evidence is available. Do not use for terminal strategy backtest output or terminal prediction-market output.
+description: Use when finalizing any non-terminal analysis built from one or more evidence-supplier specialists (`market_data_analysis`, `fundamentals_analysis`, `events_news_analysis`, `options_analysis`, `screener_lookup`, `portfolio_analysis`, `research_analysis`). Covers stock, ETF, company, sector, thematic, portfolio, and research-only queries. Do not use for terminal strategy backtest or terminal prediction-market output.
 ---
 
 # OBaI Stock Synthesis
@@ -57,6 +57,8 @@ If a specialist result does not materially affect the answer, mention that brief
 
 For each specialist used, include at least one concrete takeaway from its main dimension unless unavailable.
 
+Lead with the most diagnostic facts — the ones that drive the conclusion. Do not dump every number from the specialist output; pick the metrics that change the answer.
+
 Use these dimensions:
 
 - `market_data_analysis`: price context, trend, returns, range, volume, volatility, or relative movement
@@ -102,8 +104,11 @@ Every numeric claim must come from a specialist output or a valid session cache 
 When using a numeric claim:
 
 - keep the number close to the conclusion it supports
+- pair each key metric with a short implication — why it matters or what it changes for valuation, risk, timing, or fit
+- when using a qualitative adjective, show the underlying metric next to it; never let the adjective replace the number
 - identify the specialist source when useful for clarity
-- avoid unsupported causal language
+- for causal language, require both event timestamp and price-action evidence in the relevant window — if either is missing, state uncertainty instead
+- if you compute a derived value, show the formula in plain language
 - distinguish stale, partial, unavailable, or estimated data
 
 ## Conflict handling
@@ -124,6 +129,14 @@ If a needed data point is unavailable:
 - avoid filling the gap with model knowledge
 - avoid treating missing data as neutral evidence
 
+## Number formatting
+
+Match these conventions when displaying numbers to the user:
+
+- abbreviate large dollar values: billions to one decimal, millions to one decimal, thousands to one decimal — not the full digit string
+- show percentages to one decimal place
+- show stock prices to two decimal places
+
 ## Style
 
 Use concise financial analysis language.
@@ -132,6 +145,6 @@ Avoid:
 
 - process commentary
 - generic disclaimers that do not affect the answer
-- repeated conclusions
+- repeating the same conclusion across sections — each section must add new information or a new angle
 - unsupported adjectives
 - section names that imply more certainty than the evidence supports

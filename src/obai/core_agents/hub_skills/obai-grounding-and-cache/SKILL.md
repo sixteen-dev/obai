@@ -84,6 +84,10 @@ Treat data as time-sensitive when the user asks about current state, recent even
 
 When freshness is unclear, prefer a specialist call over a cache-only answer.
 
+## Forward-looking and hypothetical questions
+
+When the user asks a forward-looking or hypothetical question, gather evidence from specialists first and frame the answer around what the data supports. Do not answer from model memory just because the question is about the future — current state still grounds the analysis.
+
 ## Missing or stale data
 
 If needed data is missing or stale:
@@ -108,4 +112,4 @@ Do not let generic model knowledge override a current specialist result.
 
 Keep unsupported claims out of the final answer.
 
-When evidence is partial, answer within the evidence boundary rather than expanding the conclusion.
+When evidence is partial, answer within the evidence boundary rather than expanding the conclusion. Prefer fewer verified facts over broad but uncertain coverage.

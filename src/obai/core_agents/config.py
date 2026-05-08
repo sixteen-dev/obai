@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+# Reasoning effort and output verbosity tiers used by ModelSettings on
+# every agent. Two tiers (orchestrator + specialist) live as fields on
+# AgentConfig below — same pattern as the model name fields.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+Verbosity = Literal["low", "medium", "high"]
 
 
 # =============================================================================
@@ -144,6 +152,25 @@ class AgentConfig(BaseSettings):
     prediction_markets_model: str | None = Field(
         default=None,
         description="Override model for prediction markets agent (uses specialist_model if None)",
+    )
+
+    # Reasoning effort and output verbosity. Two tiers, same shape as the
+    # model fields above. Defaults live in code; not exposed via .env.
+    orchestrator_reasoning_effort: ReasoningEffort = Field(
+        default="high",
+        description="Hub reasoning effort: none|minimal|low|medium|high|xhigh",
+    )
+    orchestrator_verbosity: Verbosity = Field(
+        default="medium",
+        description="Hub output verbosity: low|medium|high",
+    )
+    specialist_reasoning_effort: ReasoningEffort = Field(
+        default="medium",
+        description="Specialist reasoning effort: none|minimal|low|medium|high|xhigh",
+    )
+    specialist_verbosity: Verbosity = Field(
+        default="low",
+        description="Specialist output verbosity: low|medium|high",
     )
 
     # Guardrails

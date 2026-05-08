@@ -30,19 +30,34 @@ Relevant intent categories include:
 
 ## Do not use for
 
-Do not use this skill for:
+Do not use this skill — route to the listed specialist instead — for:
 
-- pure live price lookup
-- pure ticker lookup
-- pure screener lookup
-- pure options-chain analysis
-- pure portfolio math
-- terminal strategy output
-- terminal prediction-market output
-- strategy backtesting
-- prediction-market backtesting
+- live price, quote, chart, technicals → `market_data_analysis`
+- ticker resolution or universe construction → `screener_lookup`
+- recent headlines, event recaps, earnings, dividends, catalysts → `events_news_analysis`
+- structured financial data, SEC filings, insider activity, segment breakdowns, valuation metrics, ratios → `fundamentals_analysis`
+- options chains, Greeks, implied volatility → `options_analysis`
+- portfolio math, allocations, exposure → `portfolio_analysis`
+- terminal strategy output or strategy backtesting → `strategy_analysis`
+- terminal prediction-market output or prediction-market backtesting → `prediction_market_analysis`
 
 Research is not a substitute for specialized current data when the user asks for current state.
+
+When a question needs both structured data and qualitative synthesis, call `research_analysis` alongside the relevant specialist instead of choosing one or the other.
+
+When structured-data specialists cannot answer a qualitative or thematic question, route to `research_analysis` rather than answering from model memory. Web synthesis beats training knowledge.
+
+## Required handoff inputs
+
+`research_analysis` runs semantic web search, which needs a company name (not a ticker symbol) to retrieve relevant sources.
+
+Before calling `research_analysis`:
+
+- if the user provided a company name, use it
+- if the user provided only a ticker, resolve ticker → company name via `screener_lookup` first
+- if the request is sector- or theme-level with no specific company, pass the sector or theme directly
+
+Do not pass a bare ticker symbol when the search target is a company name — the semantic search will return weak results.
 
 ## Specialist coordination
 
