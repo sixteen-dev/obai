@@ -256,11 +256,15 @@ class HubBridge:
                                 )
                                 if call_id:
                                     dur = self._tracker.complete(call_id)
-                                    yield {
+                                    tc_evt: dict[str, Any] = {
                                         "type": "tool_complete",
                                         "call_id": call_id,
                                         "duration_ms": dur if dur is not None else 0,
                                     }
+                                    yield tc_evt
+                                    # Persist completion alongside tool_start so
+                                    # replayed tool tree shows durations.
+                                    tool_events.append(tc_evt)
 
                         elif item_type == "message_output_item":
                             if isinstance(item, MessageOutputItem) and not response_text:

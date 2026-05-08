@@ -883,7 +883,8 @@ body {
     color: var(--text-secondary);
 }
 
-.message-error .message-bubble {
+.message-error .message-bubble,
+.message-error-bubble {
     border-color: rgba(255, 98, 93, 0.2);
     background: rgba(255, 98, 93, 0.08);
     color: #ffc7c4;

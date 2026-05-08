@@ -342,15 +342,49 @@ function handleError(msg) {
     toolTree.completeAll();
     toolTree.clearActiveAgent();
 
-    const msgDiv = createMessageDiv("assistant", new Date());
-    msgDiv.classList.add("message-error");
-    msgDiv.querySelector(".message-bubble").textContent = msg.message || "An error occurred";
-    messagesDiv.appendChild(msgDiv);
+    finalizeStreamingMessageWithError(msg.message || "An error occurred");
 
     streamingMessage = null;
     streamingBubble = null;
     streamingText = "";
     scrollChatToBottom();
+}
+
+function finalizeStreamingMessageWithError(errorText) {
+    // No in-flight assistant message: render the error as its own bubble.
+    if (!streamingMessage) {
+        const msgDiv = createMessageDiv("assistant", new Date());
+        msgDiv.classList.add("message-error");
+        msgDiv.querySelector(".message-bubble").textContent = errorText;
+        messagesDiv.appendChild(msgDiv);
+        return;
+    }
+
+    // Stop the animated thinking trail if one was attached.
+    const trail = streamingMessage.querySelector(".thinking-trail");
+    if (trail) {
+        trail.open = false;
+        trail.classList.add("is-done");
+    }
+
+    // Finalize whatever was streamed so it stays visible above the error.
+    if (streamingBubble) {
+        if (streamingText) {
+            streamingBubble.classList.remove("streaming");
+            if (typeof marked !== "undefined") {
+                renderMarkdownInto(streamingBubble, streamingText);
+            }
+        } else {
+            streamingBubble.remove();
+        }
+    }
+
+    const stack = streamingMessage.querySelector(".message-stack");
+    if (!stack) return;
+    const errorBubble = document.createElement("div");
+    errorBubble.className = "message-bubble message-error-bubble";
+    errorBubble.textContent = errorText;
+    stack.appendChild(errorBubble);
 }
 
 function renderMarkdownInto(element, markdownText) {
@@ -525,7 +559,6 @@ async function switchSession(sessionId) {
 
     state.activeSessionId = sessionId;
     renderSessionList();
-    toolTree.switchSession(sessionId);
 
     messagesDiv.textContent = "";
     streamingMessage = null;
@@ -537,21 +570,26 @@ async function switchSession(sessionId) {
     autoResizeInput();
     updateSendButton();
 
+    let messages = [];
     try {
         const res = await fetch("/api/sessions/" + sessionId + "/messages");
-        const messages = await res.json();
-
-        if (messages.length === 0) {
-            welcomeScreen.classList.remove("hidden");
-        } else {
-            welcomeScreen.classList.add("hidden");
-            for (const msg of messages) {
-                renderStoredMessage(msg);
-            }
-            scrollChatToBottom();
-        }
+        messages = await res.json();
     } catch (error) {
         console.error("Failed to load messages:", error);
+    }
+
+    // Hand messages to the tool tree so it can rebuild from persisted
+    // tool_data when the in-memory cache misses (e.g. after page reload).
+    toolTree.switchSession(sessionId, messages);
+
+    if (messages.length === 0) {
+        welcomeScreen.classList.remove("hidden");
+    } else {
+        welcomeScreen.classList.add("hidden");
+        for (const msg of messages) {
+            renderStoredMessage(msg);
+        }
+        scrollChatToBottom();
     }
 
     queryInput.focus();
@@ -757,15 +795,26 @@ function updateSendButton() {
 }
 
 const thinkingVerbsList = [
-    "thinking",
-    "researching",
-    "analyzing",
-    "digging in",
-    "looking into it",
-    "crunching numbers",
-    "pulling data",
-    "connecting the dots",
-    "working through this",
+    "Arbitraging",
+    "Divining",
+    "Bull-charging",
+    "Candle-gazing",
+    "Chart-whispering",
+    "Crystal-balling",
+    "Edge-hunting",
+    "Hedging",
+    "Hodling",
+    "Liquidity-sniffing",
+    "Momentum-surfing",
+    "Odds-weighing",
+    "Pip-chasing",
+    "Prognosticating",
+    "Tape-reading",
+    "Tea-leafing",
+    "Theta-decaying",
+    "Trend-spotting",
+    "Vol-surfing",
+    "Whale-watching",
 ];
 
 function thinkingVerb() {

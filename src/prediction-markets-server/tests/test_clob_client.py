@@ -111,4 +111,3 @@ class TestClobClientPriceHistory:
         assert result["count"] == 0
         assert result["history"] == []
         await client.close()
-

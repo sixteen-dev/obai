@@ -10,6 +10,7 @@ ARG TA_LIB_VERSION=0.4.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autotools-dev \
+    autotools-dev \
     build-essential \
     clang \
     curl \
@@ -37,9 +38,9 @@ COPY VERSION .
 # upstream source tag instead of relying on a prebuilt arm64 wheel.
 #
 # On Apple Silicon, the bundled TA-Lib 0.4.0 autotools files are too old to
-# detect aarch64 correctly. Refreshing them with Debian's autotools-dev copies
-# (installed above) avoids that failure and removes a flaky network fetch from
-# git.savannah.gnu.org during the build.
+# detect aarch64 correctly. Prebuilding TA-Lib here with the autotools-dev
+# config scripts (from Debian, vs. the flaky git.savannah.gnu.org mirror)
+# avoids that failure and lets the Rust extension reuse the headers.
 RUN git clone --depth 1 --branch "${POLARS_TALIB_REF}" \
     https://github.com/Yvictor/polars_ta_extension.git /tmp/polars_ta_extension && \
     mkdir -p /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib && \
@@ -51,6 +52,8 @@ RUN git clone --depth 1 --branch "${POLARS_TALIB_REF}" \
     -C /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib && \
     cp /usr/share/misc/config.guess /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.guess && \
     cp /usr/share/misc/config.sub /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.sub && \
+    chmod +x /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.guess \
+    /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.sub && \
     cd /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib && \
     ./configure \
     --prefix=/tmp/polars_ta_extension/talib-sys/dependencies \

@@ -108,5 +108,3 @@ def mock_fmp_client() -> AsyncMock:
     client.health_check = AsyncMock(return_value=True)
     client.close = AsyncMock()
     return client
-
-
