@@ -10,7 +10,6 @@ ARG TA_LIB_VERSION=0.4.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autotools-dev \
-    autotools-dev \
     build-essential \
     clang \
     curl \
@@ -52,8 +51,6 @@ RUN git clone --depth 1 --branch "${POLARS_TALIB_REF}" \
     -C /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib && \
     cp /usr/share/misc/config.guess /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.guess && \
     cp /usr/share/misc/config.sub /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.sub && \
-    chmod +x /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.guess \
-    /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib/config.sub && \
     cd /tmp/polars_ta_extension/talib-sys/dependencies/tmp/ta-lib && \
     ./configure \
     --prefix=/tmp/polars_ta_extension/talib-sys/dependencies \
