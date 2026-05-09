@@ -19,21 +19,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-02T02:18:48.171130584Z"
+exclude-newer = "2026-05-02T22:59:12.562438695Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-05-09T02:18:48.171147626Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-09T02:18:48.171147987Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-09T02:18:48.171148217Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-09T02:18:48.171146454Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-09T02:18:48.171146975Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-09T02:18:48.171146684Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-09T02:18:48.171147195Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-09T02:18:48.171147416Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-09T02:18:48.171148448Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-09T02:18:48.171146193Z", span = "PT0S" }
-requests = { timestamp = "2026-05-09T02:18:48.171140252Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-09T22:59:12.562460757Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-09T22:59:12.562461208Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-09T22:59:12.562461488Z", span = "PT0S" }
+anthropic = { timestamp = "2026-05-09T22:59:12.562459304Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-09T22:59:12.562459895Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-09T22:59:12.562459565Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-09T22:59:12.562460146Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-09T22:59:12.562460516Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-09T22:59:12.562461759Z", span = "PT0S" }
+onnx = { timestamp = "2026-05-09T22:59:12.562459014Z", span = "PT0S" }
+requests = { timestamp = "2026-05-09T22:59:12.562450027Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1307,7 +1307,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.4.0b2"
+version = "1.4.0"
 source = { virtual = "." }
 dependencies = [
     { name = "qdrant-client" },

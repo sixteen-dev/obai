@@ -25,6 +25,13 @@ from evaluation.scorers.faithfulness import (
     _score_numeric,
 )
 
+
+@pytest.fixture(autouse=True)
+def mock_anthropic_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow mocked judge calls to reach patched structured_completion."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+
 # ---------------------------------------------------------------------------
 # Pydantic model tests
 # ---------------------------------------------------------------------------

@@ -696,36 +696,7 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
-def _build_plain_hub_agent(
-    *,
-    instructions: str,
-    model: str,
-    specialist_tools: list[Tool],
-    guardrails: list[InputGuardrail[Any]],
-    reasoning_effort: ReasoningEffort,
-    verbosity: Verbosity,
-) -> Agent[None]:
-    """Build the legacy plain-Agent Central Hub.
-
-    Used when ``ENABLE_SANDBOX_HUB`` is false. Behavior matches the pre-0.14
-    Hub: agents-as-tools, parallel tool calls, ``tool_choice="auto"``.
-    """
-    return Agent(
-        name="central_hub",
-        instructions=instructions,
-        model=model,
-        tools=specialist_tools,
-        input_guardrails=guardrails,
-        model_settings=ModelSettings(
-            parallel_tool_calls=True,
-            tool_choice="auto",
-            reasoning=Reasoning(effort=reasoning_effort),
-            verbosity=verbosity,
-        ),
-    )
-
-
-def _build_sandbox_hub_agent(
+def _build_hub_agent(
     *,
     instructions: str,
     model: str,
@@ -805,7 +776,7 @@ class CentralHubAgent:
         """
         self.config = get_config()
         self.agent: Agent[None] | None = None
-        # Populated to a sandbox-aware RunConfig when ENABLE_SANDBOX_HUB is true.
+        # Populated with a sandbox-aware RunConfig once the hub is initialized.
         self._run_config: RunConfig | None = None
         self._current_user_query: str | None = None
 
@@ -860,12 +831,11 @@ class CentralHubAgent:
             logger.info(f"Central Hub Agent using model: {model}")
 
             # Load instructions from prompt file with user preferences injected.
-            # Sandbox Hub uses the compact base prompt; lazy skills carry the
-            # long conditional instructions. Plain Hub uses the legacy prompt.
+            # The compact base prompt carries the hub's invariant rules; lazy
+            # skills carry the long conditional instructions.
             user_prefs = _prefs_store.load()
-            prompt_name = "central_hub_base" if self.config.enable_sandbox_hub else "central_hub"
             instructions = load_prompt(
-                prompt_name,
+                "central_hub_base",
                 USER_PREFERENCES=user_prefs.model_dump_json(indent=2),
             )
 
@@ -1013,35 +983,23 @@ class CentralHubAgent:
 
             # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var).
             # Using agents-as-tools pattern: orchestrator stays in control.
-            # ENABLE_SANDBOX_HUB selects between the legacy plain Agent and
-            # the SandboxAgent variant with lazy hub skills.
-            if self.config.enable_sandbox_hub:
-                self.agent = _build_sandbox_hub_agent(
-                    instructions=instructions,
-                    model=model,
-                    specialist_tools=specialist_tools,
-                    guardrails=guardrails,
-                    reasoning_effort=self.config.orchestrator_reasoning_effort,
-                    verbosity=self.config.orchestrator_verbosity,
-                )
-                self._run_config = RunConfig(
-                    sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
-                    workflow_name="OBaI Central Hub",
-                )
-                logger.info(
-                    "Central Hub running as SandboxAgent (lazy skills from %s)",
-                    HUB_SKILLS_DIR,
-                )
-            else:
-                self.agent = _build_plain_hub_agent(
-                    instructions=instructions,
-                    model=model,
-                    specialist_tools=specialist_tools,
-                    guardrails=guardrails,
-                    reasoning_effort=self.config.orchestrator_reasoning_effort,
-                    verbosity=self.config.orchestrator_verbosity,
-                )
-                self._run_config = None
+            # The hub is a SandboxAgent with lazy hub skills.
+            self.agent = _build_hub_agent(
+                instructions=instructions,
+                model=model,
+                specialist_tools=specialist_tools,
+                guardrails=guardrails,
+                reasoning_effort=self.config.orchestrator_reasoning_effort,
+                verbosity=self.config.orchestrator_verbosity,
+            )
+            self._run_config = RunConfig(
+                sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
+                workflow_name="OBaI Central Hub",
+            )
+            logger.info(
+                "Central Hub running as SandboxAgent (lazy skills from %s)",
+                HUB_SKILLS_DIR,
+            )
 
             self._initialized = True
             logger.info("Central Hub Agent initialized successfully")
@@ -1408,8 +1366,7 @@ class CentralHubAgent:
 
         # Run streamed
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik).
-        # run_config is None for the plain Agent path; for the Sandbox Hub it
-        # carries a SandboxRunConfig with a UnixLocalSandboxClient.
+        # run_config carries a SandboxRunConfig with a UnixLocalSandboxClient.
         result = Runner.run_streamed(
             starting_agent=self.agent,
             input=query_to_run,

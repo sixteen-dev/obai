@@ -20,7 +20,7 @@ def load_prompt(agent_name: str, *, commit: str | None = None, **variables: str)
     Tries Opik first for versioned prompts, falls back to markdown file.
 
     Args:
-        agent_name: Name of agent (e.g., "central_hub", "market_data").
+        agent_name: Name of agent (e.g., "central_hub_base", "market_data").
         commit: Optional Opik version commit hash for rollback.
         **variables: Variables to substitute in template (e.g., model="gpt-4o").
 
@@ -84,11 +84,9 @@ def validate_prompt(prompt: str, agent_name: str) -> None:
         raise ValueError(msg)
 
     # Different required sections for central hub vs specialist agents
-    if agent_name == "central_hub":
-        # Central hub uses agents-as-tools pattern
-        required_sections = ["Routing Logic", "Constraints"]
-    elif agent_name == "central_hub_base":
-        # Compact base prompt used when ENABLE_SANDBOX_HUB=true
+    if agent_name == "central_hub_base":
+        # Compact base prompt for the SandboxAgent hub. Lazy skills carry the
+        # long conditional instructions.
         required_sections = ["Hard rules", "Mandatory routing invariants", "Skill usage"]
     elif agent_name == "guardrail":
         # Guardrail is a simple classifier, minimal requirements

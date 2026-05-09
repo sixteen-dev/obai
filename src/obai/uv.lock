@@ -3,22 +3,22 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-02T02:18:48.277220306Z"
+exclude-newer = "2026-05-02T22:59:12.669462851Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-requests = { timestamp = "2026-05-09T02:18:48.277236797Z", span = "PT0S" }
-pytest = { timestamp = "2026-05-09T02:18:48.277237038Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-09T02:18:48.277237248Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-09T02:18:48.277237579Z", span = "PT0S" }
-opik = { timestamp = "2026-05-09T02:18:48.27723828Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-09T02:18:48.277235955Z", span = "PT0S" }
-litellm = { timestamp = "2026-05-09T02:18:48.277232359Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-09T02:18:48.277235665Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-09T02:18:48.277236206Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-09T02:18:48.277236547Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-09T02:18:48.277237809Z", span = "PT0S" }
-openai-agents = { timestamp = "2026-05-09T02:18:48.277238059Z", span = "PT0S" }
+requests = { timestamp = "2026-05-09T22:59:12.669477399Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-09T22:59:12.669477629Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-09T22:59:12.669477849Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-09T22:59:12.66947824Z", span = "PT0S" }
+opik = { timestamp = "2026-05-09T22:59:12.669478951Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-09T22:59:12.669476557Z", span = "PT0S" }
+litellm = { timestamp = "2026-05-09T22:59:12.669471087Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-09T22:59:12.669476256Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-09T22:59:12.669476787Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-09T22:59:12.669477098Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-09T22:59:12.669478471Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-05-09T22:59:12.669478731Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1713,7 +1713,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.4.0b2"
+version = "1.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

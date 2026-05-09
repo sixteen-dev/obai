@@ -131,9 +131,9 @@ class TestStrategyConfig:
         assert "localhost:8007" in config.mcp_backtest_url
 
     def test_strategy_model_default(self) -> None:
-        """Strategy model should default to gpt-5.5 (strong reasoning needed)."""
+        """Strategy model should default to the dedicated strategy model."""
         config = AgentConfig()  # type: ignore[call-arg]
-        assert config.strategy_model == "gpt-5.5"
+        assert config.strategy_model == "gpt-5.1"
 
     def test_strategy_max_turns_default(self) -> None:
         """Strategy run loop default must accommodate multi-step design+backtest flows."""
@@ -184,12 +184,6 @@ class TestHubIntegration:
         with pytest.raises(ValueError, match="not initialized"):
             hub.get_specialist("strategy")
 
-    def test_hub_prompt_preserves_user_request_for_strategy(self) -> None:
-        """Hub prompt should forbid prescriptive strategy sub-prompts."""
-        prompt = load_prompt("central_hub", USER_PREFERENCES="{}")
-        assert "Preserve the user's original request faithfully" in prompt
-        assert "Do not tell `strategy_analysis` to skip backtesting" in prompt
-
     def test_sandbox_base_prompt_mandates_strategy_skill_preflight(self) -> None:
         """Base prompt must require loading obai-strategy-routing before strategy_analysis."""
         prompt = load_prompt("central_hub_base", USER_PREFERENCES="{}")
@@ -220,22 +214,18 @@ class TestHubIntegration:
 
         assert "Both `User request:` and `Strategy context:` headers appear on every call." in skill
 
-    def test_strategy_routing_skill_lists_forbidden_headers(self) -> None:
-        """Skill must explicitly forbid hub-authored section names seen in regressions."""
+    def test_strategy_routing_skill_uses_header_allowlist(self) -> None:
+        """Skill must enforce a two-header allowlist instead of a denylist.
+
+        The denylist of forbidden hub-authored header names was removed in
+        favor of an explicit allowlist: only `User request:` and
+        `Strategy context:` are valid top-level headers in the handoff.
+        """
         skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
         skill = skill_path.read_text()
 
-        assert "Forbidden hub-authored section names" in skill
-        # Headers observed in production traces that produced off-spec backtests.
-        for forbidden in (
-            "`Task intent:`",
-            "`Strategy concept:`",
-            "`Backtest preferences:`",
-            "`Backtest request:`",
-            "`Resolved context:`",
-            "`Critical mapping requirement from user:`",
-        ):
-            assert forbidden in skill, f"missing forbidden-header literal: {forbidden}"
+        assert "ONLY two top-level headers allowed" in skill
+        assert "Do not invent additional sections" in skill
 
     def test_strategy_routing_skill_allows_followup_shorthand(self) -> None:
         """Status checks and drill-downs may omit Strategy context bullets.

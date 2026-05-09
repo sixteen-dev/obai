@@ -190,17 +190,6 @@ class AgentConfig(BaseSettings):
         description="Max turns for the strategy_analysis tool's inner Runner.run loop",
     )
 
-    # SandboxAgent Hub (lazy-skill prompt modularity, SDK 0.14.x)
-    enable_sandbox_hub: bool = Field(
-        default=True,
-        description=(
-            "Use SandboxAgent for the Central Hub with lazy-loaded skills from "
-            "core_agents/hub_skills/. Default false keeps the plain Agent path. "
-            "When true, loads the compact central_hub_base prompt and runs under a "
-            "UnixLocalSandboxClient."
-        ),
-    )
-
     # MCP Server URLs
     mcp_fundamentals_url: str = Field(
         default="http://localhost:8001/mcp",
