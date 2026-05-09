@@ -128,7 +128,15 @@ At the end, write `$RUN_DIR/results.json` with the full structured results (one 
 ln -sfn "$(realpath "$RUN_DIR")" .claude/skills/obai-e2e-regression/runs/latest
 ```
 
-Print a final summary block: `<n> pass / <n> fail / <n> needs_review / <n> inconclusive` plus the path to `report.md`.
+Then render the structured HTML view alongside `report.md` and open it in the user's browser:
+
+```bash
+uv run python .claude/skills/obai-e2e-regression/scripts/render_report.py --run-dir "$RUN_DIR" --open
+```
+
+This writes `$RUN_DIR/report.html` (summary cards, verdict bar, one card per case with the verbatim query, plus expected/observed/judgment for non-pass cases) and launches it in the default browser. Run it only after `results.json` exists; it derives all per-case data from `results.json`, the detail blocks in `report.md`, and `cases/cases.yaml`. Drop `--open` for headless or scripted re-renders.
+
+Print a final summary block: `<n> pass / <n> fail / <n> needs_review / <n> inconclusive` plus the paths to `report.md` and `report.html`.
 
 ## Helper scripts
 
@@ -136,6 +144,7 @@ Print a final summary block: `<n> pass / <n> fail / <n> needs_review / <n> incon
 - `scripts/run_one.py --id <ID> --run-dir <path>` — drives one case end-to-end. Writes `<id>.json` atomically to `<run_dir>` and echoes it to stdout. Idempotent: re-reads the cached file if it already exists. For cases with `expect_async_job: true`, the helper parses the job id and ETA from the first response, sleeps `ETA + 30s` (capped at 600s), then sends a follow-up query in the same session and stores the result under `packet.followup`.
 - `scripts/resolve_trace.py` — Opik trace lookup helper (importable, used by `run_one.py`). Not invoked directly.
 - `scripts/inspect_trace.py` — bundled curated-trace renderer; `run_one.py` calls it per case. Don't re-run it yourself.
+- `scripts/render_report.py --run-dir <path>` — renders `report.html` from `results.json` + `report.md` + `cases.yaml`. Run once at end-of-run; safe to re-run on a finished run to refresh the HTML.
 
 ## Edge cases
 
