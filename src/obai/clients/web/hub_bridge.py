@@ -202,19 +202,22 @@ class HubBridge:
                         item_type = getattr(item, "type", None)
 
                         if item_type == "tool_call_item":
+                            # Any text streamed up to this tool call was
+                            # intermediate narration ("loading skill",
+                            # "retrying handoff"), not the final answer.
+                            # Tell the UI to close out the current segment
+                            # as thinking and start a new one. Done outside
+                            # the raw_item check so a missing raw_item still
+                            # prevents narration from leaking into the saved
+                            # response.
+                            if response_text:
+                                yield {"type": "thinking_break"}
+                                response_text = ""
+
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", "unknown")
                                 call_id = getattr(raw_item, "call_id", None)
-
-                                # Any text streamed before this hub tool call
-                                # was intermediate narration ("loading skill",
-                                # "retrying handoff"), not the final answer.
-                                # Tell the UI to close out the current segment
-                                # as thinking and start a new one.
-                                if response_text:
-                                    yield {"type": "thinking_break"}
-                                    response_text = ""
 
                                 if tool_name in SPECIALIST_TOOLS:
                                     display_name = SPECIALIST_TOOLS[tool_name]
@@ -247,6 +250,17 @@ class HubBridge:
                                     tool_events.append(evt)
 
                         elif item_type == "tool_call_output_item":
+                            # text_delta events can arrive between a
+                            # tool_call_item and its tool_call_output_item
+                            # (the SDK emits the tool_call event before the
+                            # surrounding text deltas finish flushing). Treat
+                            # any text accumulated since the last reset as
+                            # narration so it doesn't leak into the saved
+                            # response.
+                            if response_text:
+                                yield {"type": "thinking_break"}
+                                response_text = ""
+
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
                                 call_id = (

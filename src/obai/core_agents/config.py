@@ -142,7 +142,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-5.5",
+        default="gpt-5.1",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -161,7 +161,7 @@ class AgentConfig(BaseSettings):
         description="Hub reasoning effort: none|minimal|low|medium|high|xhigh",
     )
     orchestrator_verbosity: Verbosity = Field(
-        default="medium",
+        default="low",
         description="Hub output verbosity: low|medium|high",
     )
     specialist_reasoning_effort: ReasoningEffort = Field(

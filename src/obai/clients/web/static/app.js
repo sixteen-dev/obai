@@ -14,6 +14,9 @@ const state = {
     reconnectAttempts: 0,
     compactToolsMode: null,
     savedInputs: {},
+    // Last agent_switch label per session so the thinking-trail label can
+    // be restored when the user switches back to a still-running session.
+    lastAgentBySession: {},
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -103,14 +106,15 @@ function handleMessage(msg) {
             break;
 
         case "agent_switch": {
+            const agentLabel = (msg.agent || "Central Hub") + " " + thinkingVerb();
+            if (msgSession) {
+                state.lastAgentBySession[msgSession] = agentLabel;
+            }
             if (!isActiveSession) break;
             toolTree.setActiveAgent(msg.agent);
             const messageDiv = ensureStreamingMessage();
             const trail = ensureThinkingTrail(messageDiv);
-            setThinkingTrailLabel(
-                trail,
-                (msg.agent || "Central Hub") + " " + thinkingVerb()
-            );
+            setThinkingTrailLabel(trail, agentLabel);
             toolTree.scrollToBottom();
             scrollChatToBottom();
             break;
@@ -284,10 +288,21 @@ function handleComplete(msg) {
     updateSendButton();
 
     const isActiveSession = completedSession === state.activeSessionId;
-    if (!isActiveSession) return;
+    if (!isActiveSession) {
+        // The cached tool-tree DOM for this session was snapshotted while
+        // the run was still in flight, so its spinners never finalize.
+        // Drop the snapshot; the next switchSession will rebuild from the
+        // freshly-persisted tool_data in the DB.
+        if (completedSession) {
+            toolTree.sessionHistory.delete(completedSession);
+            delete state.lastAgentBySession[completedSession];
+        }
+        return;
+    }
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
+    delete state.lastAgentBySession[completedSession];
 
     if (msg.trace_id && msg.opik_url) {
         toolTree.addTraceLink(msg.trace_id, msg.opik_url);
@@ -337,10 +352,17 @@ function handleError(msg) {
     updateSendButton();
 
     const isActiveSession = errorSession === state.activeSessionId;
-    if (!isActiveSession) return;
+    if (!isActiveSession) {
+        if (errorSession) {
+            toolTree.sessionHistory.delete(errorSession);
+            delete state.lastAgentBySession[errorSession];
+        }
+        return;
+    }
 
     toolTree.completeAll();
     toolTree.clearActiveAgent();
+    delete state.lastAgentBySession[errorSession];
 
     finalizeStreamingMessageWithError(msg.message || "An error occurred");
 
@@ -592,6 +614,19 @@ async function switchSession(sessionId) {
         scrollChatToBottom();
     }
 
+    // If the run for this session is still in flight, rebuild a placeholder
+    // streaming bubble + thinking trail so incoming text_deltas attach to a
+    // labeled trail instead of a fresh "Thinking" stub. The next agent_switch
+    // will overwrite the label.
+    if (state.processingSessionId === sessionId) {
+        ensureStreamingMessage();
+        const trail = ensureThinkingTrail(streamingMessage);
+        const label = state.lastAgentBySession[sessionId] || "Working...";
+        setThinkingTrailLabel(trail, label);
+        toolTree.setActiveAgent(label.replace(/ \S+$/, ""));
+        scrollChatToBottom();
+    }
+
     queryInput.focus();
 }
 
@@ -601,6 +636,7 @@ async function deleteSession(sessionId) {
         state.sessions = state.sessions.filter((session) => session.id !== sessionId);
         toolTree.sessionHistory.delete(sessionId);
         delete state.savedInputs[sessionId];
+        delete state.lastAgentBySession[sessionId];
 
         if (state.activeSessionId === sessionId) {
             state.activeSessionId = null;

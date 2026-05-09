@@ -94,9 +94,12 @@ Strategy context:
 - Universe: [tickers] (source: user or screener)
 - User objective: [momentum/mean-reversion/breakout/etc — mark as inferred when not explicit]
 - Timeframe: [daily/1hour/15min/5min — only when the user mentions day trading, scalping, or intraday]
-- Constraints: [risk/horizon/preferences only if the user provided them]
+- Constraints: [user-provided constraints only — leave blank if none]
+- Preferences: [saved user preferences (benchmark, initial capital, risk tolerance, horizon) — pass through verbatim from the injected USER_PREFERENCES; omit the bullet only if no preferences are loaded]
 - Context: [summarized key findings from specialist outputs, if any]
 ```
+
+These are the ONLY two top-level headers allowed. Do not invent additional sections — not for preferences, constraints, routing, or design notes. Any other content goes inside one of the two existing blocks (or it does not belong in the handoff).
 
 Follow-up shorthand: for status checks or drill-downs on prior output that introduce no new facts (e.g., "is job ABC123 done?", "explain the Sharpe number"), you may emit the `Strategy context:` header with no bullets beneath it. The `User request:` block must still carry the user's wording verbatim. Reruns, parameter tweaks, or anything that references prior strategy state need full bullets including the prior strategy in `Context:` — the Strategy Agent is stateless and cannot resolve "that" without explicit context.
 
@@ -108,21 +111,6 @@ Rules for filling the template:
 - Do not add fields that are not in the template. In particular, do not invent `Entry condition`, `Exit condition`, `Risk management`, `Position sizing`, `Order model`, `Session/timezone`, or `Initial capital` bullets — those belong inside the preserved `User request` block.
 - Preserve the user's wording, parameters, and technical details verbatim. Do not generalize specifics, drop technical details, or restructure prose into Hub-authored fields. The Strategy Agent owns implementation details.
 - Do not tell `strategy_analysis` to skip backtesting, return design-only output, or short-circuit its workflow. The Strategy Agent's workflow is mandatory; the Hub does not author framings that suggest bypassing it.
-
-Forbidden hub-authored section names (observed regressions): never emit any of the following as a top-level section header in a `strategy_analysis` call. They leak hub-authored design choices into the Strategy Agent's reasoning and produce off-spec backtests:
-
-- `Task intent:`
-- `Strategy concept:`
-- `Backtest preferences:`
-- `Backtest request:`
-- `Resolved context:`
-- `Use saved/default preferences:`
-- `Universe:` (as a top-level header — `Universe` is only valid as a bullet inside `Strategy context:`)
-- `Defaults from user preferences:`
-- `Critical mapping requirement from user:`
-- `Request focus:`
-
-Only `User request:` and `Strategy context:` are valid top-level section headers in the handoff. If you find yourself wanting to emit one of the forbidden headers, the content either belongs inside the preserved `User request:` block (it's user wording or rules), inside a `Strategy context:` bullet (it's a Hub-resolved fact), or it doesn't belong in the handoff at all (it's a Hub-authored design recommendation).
 
 Intraday and portfolio-mode constraint: when the user mentions day trading, scalping, intraday, or short-term active trading, fill `Timeframe` with the appropriate intraday value. Shared-capital portfolio mode is daily-only — do not author Hub context that implies intraday `allocation_mode: portfolio` is supported. If the user explicitly asks for intraday shared-capital portfolio allocation, preserve that request inside the `User request` block but do not endorse it in `Strategy context`. The Strategy Agent will handle the daily-only constraint.
 
@@ -144,7 +132,7 @@ If the request is ambiguous between ordinary stock analysis and strategy work, u
 
 ### Recognizing terminal output
 
-If the tool result starts with the literal prefix `__TERMINAL_TOOL_OUTPUT__:strategy_analysis:`, treat the first line as a control marker. Everything after the first blank line is the verbatim user-facing response. Return it unchanged.
+If the tool result starts with the literal prefix `__TERMINAL_TOOL_OUTPUT__:strategy_analysis:`, treat the first line as a control marker. Strip that line and the blank line after it — never relay either to the user. Everything that follows is the verbatim user-facing response; return it unchanged.
 
 A **completed** strategy response contains these nine sections, in order:
 

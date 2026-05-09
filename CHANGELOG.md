@@ -6,6 +6,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.0b2] - 2026-05-08 (beta)
+
+Iteration on the 1.4.0b1 beta. Same release line; promote 1.4.0 final only
+after the beta tag validates.
+
+### Changed
+
+- **Strategy specialist default model reverted to `gpt-5.1`** (from `gpt-5.5`).
+  Trace comparison on the same query showed `gpt-5.1` reaches the same
+  verdict and operator selection ~$0.13/query cheaper, with the trade-off
+  of ~18s additional latency. Set `STRATEGY_MODEL=gpt-5.5` to keep the
+  earlier default.
+- **Hub default verbosity lowered to `low`** (from `medium`). Reduces
+  conversational filler in the user-facing answer without affecting tool
+  routing.
+- **Strategy-routing skill: header allowlist promoted, denylist removed.**
+  The handoff-format section now leads with the rule that only `User
+  request:` and `Strategy context:` are valid top-level headers; the prior
+  10-item denylist of forbidden header names is replaced by the
+  allowlist. New `Preferences:` bullet inside `Strategy context:`
+  formalizes how the hub passes saved user preferences (benchmark, capital,
+  risk tolerance, horizon) to the strategy specialist — preventing the
+  hub from inventing ad-hoc preference sections like
+  `Routing context/preferences:` or `Desired strategy constraints:`.
+- **Strategy-routing skill: terminal-marker strip rule tightened.** Adds
+  an explicit instruction to strip the `__TERMINAL_TOOL_OUTPUT__:strategy_analysis:<status>`
+  control marker (and the blank line after it) from the hub's relayed
+  output. Fixes a leak where the marker prefix appeared at the top of
+  user-visible strategy responses.
+
+### Fixed
+
+- **Web client: thinking-break fired on tool-call output as well.** The
+  hub-to-UI bridge now flushes accumulated narration as "thinking" on
+  both `tool_call_item` and `tool_call_output_item` events, since
+  `text_delta` chunks can arrive between the two and were previously
+  leaking into the saved final response.
+- **Web client: agent label restored when switching back to a running
+  session.** Session-scoped `lastAgentBySession` map tracks the active
+  agent label per session so that switching to a still-streaming session
+  shows the correct trail label rather than a blank "Thinking" stub.
+  Cleanup on `complete` / `error` / session delete prevents leaks.
+
+### Infra
+
+- Pin Opik docker images (`opik-backend`, `opik-python-backend`,
+  `opik-frontend`) to `2.0.27` instead of `:latest` for reproducible
+  local Opik bring-up.
+
 ## [1.4.0b1] - 2026-05-07 (beta)
 
 First beta of the 1.4 line. Validates a major upgrade to the hub runtime,
