@@ -10,7 +10,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -296,7 +296,8 @@ class AgentConfig(BaseSettings):
     )
     opik_project: str = Field(
         default="obai-eval",
-        description="Opik project name",
+        description="Opik project name (env: OPIK_OBAI_PROJECT_NAME)",
+        validation_alias=AliasChoices("OPIK_OBAI_PROJECT_NAME", "opik_project"),
     )
     opik_url: str = Field(
         default="http://localhost:5173",
