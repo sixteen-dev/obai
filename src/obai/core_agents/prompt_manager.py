@@ -15,6 +15,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .config import get_config
+
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -58,7 +60,7 @@ def _get_opik_client() -> Any | None:
         try:
             import opik
 
-            _opik_client_cache = opik.Opik()
+            _opik_client_cache = opik.Opik(project_name=get_config().opik_project)
         except Exception:
             logger.debug("Opik client unavailable for prompt management")
             _opik_client_cache = None
@@ -80,6 +82,7 @@ def sync_prompts_to_opik() -> dict[str, bool]:
         logger.info("Opik unavailable — skipping prompt sync")
         return {name: False for name in PROMPT_NAMES}
 
+    project_name = get_config().opik_project
     results: dict[str, bool] = {}
     for name in PROMPT_NAMES:
         prompt_path = PROMPTS_DIR / f"{name}.md"
@@ -94,6 +97,7 @@ def sync_prompts_to_opik() -> dict[str, bool]:
                 name=name,
                 prompt=template_text,
                 description=f"OBaI {name} agent instructions",
+                project_name=project_name,
             )
             results[name] = True
             logger.debug("Synced prompt '%s' to Opik", name)
@@ -121,7 +125,11 @@ def get_prompt_from_opik(agent_name: str, *, commit: str | None = None) -> str |
         return None
 
     try:
-        prompt = client.get_prompt(name=agent_name, commit=commit)
+        prompt = client.get_prompt(
+            name=agent_name,
+            commit=commit,
+            project_name=get_config().opik_project,
+        )
         if prompt is None:
             return None
         result: str = prompt.prompt
@@ -145,7 +153,10 @@ def get_prompt_versions(agent_name: str) -> list[dict[str, Any]]:
         return []
 
     try:
-        versions = client.get_prompt_history(name=agent_name)
+        versions = client.get_prompt_history(
+            name=agent_name,
+            project_name=get_config().opik_project,
+        )
         return [
             {
                 "commit": v.commit,
