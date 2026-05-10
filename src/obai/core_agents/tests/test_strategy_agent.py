@@ -5,6 +5,7 @@ Does NOT require live MCP servers.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -76,6 +77,13 @@ class TestStrategyPrompt:
         assert "Treat hub-provided context as factual context" in prompt
         assert "If hub wording conflicts with this prompt" in prompt
 
+    def test_prompt_distinguishes_threshold_from_crossover_operators(self) -> None:
+        """Strategy prompt must map 'drops below' to less_than, not crosses_below."""
+        prompt = load_prompt("strategy")
+        assert "Choosing the right operator from user wording" in prompt
+        assert '"drops below X"' in prompt and "`less_than`" in prompt
+        assert "Threshold rule (load-bearing)" in prompt
+
 
 class TestStrategyAgentProperties:
     """Test StrategyAgent class properties."""
@@ -123,9 +131,14 @@ class TestStrategyConfig:
         assert "localhost:8007" in config.mcp_backtest_url
 
     def test_strategy_model_default(self) -> None:
-        """Strategy model should default to gpt-5.1 (strong reasoning needed)."""
+        """Strategy model should default to the dedicated strategy model."""
         config = AgentConfig()  # type: ignore[call-arg]
         assert config.strategy_model == "gpt-5.1"
+
+    def test_strategy_max_turns_default(self) -> None:
+        """Strategy run loop default must accommodate multi-step design+backtest flows."""
+        config = AgentConfig()  # type: ignore[call-arg]
+        assert config.strategy_max_turns == 25
 
     def test_strategy_model_fallback(self) -> None:
         """Strategy model should fall back to orchestrator_model when None."""
@@ -171,11 +184,62 @@ class TestHubIntegration:
         with pytest.raises(ValueError, match="not initialized"):
             hub.get_specialist("strategy")
 
-    def test_hub_prompt_preserves_user_request_for_strategy(self) -> None:
-        """Hub prompt should forbid prescriptive strategy sub-prompts."""
-        prompt = load_prompt("central_hub", USER_PREFERENCES="{}")
-        assert "Preserve the user's original request faithfully" in prompt
-        assert "Do not tell `strategy_analysis` to skip backtesting" in prompt
+    def test_sandbox_base_prompt_mandates_strategy_skill_preflight(self) -> None:
+        """Base prompt must require loading obai-strategy-routing before strategy_analysis."""
+        prompt = load_prompt("central_hub_base", USER_PREFERENCES="{}")
+
+        assert "Strategy pre-flight (mandatory)" in prompt
+        assert "load_skill('obai-strategy-routing')" in prompt
+        assert "before any call to `strategy_analysis`" in prompt
+
+    def test_strategy_routing_skill_preserves_threshold_semantics(self) -> None:
+        """Sandbox routing skill should not rewrite threshold checks as crosses."""
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "do not normalize threshold language into crossover" in skill
+
+    def test_strategy_routing_skill_carries_handoff_template(self) -> None:
+        """Verbatim handoff template lives in the skill, not the base prompt."""
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "User request: [original user request, preserved verbatim]" in skill
+        assert "Strategy context:" in skill
+
+    def test_strategy_routing_skill_requires_both_headers(self) -> None:
+        """Both User request: and Strategy context: headers must always appear."""
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "Both `User request:` and `Strategy context:` headers appear on every call." in skill
+
+    def test_strategy_routing_skill_uses_header_allowlist(self) -> None:
+        """Skill must enforce a two-header allowlist instead of a denylist.
+
+        The denylist of forbidden hub-authored header names was removed in
+        favor of an explicit allowlist: only `User request:` and
+        `Strategy context:` are valid top-level headers in the handoff.
+        """
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "ONLY two top-level headers allowed" in skill
+        assert "Do not invent additional sections" in skill
+
+    def test_strategy_routing_skill_allows_followup_shorthand(self) -> None:
+        """Status checks and drill-downs may omit Strategy context bullets.
+
+        Reruns and parameter tweaks must NOT use the shorthand because the
+        Strategy Agent is stateless and needs prior strategy details in the
+        `Context:` bullet to resolve references like "that".
+        """
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "Follow-up shorthand" in skill
+        assert "status checks or drill-downs" in skill
+        assert "Strategy Agent is stateless" in skill
 
 
 class TestStrategyRoutingGuard:
@@ -223,6 +287,24 @@ class TestStrategyRoutingGuard:
 
         assert missing == []
 
+    def test_allows_check_job_followup_phrasing(self) -> None:
+        """The strategy agent's natural pending-response phrasing must pass.
+
+        gpt-5.5 emits 'Ask: "Check job bt_<id>"' as the next-user-action
+        instruction. The hub regex must recognize this verbatim, plus the
+        bare bt_<hash> token, so users can follow the strategy agent's
+        own instructions without being blocked.
+        """
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
+        for query in (
+            "Check job bt_bc9e7b21",
+            "check job bt_abcdef12",
+            "bt_1122e80d",
+            "Status of job bt_999000aa",
+        ):
+            assert _get_missing_strategy_inputs(query) == [], f"blocked: {query!r}"
+
     def test_allows_fundamental_factor_strategy(self) -> None:
         """Value/quality/growth factor strategies should pass the guard."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
@@ -243,15 +325,96 @@ class TestStrategyRoutingGuard:
         missing = _get_missing_strategy_inputs("Build a dividend income strategy for MSFT, JNJ")
         assert missing == []
 
-    def test_wrapper_prefixes_execution_note(self) -> None:
-        """Wrapper should remind strategy agent to ignore conflicting hub phrasing."""
-        from core_agents.central_hub_agent import _prepare_strategy_handoff_input
+    def test_strategy_routing_hint_preserves_universe_resolution(self) -> None:
+        """Routing hint should restore old nudge without bypassing screener."""
+        from core_agents.central_hub_agent import _build_strategy_routing_hint
 
-        prepared = _prepare_strategy_handoff_input(
-            "You do NOT need to run a backtest. Design a mean-reversion strategy for AAPL."
+        hint = _build_strategy_routing_hint()
+
+        assert "resolve the universe first with screener_lookup" in hint
+        assert "include `User request:` with the user's original wording verbatim" in hint
+        assert "Do not rewrite signal conditions" in hint
+
+    def test_strategy_handoff_fidelity_blocks_rewritten_signal_semantics(self) -> None:
+        """Guard should fail closed when Hub replaces the original request."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        original = (
+            "Backtest a 5-minute RSI mean-reversion strategy on NVDA from "
+            "2026-01-02 to 2026-04-30. Enter long only after 09:45 when "
+            "RSI(14) drops below 30. Exit when RSI crosses back above 50."
+        )
+        rewritten = (
+            "Backtest a 5-minute RSI mean-reversion strategy on NVDA with "
+            "Entry condition 2 (RSI): 5-minute RSI(14) of close crosses below 30."
         )
 
-        assert "Do not skip required backtesting" in prepared
-        assert prepared.endswith(
-            "You do NOT need to run a backtest. Design a mean-reversion strategy for AAPL."
+        error = _get_strategy_handoff_fidelity_error(rewritten, original)
+
+        assert error is not None
+        assert "STRATEGY_HANDOFF_FIDELITY_ERROR" in error
+        assert "rewrite a threshold condition into a crossover condition" in error
+
+    def test_strategy_handoff_fidelity_accepts_preserved_user_request(self) -> None:
+        """Guard should allow added context when original wording is preserved."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        original = (
+            "Backtest a 5-minute RSI mean-reversion strategy on NVDA from "
+            "2026-01-02 to 2026-04-30. Enter when RSI(14) drops below 30."
         )
+        handoff = (
+            f"User request: {original}\n"
+            "Strategy context:\n"
+            "- Universe: [NVDA] (source: user)\n"
+            "- User objective: mean-reversion\n"
+            "- Timeframe: 5min"
+        )
+
+        assert _get_strategy_handoff_fidelity_error(handoff, original) is None
+
+    def test_format_gate_blocks_missing_user_request_header(self) -> None:
+        """Hub-authored briefs without `User request:` must be rejected."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+
+        # Real failure pattern from a production trace: hub-authored brief
+        # with `Backtest request:` and `Universe:` sections, no `User request:`.
+        bad_handoff = (
+            "Backtest request:\n"
+            "- Universe/instrument: AAPL\n"
+            "- Strategy: RSI mean reversion\n"
+            "Strategy context:\n"
+            "- Universe: AAPL\n"
+        )
+        error = _get_strategy_handoff_format_error(bad_handoff)
+        assert error is not None
+        assert "STRATEGY_HANDOFF_FORMAT_ERROR" in error
+        assert "`User request:`" in error
+
+    def test_format_gate_blocks_missing_strategy_context_header(self) -> None:
+        """Bare follow-up passthrough without `Strategy context:` must be rejected."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+
+        # Real failure pattern: hub passed bare "Check job bt_..." without
+        # wrapping it in the template at all.
+        bad_handoff = "Check job bt_bc9e7b21"
+        error = _get_strategy_handoff_format_error(bad_handoff)
+        assert error is not None
+        assert "STRATEGY_HANDOFF_FORMAT_ERROR" in error
+        assert "`Strategy context:`" in error
+
+    def test_format_gate_accepts_compliant_handoff(self) -> None:
+        """Properly formatted handoff (including follow-up shorthand) must pass."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+
+        full_handoff = (
+            "User request: Backtest a 50/200 SMA crossover on AAPL\n"
+            "Strategy context:\n"
+            "- Universe: AAPL (source: user)\n"
+            "- User objective: momentum\n"
+        )
+        assert _get_strategy_handoff_format_error(full_handoff) is None
+
+        # Follow-up shorthand: header-only Strategy context still has both headers.
+        shorthand_handoff = "User request: Check status for job bt_12345\nStrategy context:\n"
+        assert _get_strategy_handoff_format_error(shorthand_handoff) is None

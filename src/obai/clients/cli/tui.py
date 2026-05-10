@@ -656,6 +656,15 @@ class OBaIApp(App[None]):
 
                     # Tool call start
                     if item_type == "tool_call_item":
+                        # Anything streamed into the response widget before
+                        # this hub tool call was intermediate "thinking"
+                        # narration. Drop it so only the final segment (the
+                        # answer) ends up in the response widget and in
+                        # response_text used for scoring.
+                        if response_text:
+                            response.clear()
+                            response_text = ""
+
                         raw_item = getattr(item, "raw_item", None)
                         if raw_item:
                             tool_name = getattr(raw_item, "name", "unknown")

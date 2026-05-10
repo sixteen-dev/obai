@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
 
     # Qdrant Configuration
+    # Disabled by default. When false, the educational-PDF search tool is not
+    # registered and the include_context=True path on the other fundamentals
+    # tools is short-circuited. The Qdrant client and tool code remain in tree
+    # so this can be re-enabled by setting QDRANT_ENABLED=true.
+    qdrant_enabled: bool = Field(default=False)
     qdrant_url: str = Field(default="http://localhost:6333")
     qdrant_collection: str = "financial-fundamentals"
 

@@ -333,21 +333,19 @@ async def _run_query(  # noqa: PLR0912
     )
 
     start = time.perf_counter()
+    # Holds the text streamed since the last hub tool call (or query start).
+    # Resets on every tool_call_item so intermediate "thinking" narration
+    # gets discarded — only the final segment (the answer) survives to stdout.
     response_text = ""
     agents_called: list[str] = []
     tool_calls: list[dict[str, str]] = []
     current_agent = "central_hub"
-    got_streaming_delta = False
 
     try:
         async for event in hub.run(query, session):
             # Prediction passthrough: hub relay failed, use specialist output
             if isinstance(event, PredictionPassthroughEvent):
                 response_text = event.content
-                got_streaming_delta = True
-                if not json_mode:
-                    sys.stdout.write(event.content)
-                    sys.stdout.flush()
                 continue
 
             if isinstance(event, AgentUpdatedStreamEvent):
@@ -364,12 +362,14 @@ async def _run_query(  # noqa: PLR0912
                     if raw:
                         name: str = getattr(raw, "name", "unknown")
                         tool_calls.append({"tool": name, "agent": current_agent})
+                    # Anything streamed before this hub tool call was thinking.
+                    response_text = ""
                 elif (
                     item_type == "message_output_item"
                     and isinstance(item, MessageOutputItem)
-                    and not got_streaming_delta
+                    and not response_text
                 ):
-                    # Only use MessageOutputItem as fallback when no streaming deltas arrived.
+                    # Fallback for the current segment when no deltas arrived.
                     msg = ItemHelpers.text_message_output(item)
                     if msg:
                         response_text = msg
@@ -377,16 +377,12 @@ async def _run_query(  # noqa: PLR0912
             elif isinstance(event, RawResponsesStreamEvent):
                 data = event.data
                 if isinstance(data, ResponseTextDeltaEvent) and data.delta:
-                    if not got_streaming_delta:
-                        got_streaming_delta = True
-                        response_text = ""
                     response_text += data.delta
-                    if not json_mode:
-                        sys.stdout.write(data.delta)
-                        sys.stdout.flush()
 
         if not json_mode and response_text:
+            sys.stdout.write(response_text)
             sys.stdout.write("\n")
+            sys.stdout.flush()
 
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)

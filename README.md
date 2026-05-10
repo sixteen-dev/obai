@@ -32,7 +32,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. Strategy Agent uses `gpt-5.1` for stronger reasoning; all others use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.5` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting.
 
 ---
 
@@ -161,7 +161,7 @@ obai status
 
 | Server | Port | Data Source | Key Capabilities |
 |--------|------|-------------|-----------------|
-| **fundamentals-server** | 8001 | FMP + Qdrant | Company financials, ratios, SEC filings, insider trades, vector search over financial education PDFs |
+| **fundamentals-server** | 8001 | FMP | Company financials, ratios, SEC filings, insider trades. Qdrant-backed vector search over financial education PDFs is shipped but disabled by default (`QDRANT_ENABLED=false`). |
 | **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday data (5min/15min/1hr), technical indicators, index-scoped movers (S&P 500, Nasdaq, Dow Jones) |
 | **events-news-server** | 8003 | FMP + Tavily | Earnings calendar, dividends, AI-powered news search |
 | **options-server** | 8004 | Massive.com | Options chains, Greeks, implied volatility, open interest |
@@ -308,7 +308,7 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-5.1` | Model for the Central Hub (needs strong reasoning) |
+| `ORCHESTRATOR_MODEL` | `gpt-5.5` | Model for the Central Hub (needs strong reasoning) |
 | `SPECIALIST_MODEL` | `gpt-5-mini` | Model for specialist agents |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `true` | Run faithfulness/completeness scoring on every query |
@@ -452,7 +452,7 @@ OBaI ships with two agent skills that let any AI agent autonomously interact wit
 - [x] Strategy Agent with autonomous iteration loop
 - [x] Opik tracing and custom evaluation scorers
 - [x] Input guardrails for non-financial query filtering
-- [x] Qdrant vector search over financial education PDFs
+- [x] Qdrant vector search over financial education PDFs (shipped; disabled by default)
 - [x] Research server — deep qualitative analysis via Exa semantic search
 - [x] DuckDB storage for backtest OHLCV data (replaced Parquet-per-symbol)
 - [x] Intraday timeframes (5min, 15min, 1hr bars) for backtest engine and market data

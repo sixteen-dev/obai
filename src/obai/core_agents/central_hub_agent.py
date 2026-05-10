@@ -31,21 +31,29 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import Agent, ModelSettings, Runner, Tool, function_tool
 from agents.agent import AgentToolStreamEvent
 from agents.items import ItemHelpers, MessageOutputItem
+from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
+from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
+from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
+from agents.sandbox.entries import LocalDir
+from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import ResponseTextDeltaEvent
+from openai.types.shared import Reasoning
 
 if TYPE_CHECKING:
     from agents import Session
+    from agents.guardrail import InputGuardrail
 
 from .base_agent import BaseAgent
 from .cache import QueryCache
-from .config import get_cache_config, get_config
+from .config import ReasoningEffort, Verbosity, get_cache_config, get_config
 from .events_news_agent import EventsNewsAgent
 from .fundamentals_agent import FundamentalsAgent
 from .guardrails import create_input_guardrail
@@ -65,6 +73,8 @@ from .strategy_agent import StrategyAgent
 from .tracing import init_opik
 
 logger = logging.getLogger(__name__)
+
+HUB_SKILLS_DIR = Path(__file__).resolve().parent / "hub_skills"
 
 
 @dataclass(frozen=True)
@@ -197,8 +207,12 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "context (fundamentals, technicals, sentiment) to design "
     "informed strategies, then backtests and iterates. "
     "Use for strategy building, backtesting, or trading "
-    "system questions. Always follow the Strategy Routing "
-    "steps in your instructions before calling this tool. "
+    "system questions. "
+    "MANDATORY PRE-CONDITION: before calling this tool, you MUST first "
+    "call load_skill('obai-strategy-routing') in the same turn. The "
+    "skill body holds the handoff template and rules that govern this "
+    "call. Calling this tool without loading that skill first is "
+    "incorrect and will produce wrong handoffs. "
     "Do not call with unresolved critical inputs. "
     "This tool may return a finished user-facing deliverable. "
     "If it does, your final answer must be exactly the tool output. "
@@ -217,8 +231,10 @@ def _wrap_terminal_prediction_output(output: str) -> str:
     """Wrap terminal prediction-market output with rendering control line."""
     control = (
         f"{_TERMINAL_PREDICTION_PREFIX}"
-        "render=light_cleanup_allowed; "
-        "display=analysis,prices,liquidity,volume,timing,risks,market_url; "
+        "render=verbatim_relay; "
+        "no_renaming=true; "
+        "no_compression=true; "
+        "no_section_restructuring=true; "
         "preserve_for_followup=slug,market_url; "
         "routing_key_priority=slug,market_url; "
         "hide_by_default=condition_id,token_id; "
@@ -240,16 +256,8 @@ _PREDICTION_TOOL_DESCRIPTION = (
     "YES/NO market pricing, event resolution, top traders on "
     "Polymarket, and prediction-market trade ideas. "
     "Do NOT route prediction-market backtests to strategy_analysis. "
-    "Use the tool output as source analysis for the final answer. "
-    "Light readability formatting is allowed, but surface the analysis, "
-    "market URL, prices, liquidity, timing, risks, and actionable implications. "
-    "For follow-ups about prior prediction markets, pass exact slugs from prior "
-    "prediction output as the primary routing key; use market URLs only when "
-    "slugs are unavailable. Do not send only titles, descriptions, or "
-    "paraphrases when routing keys are available. "
-    "Do not show condition_id or token_id unless the user asks for raw "
-    "identifiers, execution payloads, or debugging details. "
-    "Do not invent Polymarket identifiers."
+    "This tool may return a finished user-facing deliverable; when it does, "
+    "relay it according to the obai-prediction-market-routing skill."
 )
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
@@ -286,13 +294,26 @@ _STRATEGY_FOLLOW_UP_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:backtest|job)\s+(?:results?|output|done)\b", re.IGNORECASE),
+    # The strategy agent's pending-response template tells users to ask
+    # "Check job <id>" (gpt-5.5 phrasing). Match that wording and any bare
+    # bt_<hash> token so the hub doesn't reject its own follow-up handoff.
+    re.compile(r"\bcheck\s+job\b", re.IGNORECASE),
+    re.compile(r"\bjob\s+bt_\w+", re.IGNORECASE),
+    re.compile(r"\bbt_[a-z0-9]{6,}\b", re.IGNORECASE),
 )
 _STRATEGY_SYMBOL_LIST_PATTERNS = (
     re.compile(r'"symbols"\s*:\s*\[(?P<body>[^\]]+)\]', re.IGNORECASE),
-    # Match both "Universe: [AAPL, MSFT]" and "Universe: AAPL, MSFT (source: ...)"
     re.compile(r"Universe:\s*\[?(?P<body>[^\]\n(]+)", re.IGNORECASE),
     re.compile(
         r"\b(?:for|on|across|using)\s+(?P<body>(?:[A-Z]{1,5}(?:\.[A-Z])?\s*(?:,|\band\b)?\s*)+)"
+    ),
+    # Bulleted ticker list emitted by the obai-strategy-routing skill when
+    # listing a resolved universe. Requires the ticker to be followed by
+    # parenthesized text or end-of-line so non-ticker bullet headers
+    # (e.g. lines starting with descriptive prose) are skipped.
+    re.compile(
+        r"^\s*[-*•]\s*(?P<body>[A-Z]{1,5}(?:\.[A-Z])?)(?=\s*\(|\s*$)",
+        re.MULTILINE,
     ),
 )
 _NON_TICKER_TOKENS = {
@@ -375,6 +396,20 @@ def _is_strategy_query(query: str) -> bool:
     return not _PREDICTION_MARKET_KEYWORDS.search(query)
 
 
+def _build_strategy_routing_hint() -> str:
+    """Build the strategy routing reminder prepended to strategy-like queries."""
+    return (
+        "[ROUTING REMINDER: This query appears to involve equity strategy design, "
+        "backtesting, or trading systems. Follow Strategy Routing exactly: if the "
+        "user did not provide concrete tradable tickers, resolve the universe first "
+        "with screener_lookup; otherwise call strategy_analysis. When calling "
+        "strategy_analysis, include `User request:` with the user's original wording "
+        "verbatim, then add `Strategy context:` with resolved facts only. Do not "
+        "rewrite signal conditions, risk rules, thresholds, or order semantics. Do "
+        "not answer from training data.]\n\n"
+    )
+
+
 def _get_missing_strategy_inputs(input_text: str) -> list[str]:
     """Return missing critical strategy inputs for the hub-to-strategy call."""
     if _is_strategy_follow_up_request(input_text):
@@ -400,18 +435,92 @@ def _format_strategy_input_error(missing_inputs: list[str]) -> str:
     )
 
 
-def _prepare_strategy_handoff_input(input_text: str) -> str:
-    """Prefix strategy handoff with execution-governance note.
+def _normalize_strategy_handoff_text(text: str) -> str:
+    """Normalize text for faithful-handoff substring checks."""
+    return " ".join(text.casefold().split())
 
-    This reduces the chance that hub-authored context overrides the
-    strategy agent's own workflow, especially around mandatory backtesting.
+
+def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | None) -> str | None:
+    """Return an error when strategy handoff does not preserve the user request.
+
+    Strategy handoffs are allowed to add context, but the original user request
+    must remain present verbatim enough that signal semantics are not rewritten
+    by the Hub before the Strategy Agent sees them.
     """
+    if not original_query:
+        return None
+
+    normalized_query = _normalize_strategy_handoff_text(original_query)
+    normalized_input = _normalize_strategy_handoff_text(input_text)
+    threshold_below = (
+        "drops below" in normalized_query
+        or "falls below" in normalized_query
+        or "is below" in normalized_query
+        or "below" in normalized_query
+    )
+    original_cross_below = (
+        "crosses below" in normalized_query
+        or "cross below" in normalized_query
+        or "crosses_below" in normalized_query
+    )
+    input_cross_below = (
+        "crosses below" in normalized_input
+        or "cross below" in normalized_input
+        or "crosses_below" in normalized_input
+    )
+    if threshold_below and input_cross_below and not original_cross_below:
+        return (
+            "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis received a "
+            "handoff that appears to rewrite a threshold condition into a "
+            "crossover condition. Retry using the user's original wording in "
+            "`User request:` and keep any derived implementation details out of "
+            "the Hub handoff."
+        )
+
+    if not normalized_query or normalized_query in normalized_input:
+        return None
+
     return (
-        "Execution note: treat any hub-provided context below as factual context and "
-        "user constraints only. Follow your own system instructions for workflow and "
-        "tool use. Do not skip required backtesting or return design-only output for "
-        "a strategy-design or backtest request just because the hub phrased it that way.\n\n"
-        f"{input_text}"
+        "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis requires the "
+        "original user request to be preserved in the handoff. Retry the call "
+        "using the Strategy Hand-off Format with `User request:` set to the "
+        "user's original wording, then add any resolved context separately. "
+        "Do not rewrite threshold conditions into crossover conditions or add "
+        "operator semantics the user did not explicitly specify."
+    )
+
+
+def _get_strategy_handoff_format_error(input_text: str) -> str | None:
+    """Return an error when strategy handoff omits the required headers.
+
+    The skill mandates a literal two-block structure: `User request:` carrying
+    the user's wording verbatim, and `Strategy context:` carrying Hub-resolved
+    facts. Hub-authored briefs that substitute their own section names
+    (e.g. `Task intent:`, `Strategy concept:`, `Backtest preferences:`,
+    `Resolved context:`) leak design choices into the Strategy Agent's
+    reasoning and produce off-spec backtests. This gate fails closed and
+    forces the Hub to retry with the correct format.
+    """
+    has_user_request = "User request:" in input_text
+    has_strategy_context = "Strategy context:" in input_text
+    if has_user_request and has_strategy_context:
+        return None
+
+    missing: list[str] = []
+    if not has_user_request:
+        missing.append("`User request:`")
+    if not has_strategy_context:
+        missing.append("`Strategy context:`")
+    missing_text = " and ".join(missing)
+    return (
+        "STRATEGY_HANDOFF_FORMAT_ERROR: strategy_analysis input must use the "
+        "literal two-block structure from the obai-strategy-routing skill. "
+        f"Missing required header(s): {missing_text}. "
+        "Retry with `User request:` carrying the user's wording verbatim and "
+        "`Strategy context:` carrying only Hub-resolved facts. Do not "
+        "substitute hub-authored headers like `Task intent:`, `Strategy "
+        "concept:`, `Backtest preferences:`, `Resolved context:`, or "
+        "`Backtest request:` — those are forbidden."
     )
 
 
@@ -587,6 +696,57 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
+def _build_hub_agent(
+    *,
+    instructions: str,
+    model: str,
+    specialist_tools: list[Tool],
+    guardrails: list[InputGuardrail[Any]],
+    reasoning_effort: ReasoningEffort,
+    verbosity: Verbosity,
+) -> Agent[None]:
+    """Build the SandboxAgent Central Hub with lazy hub_skills.
+
+    The Sandbox Hub keeps the same agents-as-tools wiring but exposes the
+    files in ``HUB_SKILLS_DIR`` as lazy skills. Skill metadata (name +
+    description) is loaded eagerly; full SKILL.md bodies are fetched only
+    when the model selects a skill. Critical routing/passthrough logic
+    stays in code; skills only carry verbose conditional instructions.
+
+    Capabilities: ``Skills`` only. We deliberately do **not** include
+    ``Capabilities.default()`` (Filesystem + Shell + Compaction):
+
+    * Filesystem and Shell would expose model-side file/exec tools the
+      hub does not need — it routes via specialist MCP tools.
+    * The legacy ``Compaction`` capability injects ``context_management``
+      via ``extra_args``, which collides with the first-class
+      ``ModelSettings.context_management`` field that openai-agents
+      0.16+ adds to every Responses API call (the duplicate-key guard in
+      ``openai_responses.py`` raises ``TypeError``). If server-side
+      compaction is wanted later, pass ``context_management=[...]`` on
+      ``ModelSettings`` directly instead of using the Compaction
+      capability.
+    """
+    skills_capability = Skills(
+        lazy_from=LocalDirLazySkillSource(source=LocalDir(src=HUB_SKILLS_DIR)),
+    )
+    return SandboxAgent(
+        name="central_hub",
+        instructions=instructions,
+        model=model,
+        tools=specialist_tools,
+        input_guardrails=guardrails,
+        default_manifest=Manifest(),
+        capabilities=[skills_capability],
+        model_settings=ModelSettings(
+            parallel_tool_calls=True,
+            tool_choice="auto",
+            reasoning=Reasoning(effort=reasoning_effort),
+            verbosity=verbosity,
+        ),
+    )
+
+
 class CentralHubAgent:
     """Central hub agent that coordinates specialist agents.
 
@@ -616,6 +776,9 @@ class CentralHubAgent:
         """
         self.config = get_config()
         self.agent: Agent[None] | None = None
+        # Populated with a sandbox-aware RunConfig once the hub is initialized.
+        self._run_config: RunConfig | None = None
+        self._current_user_query: str | None = None
 
         # Specialist agents (initialized in initialize())
         self.fundamentals_agent: FundamentalsAgent | None = None
@@ -667,11 +830,12 @@ class CentralHubAgent:
             model = self.config.orchestrator_model
             logger.info(f"Central Hub Agent using model: {model}")
 
-            # Load instructions from prompt file with user preferences injected
-
+            # Load instructions from prompt file with user preferences injected.
+            # The compact base prompt carries the hub's invariant rules; lazy
+            # skills carry the long conditional instructions.
             user_prefs = _prefs_store.load()
             instructions = load_prompt(
-                "central_hub",
+                "central_hub_base",
                 USER_PREFERENCES=user_prefs.model_dump_json(indent=2),
             )
 
@@ -817,18 +981,24 @@ class CentralHubAgent:
 
             logger.info(f"Configured {len(specialist_tools)} specialist tools for central hub")
 
-            # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var)
-            # Using agents-as-tools pattern: orchestrator stays in control
-            self.agent = Agent(
-                name="central_hub",
+            # Create agent with tools (Agent SDK uses OPENAI_API_KEY env var).
+            # Using agents-as-tools pattern: orchestrator stays in control.
+            # The hub is a SandboxAgent with lazy hub skills.
+            self.agent = _build_hub_agent(
                 instructions=instructions,
                 model=model,
-                tools=specialist_tools,  # Specialists as tools, not handoffs
-                input_guardrails=guardrails,  # Validate queries before processing
-                model_settings=ModelSettings(
-                    parallel_tool_calls=True,  # Call multiple specialists simultaneously
-                    tool_choice="auto",  # Let model decide which tools to use
-                ),
+                specialist_tools=specialist_tools,
+                guardrails=guardrails,
+                reasoning_effort=self.config.orchestrator_reasoning_effort,
+                verbosity=self.config.orchestrator_verbosity,
+            )
+            self._run_config = RunConfig(
+                sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
+                workflow_name="OBaI Central Hub",
+            )
+            logger.info(
+                "Central Hub running as SandboxAgent (lazy skills from %s)",
+                HUB_SKILLS_DIR,
             )
 
             self._initialized = True
@@ -930,6 +1100,7 @@ class CentralHubAgent:
         self.research_agent = None
         self.prediction_markets_agent = None
         self.agent = None
+        self._run_config = None
         self._initialized = False
 
     async def close(self) -> None:
@@ -1015,6 +1186,19 @@ class CentralHubAgent:
             strict_mode=False,
         )
         async def strategy_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            format_error = _get_strategy_handoff_format_error(input)
+            if format_error:
+                logger.info("Blocked strategy_analysis due to format violation")
+                return format_error
+
+            handoff_error = _get_strategy_handoff_fidelity_error(
+                input,
+                self._current_user_query,
+            )
+            if handoff_error:
+                logger.info("Blocked strategy_analysis due to unfaithful handoff")
+                return handoff_error
+
             missing_inputs = _get_missing_strategy_inputs(input)
             if missing_inputs:
                 logger.info(
@@ -1023,11 +1207,11 @@ class CentralHubAgent:
                 )
                 return _format_strategy_input_error(missing_inputs)
 
-            prepared_input = _prepare_strategy_handoff_input(input)
             result = Runner.run_streamed(
                 starting_agent=strategy_agent,
-                input=prepared_input,
+                input=input,
                 context=ctx.context,
+                max_turns=self.config.strategy_max_turns,
             )
 
             async for event in result.stream_events():
@@ -1147,6 +1331,7 @@ class CentralHubAgent:
         _clear_active_agents()
         _clear_strategy_passthrough()
         _clear_prediction_passthrough()
+        self._current_user_query = query
 
         # RAG-style cache: search for similar cached response
         query_to_run = query
@@ -1169,24 +1354,24 @@ class CentralHubAgent:
                 )
 
         # Routing hint: detect strategy/backtest intent and remind the hub
-        # to route to strategy_analysis instead of answering from training data.
-        if _is_strategy_query(query):
-            query_to_run = (
-                "[ROUTING REMINDER: This query involves strategy design, backtesting, "
-                "or trading systems. You MUST route to strategy_analysis per your "
-                "Strategy Routing instructions. Do not answer from training data.]\n\n"
-                + query_to_run
-            )
-            logger.info("Strategy intent detected — injected routing hint")
+        # to route through the strategy specialist. Disabled while testing
+        # whether the new architecture (base-prompt pre-flight rule +
+        # mandatory load_skill + tightened tool description + skill body)
+        # is sufficient on its own. Re-enable if strategy turns regress.
+        # if _is_strategy_query(query):
+        #     query_to_run = _build_strategy_routing_hint() + query_to_run
+        #     logger.info("Strategy intent detected — injected routing hint")
 
         prediction_context_block = ""
 
         # Run streamed
-        # Opik tracing handled by OpikTracingProcessor (set up in init_opik)
+        # Opik tracing handled by OpikTracingProcessor (set up in init_opik).
+        # run_config carries a SandboxRunConfig with a UnixLocalSandboxClient.
         result = Runner.run_streamed(
             starting_agent=self.agent,
             input=query_to_run,
             session=session,
+            run_config=self._run_config,
         )
 
         # Buffer response text for caching
@@ -1235,21 +1420,26 @@ class CentralHubAgent:
         # conversation history for follow-ups, and tool-output-based context
         # was injecting stale market identifiers that biased followup queries.
 
-        # Validation gate: emit buffered events or passthrough
+        # Always-passthrough relay for prediction output.
+        # Prediction-market output is non-deterministic in shape (unlike the
+        # strategy 9-section deliverable), so the hub LLM consistently rewrites
+        # or compresses it regardless of how strongly the skill or control line
+        # frames the verbatim-relay contract. Bypass hub authoring entirely:
+        # emit the specialist output directly to the client and discard the
+        # buffered hub-authored text. validate_prediction_relay is still
+        # invoked for trace diagnostics; the boolean does not gate the choice.
         if prediction_fired and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
-            if validate_prediction_relay(
+            relay_ok = validate_prediction_relay(
                 hub_final_text,
                 _prediction_passthrough,
                 allowed_context=prediction_context_block,
-            ):
-                for evt in buffered_events:
-                    yield evt
-            else:
-                logger.warning("Hub relay failed validation — using passthrough")
-                yield PredictionPassthroughEvent(content=_prediction_passthrough)
-                response_buffer.clear()
-                response_buffer.append(_prediction_passthrough)
+            )
+            if not relay_ok:
+                logger.info("Hub authored invented identifiers — passthrough used")
+            yield PredictionPassthroughEvent(content=_prediction_passthrough)
+            response_buffer.clear()
+            response_buffer.append(_prediction_passthrough)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)

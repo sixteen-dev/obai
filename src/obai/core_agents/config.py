@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+# Reasoning effort and output verbosity tiers used by ModelSettings on
+# every agent. Two tiers (orchestrator + specialist) live as fields on
+# AgentConfig below — same pattern as the model name fields.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+Verbosity = Literal["low", "medium", "high"]
 
 
 # =============================================================================
@@ -102,7 +110,7 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.1",
+        default="gpt-5.5",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
@@ -146,10 +154,40 @@ class AgentConfig(BaseSettings):
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
 
+    # Reasoning effort and output verbosity. Two tiers, same shape as the
+    # model fields above. Defaults live in code; not exposed via .env.
+    orchestrator_reasoning_effort: ReasoningEffort = Field(
+        default="high",
+        description="Hub reasoning effort: none|minimal|low|medium|high|xhigh",
+    )
+    orchestrator_verbosity: Verbosity = Field(
+        default="low",
+        description="Hub output verbosity: low|medium|high",
+    )
+    specialist_reasoning_effort: ReasoningEffort = Field(
+        default="medium",
+        description="Specialist reasoning effort: none|minimal|low|medium|high|xhigh",
+    )
+    specialist_verbosity: Verbosity = Field(
+        default="low",
+        description="Specialist output verbosity: low|medium|high",
+    )
+
     # Guardrails
     enable_guardrails: bool = Field(
         default=True,
         description="Enable input guardrails to filter non-financial queries (cost optimization)",
+    )
+
+    # Strategy agent run-loop budget. Strategy turns commonly need
+    # screener + fundamentals + multiple backtest iterations + an optional
+    # walk-forward kickoff before composing the final memo, so the SDK
+    # default of 10 is undersized.
+    strategy_max_turns: int = Field(
+        default=25,
+        ge=5,
+        le=100,
+        description="Max turns for the strategy_analysis tool's inner Runner.run loop",
     )
 
     # MCP Server URLs
@@ -247,7 +285,8 @@ class AgentConfig(BaseSettings):
     )
     opik_project: str = Field(
         default="obai-eval",
-        description="Opik project name",
+        description="Opik project name (env: OPIK_OBAI_PROJECT_NAME)",
+        validation_alias=AliasChoices("OPIK_OBAI_PROJECT_NAME", "opik_project"),
     )
     opik_url: str = Field(
         default="http://localhost:5173",

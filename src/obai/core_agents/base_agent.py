@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from agents import Agent, ModelSettings
+from openai.types.shared import Reasoning
 
 from .config import AgentConfig, get_config
 from .mcp import MCPClient, MCPToolConverter
@@ -150,6 +151,8 @@ class BaseAgent(ABC):
                 tools=tools,  # type: ignore[arg-type]  # list covariance issue
                 model_settings=ModelSettings(
                     parallel_tool_calls=True,  # Enable parallel tool execution
+                    reasoning=Reasoning(effort=self.config.specialist_reasoning_effort),
+                    verbosity=self.config.specialist_verbosity,
                 ),
             )
 

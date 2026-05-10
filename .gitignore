@@ -92,3 +92,6 @@ scripts/*
 !scripts/release.sh
 !scripts/hooks/
 !scripts/hooks/pre-commit
+# E2E regression run outputs
+.claude/skills/obai-e2e-regression/runs/
+.claude/skills/obai-e2e-regression-workspace/
