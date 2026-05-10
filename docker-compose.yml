@@ -1,23 +1,27 @@
 version: '3.8'
 
 services:
-  qdrant:
-    image: qdrant/qdrant:v1.13.2
-    container_name: obai-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant-data:/qdrant/storage
-    networks:
-      - obai-mcp-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333'"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+  # Qdrant disabled: educational-PDF search is not used and fundamentals-server
+  # runs with QDRANT_ENABLED=false. To re-enable, uncomment this block, the
+  # depends_on entry on fundamentals-server, the QDRANT_* env vars, and the
+  # qdrant-data volume below — then set QDRANT_ENABLED=true on the server.
+  # qdrant:
+  #   image: qdrant/qdrant:v1.13.2
+  #   container_name: obai-qdrant
+  #   ports:
+  #     - "6333:6333"
+  #     - "6334:6334"
+  #   volumes:
+  #     - qdrant-data:/qdrant/storage
+  #   networks:
+  #     - obai-mcp-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333'"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 10s
 
   fundamentals-server:
     image: ghcr.io/sixteen-dev/obai/fundamentals-server:${OBAI_VERSION:-latest}
@@ -36,17 +40,18 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - FMP_BASE_URL=https://financialmodelingprep.com/stable
-      # Qdrant Configuration
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION=financial-fundamentals
+      # Qdrant disabled: see qdrant service block above to re-enable.
+      - QDRANT_ENABLED=false
+      # - QDRANT_URL=http://qdrant:6333
+      # - QDRANT_COLLECTION=financial-fundamentals
       - EMBEDDING_MODEL=text-embedding-3-small
       - EMBEDDING_DIMENSION=1536
     networks:
       - obai-mcp-network
     restart: unless-stopped
-    depends_on:
-      qdrant:
-        condition: service_healthy
+    # depends_on:
+    #   qdrant:
+    #     condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -272,7 +277,7 @@ services:
       start_period: 30s
 
 volumes:
-  qdrant-data:
+  # qdrant-data:  # disabled with the qdrant service above
   backtest-data:
 
 networks:

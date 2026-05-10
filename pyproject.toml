@@ -3,7 +3,7 @@
 
 [project]
 name = "obai"
-version = "1.3.12"
+version = "1.4.0"
 description = "Development environment for OBaI monorepo"
 requires-python = ">=3.12"
 dependencies = [
@@ -75,7 +75,7 @@ exclude-newer = "7 days"
 exclude-newer-package = { requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
-    "python-multipart>=0.0.26",  # GHSA-multipart-dos: large preamble/epilogue DoS
+    "python-multipart>=0.0.27",  # GHSA-pp6c-gr5w-3c5g: unbounded part-header DoS
     "requests>=2.33.0",      # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
     "onnx>=1.21.0",          # CVE-2026-34447, GHSA-q56x: symlink traversal + TOCTOU
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape

@@ -148,7 +148,7 @@ uv run python test_connection.py
 
 **Input Guardrail** (gpt-4o-mini): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub** (gpt-5.1): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-5.5): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
 **Specialists** (9 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
@@ -171,7 +171,7 @@ When a query needs data from multiple domains, the **Central Hub orchestrates**:
 ```
 User: "What's my portfolio worth? I have AAPL 50%, MSFT 50%"
                     ↓
-            Central Hub (gpt-5.1)
+            Central Hub (gpt-5.5)
             /                  \
    portfolio_analysis      market_data_analysis
    (parse positions)         (get prices)
@@ -191,14 +191,14 @@ Key points:
 ### Models
 
 ```bash
-export ORCHESTRATOR_MODEL=gpt-5.1      # Needs strong reasoning
+export ORCHESTRATOR_MODEL=gpt-5.5      # Needs strong reasoning
 export SPECIALIST_MODEL=gpt-5-mini    # Cost-effective for tools
 ```
 
 Per-agent overrides:
 ```bash
 export MARKET_DATA_MODEL=gpt-5-mini         # Override for specific agent
-export STRATEGY_MODEL=gpt-5.1               # Strategy uses orchestrator model by default
+export STRATEGY_MODEL=gpt-5.1               # Strategy default; cheaper than the hub's gpt-5.5 with comparable backtest output
 ```
 
 ### Prompts

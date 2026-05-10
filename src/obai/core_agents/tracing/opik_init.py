@@ -5,7 +5,7 @@ which provides automatic tracing of all agent spans to the Opik UI.
 
 Environment Variables (via AgentConfig):
     OPIK_ENABLED: Enable/disable Opik tracing (default: true)
-    OPIK_PROJECT: Opik project name (default: obai-eval)
+    OPIK_OBAI_PROJECT_NAME: Opik project name (default: obai-eval)
     OPIK_URL: Opik server URL (default: http://localhost:5173)
 """
 

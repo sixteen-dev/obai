@@ -1,6 +1,6 @@
 # Fundamentals MCP Server
 
-MCP server for company fundamental analysis with AI-enhanced educational context. Powered by FMP API and Qdrant vector search over financial PDFs.
+MCP server for company fundamental analysis. Powered by FMP API. Optional Qdrant vector search over financial PDFs is shipped but disabled by default (`QDRANT_ENABLED=false`).
 
 ## Features
 
@@ -11,7 +11,7 @@ MCP server for company fundamental analysis with AI-enhanced educational context
 - **SEC Filings**: 10-K, 10-Q, 8-K and other regulatory filings with direct links
 - **Insider Trading**: Corporate insider transactions (executives, directors, 10%+ shareholders)
 - **Revenue Segments**: Business line breakdown by product category
-- **Educational Context**: Vector search across financial PDFs (options, ETFs, bonds, etc.) via Qdrant
+- **Educational Context** (optional): Vector search across financial PDFs (options, ETFs, bonds, etc.) via Qdrant. Disabled by default; enable with `QDRANT_ENABLED=true`.
 - **Structured Logging**: JSON logs with structlog for observability
 
 ## Tools
@@ -40,7 +40,7 @@ Get company overview with optional industry context.
 ```
 
 ### `search_fundamentals`
-Search educational content from financial PDFs via Qdrant vector search.
+Search educational content from financial PDFs via Qdrant vector search. Only registered when `QDRANT_ENABLED=true`.
 
 ```json
 {

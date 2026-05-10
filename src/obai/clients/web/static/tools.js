@@ -18,7 +18,7 @@ class ToolTree {
         this.renderEmptyState();
     }
 
-    switchSession(sessionId) {
+    switchSession(sessionId, messages = null) {
         if (this.activeSessionId) {
             this.sessionHistory.set(this.activeSessionId, this.container.cloneNode(true));
         }
@@ -40,6 +40,11 @@ class ToolTree {
                 this.container.appendChild(saved.firstChild);
             }
             this.sessionHistory.delete(sessionId);
+            return;
+        }
+
+        if (messages && messages.length > 0) {
+            this.replayHistory(messages);
             return;
         }
 
@@ -199,6 +204,53 @@ class ToolTree {
             if (el.querySelector(".tool-spinner")) {
                 this.completeTool(callId, 0);
             }
+        }
+    }
+
+    replayHistory(messages) {
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return;
+        }
+
+        // Reset the empty-state container before rebuilding groups so
+        // replayed queries land in a clean tree.
+        this.container.textContent = "";
+        this.tools.clear();
+        this.currentGroup = null;
+        this.clearActiveAgent();
+
+        let lastUserText = "";
+        for (const msg of messages) {
+            if (msg.role === "user") {
+                lastUserText = msg.content || "";
+                continue;
+            }
+            if (msg.role !== "assistant" || !Array.isArray(msg.tool_data)) {
+                continue;
+            }
+
+            this.newQuery(lastUserText);
+            for (const evt of msg.tool_data) {
+                if (evt.type === "tool_start") {
+                    this.addTool(
+                        evt.call_id,
+                        evt.agent || "",
+                        evt.tool || "",
+                        evt.args || "",
+                        evt.parent_id || null,
+                        Boolean(evt.is_mcp)
+                    );
+                } else if (evt.type === "tool_complete") {
+                    this.completeTool(evt.call_id, evt.duration_ms || 0);
+                }
+            }
+            // Sweep any straggler spinners (e.g. older messages persisted
+            // before the bridge captured specialist tool_complete events).
+            this.completeAll();
+        }
+
+        if (!this.currentGroup) {
+            this.renderEmptyState();
         }
     }
 

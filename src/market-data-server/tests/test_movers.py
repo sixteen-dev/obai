@@ -38,9 +38,10 @@ class TestGetMovers:
         mock_client = AsyncMock()
         mock_client.get_stock_movers = AsyncMock(return_value=sample_movers_response)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -65,9 +66,10 @@ class TestGetMovers:
         mock_client.get_index_constituents = AsyncMock(return_value=constituents)
         mock_client.batch_quote = AsyncMock(return_value=quotes)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -92,9 +94,10 @@ class TestGetMovers:
         mock_client.get_index_constituents = AsyncMock(return_value=constituents)
         mock_client.batch_quote = AsyncMock(return_value=quotes)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -116,9 +119,10 @@ class TestGetMovers:
         mock_client.get_index_constituents = AsyncMock(return_value=constituents)
         mock_client.batch_quote = AsyncMock(return_value=quotes)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -137,9 +141,10 @@ class TestGetMovers:
         mock_client.get_index_constituents = AsyncMock(return_value=constituents)
         mock_client.batch_quote = AsyncMock(return_value=quotes)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -157,9 +162,10 @@ class TestGetMovers:
         mock_client.get_index_constituents = AsyncMock(return_value=constituents)
         mock_client.batch_quote = AsyncMock(return_value=quotes)
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -177,9 +183,10 @@ class TestGetMovers:
         mock_client = AsyncMock()
         mock_client.get_index_constituents = AsyncMock(return_value=[])
 
-        with patch("src.tools.movers.get_settings"), patch(
-            "src.tools.movers.FMPClient"
-        ) as mock_cls:
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 

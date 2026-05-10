@@ -32,6 +32,12 @@ class TestPredictionMarketsAgentInitialization:
         prompts_dir = Path(__file__).resolve().parents[1] / "prompts"
         return (prompts_dir / f"{name}.md").read_text()
 
+    @staticmethod
+    def _read_hub_skill(name: str) -> str:
+        """Read hub skill markdown directly from the repository."""
+        skills_dir = Path(__file__).resolve().parents[1] / "hub_skills"
+        return (skills_dir / name / "SKILL.md").read_text()
+
     def test_agent_creation(self) -> None:
         """Test agent can be created without errors."""
         agent = PredictionMarketsAgent()
@@ -87,15 +93,21 @@ class TestPredictionMarketsAgentInitialization:
         assert "include the tool-provided `market_url`" in prompt
         assert "Use `slug` only as a fallback when `market_url` is absent" in prompt
 
-    def test_central_hub_prompt_has_prediction_market_formatting_rules(self) -> None:
-        """Hub prompt should format prediction-market output with ID guardrails."""
-        prompt = self._read_prompt_file("central_hub")
-        assert "**Prediction-market synthesis**" in prompt
-        assert "light readability cleanup is allowed" in prompt
-        assert "Keep the human-facing analysis prominent" in prompt
-        assert "Do not show `condition_id` or `token_id` unless the user asks" in prompt
-        assert "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:" in prompt
-        assert "NEVER answer prediction-market questions directly" in prompt
+    def test_hub_prediction_market_skill_has_terminal_relay_rules(self) -> None:
+        """Hub skill should preserve prediction-market terminal output."""
+        skill = self._read_hub_skill("obai-prediction-market-routing")
+        assert "`prediction_market_analysis` is a terminal author" in skill
+        assert "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:" in skill
+        assert "do not write a summary, framing, or wrapper text" in skill
+        assert "The runtime emits the specialist's output to the user directly" in skill
+
+    def test_hub_prediction_market_skill_preserves_routing_identifiers(self) -> None:
+        """Hub skill should preserve Polymarket routing keys without exposing raw IDs."""
+        skill = self._read_hub_skill("obai-prediction-market-routing")
+        assert "preserve any tool-provided routing keys" in skill
+        assert "`market_url`, `slug`, `condition_id`, `token_id`" in skill
+        assert "`condition_id` and `token_id` are kept internal" in skill
+        assert "do not invent market URLs, slugs, prices, odds, or liquidity figures" in skill
 
     @pytest.mark.asyncio
     async def test_agent_initialize_without_mcp_server(self) -> None:

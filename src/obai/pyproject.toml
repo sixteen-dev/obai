@@ -19,20 +19,20 @@ exclude = [
 
 [project]
 name = "obai"
-version = "1.3.12"
+version = "1.4.0"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=2.15.0",
-    "openai-agents>=0.13.0,<0.14",
+    "openai-agents>=0.16.0",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "fastmcp>=2.14.3",
     "textual>=3.0.0",
     "typer>=0.12.0",
-    "opik>=1.7.0",
+    "opik>=2.0.23",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "websockets>=14.0",
@@ -111,8 +111,8 @@ testpaths = ["core_agents/tests"]
 
 [tool.uv]
 exclude-newer = "7 days"
-exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", requests = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days" }
-constraint-dependencies = ["requests>=2.33.0", "cryptography>=46.0.7", "pillow>=12.2.0", "python-multipart>=0.0.26", "authlib>=1.6.11"]
+exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", requests = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", openai-agents = "0 days", opik = "0 days" }
+constraint-dependencies = ["requests>=2.33.0", "cryptography>=46.0.7", "pillow>=12.2.0", "python-multipart>=0.0.27", "authlib>=1.6.11"]
 override-dependencies = ["litellm==1.83.7", "python-dotenv>=1.1.0"]
 
 [dependency-groups]

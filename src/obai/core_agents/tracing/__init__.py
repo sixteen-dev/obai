@@ -6,7 +6,7 @@ traced to the Opik UI for analysis and debugging.
 
 Configuration is via AgentConfig in core_agents.config:
     OPIK_ENABLED: Enable/disable Opik tracing (default: true)
-    OPIK_PROJECT: Opik project name (default: obai-eval)
+    OPIK_OBAI_PROJECT_NAME: Opik project name (default: obai-eval)
     OPIK_URL: Opik server URL (default: http://localhost:5173)
 
 Usage:

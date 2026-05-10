@@ -625,54 +625,122 @@ body {
     animation: blink 0.9s step-end infinite;
 }
 
-@keyframes blink {
-    50% {
-        opacity: 0;
-    }
+.thinking-trail {
+    width: min(100%, 800px);
+    margin: 4px 0 12px;
+    padding: 0;
+    border-left: 2px solid rgba(255, 255, 255, 0.10);
+    background: transparent;
 }
 
-.thinking-indicator {
+.thinking-trail-summary {
+    list-style: none;
+    cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    margin: 0 auto 20px;
-    padding: 10px 14px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.045);
-    backdrop-filter: blur(16px) saturate(130%);
-    -webkit-backdrop-filter: blur(16px) saturate(130%);
+    gap: 6px;
+    padding: 2px 10px;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    user-select: none;
+    transition: color 0.15s ease;
 }
 
-.thinking-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 1.2s ease-in-out infinite;
+.thinking-trail-summary::-webkit-details-marker {
+    display: none;
 }
 
-.thinking-dot:nth-child(2) {
+.thinking-trail-summary:hover {
+    color: var(--text);
+}
+
+.thinking-trail-chevron {
+    display: inline-block;
+    font-size: 14px;
+    line-height: 1;
+    transform: rotate(0deg);
+    transition: transform 0.18s ease;
+    opacity: 0.7;
+}
+
+.thinking-trail[open] .thinking-trail-chevron {
+    transform: rotate(90deg);
+}
+
+.thinking-trail-dots {
+    display: inline-flex;
+    margin-left: 1px;
+    color: var(--text-muted);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+
+.thinking-trail-dots span {
+    animation: thinking-trail-dot 1.4s ease-in-out infinite;
+    opacity: 0.3;
+}
+
+.thinking-trail-dots span:nth-child(2) {
     animation-delay: 0.18s;
 }
 
-.thinking-dot:nth-child(3) {
+.thinking-trail-dots span:nth-child(3) {
     animation-delay: 0.36s;
 }
 
-@keyframes pulse {
-    0%,
-    80%,
-    100% {
-        opacity: 0.28;
-        transform: scale(0.85);
+@keyframes thinking-trail-dot {
+    0%, 100% {
+        opacity: 0.3;
     }
-
-    40% {
+    50% {
         opacity: 1;
-        transform: scale(1);
+    }
+}
+
+.thinking-trail.is-done .thinking-trail-dots {
+    display: none;
+}
+
+.thinking-trail-list {
+    margin-top: 4px;
+    padding: 2px 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.thinking-line {
+    font-size: 12.5px;
+    line-height: 1.55;
+    font-style: italic;
+    color: var(--text-secondary);
+    opacity: 0.78;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    animation: thinking-line-in 0.22s ease both;
+}
+
+@keyframes thinking-line-in {
+    from {
+        opacity: 0;
+        transform: translateY(-2px);
+    }
+    to {
+        opacity: 0.78;
+        transform: none;
+    }
+}
+
+.thinking-trail + .message-bubble {
+    margin-top: 4px;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0;
     }
 }
 
@@ -815,7 +883,8 @@ body {
     color: var(--text-secondary);
 }
 
-.message-error .message-bubble {
+.message-error .message-bubble,
+.message-error-bubble {
     border-color: rgba(255, 98, 93, 0.2);
     background: rgba(255, 98, 93, 0.08);
     color: #ffc7c4;

@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from ..clients import FMPClient, QdrantVectorClient
+from ..config import get_settings
 from ..logging_config import get_logger, log_api_call, log_error, log_tool_invocation
 from ..response_filters import (
     filter_analyst_estimates,
@@ -86,8 +87,8 @@ async def get_fundamentals(
             "data": filtered_data,
         }
 
-        # Add educational context from vector search
-        if include_context:
+        # Add educational context from vector search (only when Qdrant is enabled)
+        if include_context and get_settings().qdrant_enabled:
             try:
                 async with QdrantVectorClient() as vectors:
                     query = f"How to analyze {statement_type} statement financial metrics"
@@ -179,8 +180,8 @@ async def get_company_profile(symbol: str, include_context: bool = False) -> dic
             "profile": profile,
         }
 
-        # Add sector/industry educational context
-        if include_context and profile.get("sector"):
+        # Add sector/industry educational context (only when Qdrant is enabled)
+        if include_context and profile.get("sector") and get_settings().qdrant_enabled:
             try:
                 async with QdrantVectorClient() as vectors:
                     query = f"Investing in {profile['sector']} sector companies"

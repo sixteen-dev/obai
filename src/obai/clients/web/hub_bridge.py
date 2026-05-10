@@ -130,6 +130,10 @@ class HubBridge:
             current_agent = "Central Hub"
             hub_analyzing = False
             hub_synthesizing = False
+            # Holds the text streamed since the last thinking_break (or query
+            # start). Becomes the final answer once the run completes; any
+            # text closed off by a hub tool_call_item was intermediate
+            # narration and is signalled to the UI via thinking_break.
             response_text = ""
             query_start = time.perf_counter()
             specialists_used: list[str] = []
@@ -198,6 +202,18 @@ class HubBridge:
                         item_type = getattr(item, "type", None)
 
                         if item_type == "tool_call_item":
+                            # Any text streamed up to this tool call was
+                            # intermediate narration ("loading skill",
+                            # "retrying handoff"), not the final answer.
+                            # Tell the UI to close out the current segment
+                            # as thinking and start a new one. Done outside
+                            # the raw_item check so a missing raw_item still
+                            # prevents narration from leaking into the saved
+                            # response.
+                            if response_text:
+                                yield {"type": "thinking_break"}
+                                response_text = ""
+
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", "unknown")
@@ -234,6 +250,17 @@ class HubBridge:
                                     tool_events.append(evt)
 
                         elif item_type == "tool_call_output_item":
+                            # text_delta events can arrive between a
+                            # tool_call_item and its tool_call_output_item
+                            # (the SDK emits the tool_call event before the
+                            # surrounding text deltas finish flushing). Treat
+                            # any text accumulated since the last reset as
+                            # narration so it doesn't leak into the saved
+                            # response.
+                            if response_text:
+                                yield {"type": "thinking_break"}
+                                response_text = ""
+
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
                                 call_id = (
@@ -243,11 +270,15 @@ class HubBridge:
                                 )
                                 if call_id:
                                     dur = self._tracker.complete(call_id)
-                                    yield {
+                                    tc_evt: dict[str, Any] = {
                                         "type": "tool_complete",
                                         "call_id": call_id,
                                         "duration_ms": dur if dur is not None else 0,
                                     }
+                                    yield tc_evt
+                                    # Persist completion alongside tool_start so
+                                    # replayed tool tree shows durations.
+                                    tool_events.append(tc_evt)
 
                         elif item_type == "message_output_item":
                             if isinstance(item, MessageOutputItem) and not response_text:
