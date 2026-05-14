@@ -98,6 +98,6 @@ class TestTruncateResponse:
         result_low = truncate_response(data, max_chars=50)
         assert "_truncated" in result_low
 
-    def test_default_max_chars_is_25000(self) -> None:
+    def test_default_max_chars_is_40000(self) -> None:
         """Test default max chars matches the module constant."""
-        assert MAX_RESPONSE_CHARS == 25000
+        assert MAX_RESPONSE_CHARS == 40000

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=2)
 
     # Response Limits
-    max_response_chars: int = Field(default=25000)
+    max_response_chars: int = Field(default=40000)
 
     # Logging
     log_level: str = Field(default="INFO")

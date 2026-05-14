@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Exa Defaults
     default_num_results: int = Field(default=8)
     max_highlight_chars: int = Field(default=4000)
-    max_response_chars: int = Field(default=25000)
+    max_response_chars: int = Field(default=40000)
 
     # Logging
     log_level: str = Field(default="INFO")

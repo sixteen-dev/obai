@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import httpx
 
-MAX_RESPONSE_CHARS = 25000
+MAX_RESPONSE_CHARS = 40000
 
 # Map HTTP status codes to user-friendly messages
 HTTP_ERROR_MESSAGES: dict[int, str] = {

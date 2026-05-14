@@ -549,7 +549,7 @@ body {
 }
 
 .message {
-    max-width: 820px;
+    max-width: min(1200px, 80%);
     margin: 0 auto 22px;
     animation: fadeUp 220ms ease;
 }
@@ -590,7 +590,7 @@ body {
 }
 
 .message-assistant .message-bubble {
-    width: min(100%, 800px);
+    width: 100%;
     padding: 0;
     border: none;
     background: transparent;
@@ -626,7 +626,7 @@ body {
 }
 
 .thinking-trail {
-    width: min(100%, 800px);
+    width: 100%;
     margin: 4px 0 12px;
     padding: 0;
     border-left: 2px solid rgba(255, 255, 255, 0.10);

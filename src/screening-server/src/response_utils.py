@@ -6,8 +6,8 @@ from typing import Any, cast
 
 import httpx
 
-# MCP best practice: limit responses to ~25,000 characters
-MAX_RESPONSE_CHARS = 25000
+# MCP best practice: limit responses to ~40,000 characters
+MAX_RESPONSE_CHARS = 40000
 
 # Map HTTP status codes to user-friendly messages
 HTTP_ERROR_MESSAGES: dict[int, str] = {
@@ -85,7 +85,7 @@ def truncate_response(data: dict[str, Any], max_chars: int = MAX_RESPONSE_CHARS)
 
     Args:
         data: Response dictionary to potentially truncate
-        max_chars: Maximum character limit (default: 25,000)
+        max_chars: Maximum character limit (default: 40,000)
 
     Returns:
         Original data if under limit, or truncated data with metadata
