@@ -116,6 +116,9 @@ INDICATOR_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "BBANDS": {
         "fn": ta.bbands,
+        # `std_dev` is fanned out to both nbdevup/nbdevdn in
+        # ``_build_talib_kwargs`` so the upper and lower bands stay
+        # symmetric for non-default band widths.
         "params": {"length": "timeperiod", "std_dev": "nbdevup"},
         "outputs": ["upper", "middle", "lower"],
         "output_scale": "price",
@@ -405,11 +408,7 @@ def _apply_talib_indicator(
     outputs: list[str] | None = registry_entry["outputs"]
     input_type = registry_entry.get("input_type")
 
-    # Build talib kwargs from config params
-    talib_kwargs: dict[str, Any] = {}
-    for config_key, talib_key in param_map.items():
-        if config_key in config.params:
-            talib_kwargs[talib_key] = config.params[config_key]
+    talib_kwargs = _build_talib_kwargs(indicator_type, param_map, config.params)
 
     # Check minimum data length for period-based indicators
     period = config.params.get("length", config.params.get("slow_length", 0))
@@ -423,6 +422,7 @@ def _apply_talib_indicator(
         input_type,
         config,
         talib_kwargs,
+        registry_entry=registry_entry,
     )
 
     # Handle multi-output vs single-output
@@ -432,12 +432,33 @@ def _apply_talib_indicator(
     return df.with_columns(expr.alias(config.id))
 
 
-def _build_indicator_expr(
+def _build_talib_kwargs(
+    indicator_type: str,
+    param_map: dict[str, str],
+    user_params: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate user-facing param names into talib kwargs.
+
+    Most indicators have a 1:1 mapping. Bollinger Bands is special: the user
+    provides one `std_dev`, which must be applied to both the upper and
+    lower band parameters so the bands stay symmetric.
+    """
+    talib_kwargs: dict[str, Any] = {}
+    for config_key, talib_key in param_map.items():
+        if config_key in user_params:
+            talib_kwargs[talib_key] = user_params[config_key]
+    if indicator_type == "BBANDS" and "std_dev" in user_params:
+        talib_kwargs["nbdevdn"] = user_params["std_dev"]
+    return talib_kwargs
+
+
+def _build_indicator_expr(  # noqa: PLR0913
     fn: Callable[..., Any],
     indicator_type: str,
     input_type: str | None,
     config: IndicatorConfig,
     talib_kwargs: dict[str, Any],
+    registry_entry: dict[str, Any] | None = None,
 ) -> pl.Expr:
     """Build the Polars expression for a talib indicator call.
 
@@ -462,7 +483,17 @@ def _build_indicator_expr(
         )
 
     if input_type == "dual":
-        second_col = config.params.get("second_source", config.source)
+        # Precedence: explicit user param > registry default > config.source.
+        # The registry's `second_source` carries each dual-input indicator's
+        # natural counterpart (e.g. BETA against `high`); falling all the way
+        # through to `config.source` would compare a column to itself and
+        # produce a tautology (beta=1, correl=1).
+        registry_default = (
+            registry_entry.get("second_source") if registry_entry else None
+        )
+        second_col = (
+            config.params.get("second_source") or registry_default or config.source
+        )
         return fn(  # type: ignore[no-any-return]
             pl.col(config.source),
             pl.col(second_col),

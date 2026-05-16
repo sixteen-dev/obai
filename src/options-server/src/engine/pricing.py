@@ -61,6 +61,23 @@ def _d2(d1_val: float, sigma: float, time: float) -> float:
     return d1_val - sigma * math.sqrt(time)
 
 
+_VALID_OPTION_TYPES = frozenset({"call", "put"})
+
+
+def _normalize_option_type(option_type: str) -> str:
+    """Return ``option_type`` lower-cased, raising on anything else.
+
+    Without this guard the pricing functions silently treat any
+    non-``"call"`` string as a put — a bad upstream argument flips the
+    payoff interpretation instead of failing loudly.
+    """
+    normalized = option_type.lower() if isinstance(option_type, str) else ""
+    if normalized not in _VALID_OPTION_TYPES:
+        msg = f"option_type must be 'call' or 'put'; got {option_type!r}"
+        raise ValueError(msg)
+    return normalized
+
+
 def _intrinsic(spot: float, strike: float, option_type: str) -> float:
     """Compute intrinsic value of an option.
 
@@ -72,7 +89,7 @@ def _intrinsic(spot: float, strike: float, option_type: str) -> float:
     Returns:
         Intrinsic value (floored at 0).
     """
-    if option_type == "call":
+    if _normalize_option_type(option_type) == "call":
         return max(spot - strike, 0.0)
     return max(strike - spot, 0.0)
 
@@ -98,6 +115,7 @@ def bs_price(
     Returns:
         Theoretical option price.
     """
+    option_type = _normalize_option_type(option_type)
     if time <= 0.0 or sigma <= 0.0:
         return _intrinsic(spot, strike, option_type)
 
@@ -131,6 +149,7 @@ def bs_greeks(
         Dict with keys: delta, gamma, theta, vega, rho.
         Vega and rho are per 1% move (divided by 100).
     """
+    option_type = _normalize_option_type(option_type)
     if time <= 0.0 or sigma <= 0.0:
         delta = 1.0 if option_type == "call" and spot > strike else 0.0
         if option_type == "put":

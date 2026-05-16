@@ -72,7 +72,21 @@ async def _resolve_weights(
 
     total_value = sum(market_values.values())
     if total_value == 0:
-        return [(p.symbol, 1.0 / len(positions)) for p in positions]
+        # Falling back to equal weights silently produces a *different*
+        # portfolio than the user supplied. Surface this loudly so the caller
+        # can surface "we couldn't price these holdings" instead of analyzing
+        # a fabricated portfolio.
+        missing = [
+            pos.symbol
+            for pos in positions
+            if market_values.get(pos.symbol, 0.0) <= 0
+        ]
+        msg = (
+            "Portfolio could not be analyzed: no quotes were available for "
+            f"{', '.join(missing) or 'any supplied symbol'}. Re-check the "
+            "symbols or supply percentage weights directly."
+        )
+        raise ValueError(msg)
 
     return [(sym, val / total_value) for sym, val in market_values.items()]
 

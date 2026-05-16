@@ -153,6 +153,13 @@ class AgentConfig(BaseSettings):
         default=None,
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
+    guardrail_model: str = Field(
+        default="gpt-5-mini",
+        description=(
+            "Model for input guardrail validation. Pick a small, cheap model — "
+            "guardrails run on every query."
+        ),
+    )
 
     # Reasoning effort and output verbosity. Two tiers, same shape as the
     # model fields above. Defaults live in code; not exposed via .env.

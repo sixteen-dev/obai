@@ -192,7 +192,9 @@ async def events_news_search_market_news_tool(
                 "time_range": time_range,
             },
         )
-        return format_api_error(e, "FMP")
+        # News search runs against Tavily, not FMP. Label the error with the
+        # correct provider so operators chase the right outage.
+        return format_api_error(e, "Tavily")
 
 
 @mcp.tool(
