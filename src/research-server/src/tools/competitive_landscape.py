@@ -34,30 +34,29 @@ async def research_competitive_landscape(
     """
     settings = get_settings()
     try:
-        client = ExaClient()
+        async with ExaClient() as client:
+            # Step 1: Discover competitor company pages
+            company_url = await _resolve_company_url(client, company_name)
+            competitors = []
+            if company_url:
+                competitors = await client.find_similar(
+                    url=company_url,
+                    num_results=5,
+                    exclude_source_domain=True,
+                    category="company",
+                )
 
-        # Step 1: Discover competitor company pages
-        company_url = await _resolve_company_url(client, company_name)
-        competitors = []
-        if company_url:
-            competitors = await client.find_similar(
-                url=company_url,
-                num_results=5,
-                exclude_source_domain=True,
-                category="company",
+            # Step 2: Find comparison/analysis articles
+            comparisons = await client.search(
+                query=(
+                    f"analysis comparing {company_name} against its competitors, "
+                    f"including market share, competitive advantages, and positioning"
+                ),
+                search_type="auto",
+                num_results=settings.default_num_results,
+                highlight_query=f"{company_name} market share competitive advantage moat",
+                start_published_date=_days_ago(days_back),
             )
-
-        # Step 2: Find comparison/analysis articles
-        comparisons = await client.search(
-            query=(
-                f"analysis comparing {company_name} against its competitors, "
-                f"including market share, competitive advantages, and positioning"
-            ),
-            search_type="auto",
-            num_results=settings.default_num_results,
-            highlight_query=f"{company_name} market share competitive advantage moat",
-            start_published_date=_days_ago(days_back),
-        )
 
         all_results = competitors + comparisons
         return {

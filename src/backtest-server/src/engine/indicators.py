@@ -468,6 +468,7 @@ def _build_indicator_expr(  # noqa: PLR0913
         input_type: Registry input_type ("ohlc", "dual", or None).
         config: Indicator configuration.
         talib_kwargs: Mapped talib keyword arguments.
+        registry_entry: Registry metadata for the indicator (defaults, etc.).
 
     Returns:
         Polars expression for the indicator computation.
@@ -488,12 +489,8 @@ def _build_indicator_expr(  # noqa: PLR0913
         # natural counterpart (e.g. BETA against `high`); falling all the way
         # through to `config.source` would compare a column to itself and
         # produce a tautology (beta=1, correl=1).
-        registry_default = (
-            registry_entry.get("second_source") if registry_entry else None
-        )
-        second_col = (
-            config.params.get("second_source") or registry_default or config.source
-        )
+        registry_default = registry_entry.get("second_source") if registry_entry else None
+        second_col = config.params.get("second_source") or registry_default or config.source
         return fn(  # type: ignore[no-any-return]
             pl.col(config.source),
             pl.col(second_col),

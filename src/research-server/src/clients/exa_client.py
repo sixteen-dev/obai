@@ -137,6 +137,14 @@ class ExaClient:
         """Close the HTTP client."""
         await self._client.aclose()
 
+    async def __aenter__(self) -> ExaClient:
+        """Enter async context — caller gets the live client."""
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        """Exit async context — always close the underlying HTTP client."""
+        await self.close()
+
     async def search(
         self,
         query: str,

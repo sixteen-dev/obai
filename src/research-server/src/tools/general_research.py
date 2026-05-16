@@ -30,14 +30,14 @@ async def research_general(
     """
     settings = get_settings()
     try:
-        client = ExaClient()
-        results = await client.search(
-            query=query,
-            search_type="auto",
-            num_results=min(10, settings.default_num_results + 2),
-            highlight_query=query,
-            start_published_date=_days_ago(days_back),
-        )
+        async with ExaClient() as client:
+            results = await client.search(
+                query=query,
+                search_type="auto",
+                num_results=min(10, settings.default_num_results + 2),
+                highlight_query=query,
+                start_published_date=_days_ago(days_back),
+            )
         return {
             "query": query,
             "symbol": symbol.upper() if symbol else None,

@@ -46,18 +46,18 @@ async def research_product_sentiment(
     settings = get_settings()
     product_term = product or "products"
     try:
-        client = ExaClient()
-        results = await client.search(
-            query=(
-                f"user reviews and customer feedback about {company_name} {product_term}, "
-                f"including complaints, praise, and overall sentiment"
-            ),
-            search_type="neural",
-            num_results=min(10, settings.default_num_results + 2),
-            highlight_query=f"{company_name} {product_term} user experience quality issues",
-            start_published_date=_days_ago(days_back),
-            exclude_domains=_NEWS_DOMAINS,
-        )
+        async with ExaClient() as client:
+            results = await client.search(
+                query=(
+                    f"user reviews and customer feedback about {company_name} {product_term}, "
+                    f"including complaints, praise, and overall sentiment"
+                ),
+                search_type="neural",
+                num_results=min(10, settings.default_num_results + 2),
+                highlight_query=f"{company_name} {product_term} user experience quality issues",
+                start_published_date=_days_ago(days_back),
+                exclude_domains=_NEWS_DOMAINS,
+            )
         return {
             "symbol": symbol.upper(),
             "company_name": company_name,

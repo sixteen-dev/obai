@@ -76,11 +76,7 @@ async def _resolve_weights(
         # portfolio than the user supplied. Surface this loudly so the caller
         # can surface "we couldn't price these holdings" instead of analyzing
         # a fabricated portfolio.
-        missing = [
-            pos.symbol
-            for pos in positions
-            if market_values.get(pos.symbol, 0.0) <= 0
-        ]
+        missing = [pos.symbol for pos in positions if market_values.get(pos.symbol, 0.0) <= 0]
         msg = (
             "Portfolio could not be analyzed: no quotes were available for "
             f"{', '.join(missing) or 'any supplied symbol'}. Re-check the "

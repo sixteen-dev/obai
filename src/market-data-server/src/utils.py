@@ -60,9 +60,7 @@ def retry_async(
                         raise
                     if attempt >= max_attempts:
                         raise
-                    delay = initial_delay * (backoff ** (attempt - 1)) + random.uniform(
-                        0, jitter
-                    )
+                    delay = initial_delay * (backoff ** (attempt - 1)) + random.uniform(0, jitter)
                     await asyncio.sleep(delay)
                     attempt += 1
 
