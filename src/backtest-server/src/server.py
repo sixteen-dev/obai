@@ -992,6 +992,33 @@ def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
             last_valid = float(arr[i])
 
 
+async def _resolve_benchmark_df(  # noqa: PLR0913
+    downloader: Any,
+    benchmark_sym: str | None,
+    start_date: str,
+    end_date: str,
+    timeframe: str,
+    symbol_dfs: dict[str, Any],
+) -> Any | None:
+    """Return the benchmark equity DataFrame, reusing universe data if possible.
+
+    Strategies that trade SPY/QQQ alongside other names should still see
+    benchmark-relative metrics; pulling the benchmark from the universe
+    download avoids an extra provider call.
+    """
+    if not benchmark_sym:
+        return None
+    if benchmark_sym in symbol_dfs:
+        return symbol_dfs[benchmark_sym]
+    bench_dfs = await downloader.ensure_data(
+        symbols=[benchmark_sym],
+        start_date=start_date,
+        end_date=end_date,
+        timeframe=timeframe,
+    )
+    return bench_dfs.get(benchmark_sym)
+
+
 async def _execute_strategy(  # noqa: PLR0915
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
@@ -1017,18 +1044,14 @@ async def _execute_strategy(  # noqa: PLR0915
         timeframe,
     )
 
-    # Load benchmark data if configured
-    benchmark_df = None
-    benchmark_sym = strategy.universe.benchmark
-    if benchmark_sym and benchmark_sym not in symbol_dfs:
-        bench_dfs = await downloader.ensure_data(
-            symbols=[benchmark_sym],
-            start_date=strategy.data_config.start_date,
-            end_date=strategy.data_config.end_date,
-            timeframe=timeframe,
-        )
-        if benchmark_sym in bench_dfs:
-            benchmark_df = bench_dfs[benchmark_sym]
+    benchmark_df = await _resolve_benchmark_df(
+        downloader,
+        strategy.universe.benchmark,
+        strategy.data_config.start_date,
+        strategy.data_config.end_date,
+        timeframe,
+        symbol_dfs,
+    )
 
     exec_cfg = strategy.execution_config
     config = BacktestConfig(
@@ -1036,6 +1059,7 @@ async def _execute_strategy(  # noqa: PLR0915
         commission_pct=exec_cfg.commission_pct,
         timeframe=timeframe,
         volume_scaled_slippage=exec_cfg.volume_scaled_slippage,
+        initial_capital=exec_cfg.initial_capital,
     )
 
     all_warnings: list[str] = list(data_warnings)
@@ -1110,6 +1134,7 @@ async def _execute_strategy(  # noqa: PLR0915
                 timeframe=config.timeframe,
                 volume_scaled_slippage=config.volume_scaled_slippage,
                 spread_estimates=spread_arr,
+                initial_capital=config.initial_capital,
             )
             eq_curve, sym_trades = run_backtest(
                 sym_df,

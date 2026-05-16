@@ -7,6 +7,7 @@ Server restarts don't reset counters.
 Risk limits loaded from environment variables with sensible defaults.
 """
 
+import math
 import os
 
 from .alpaca_client import AlpacaClient
@@ -98,10 +99,12 @@ class RiskChecker:
         Args:
             symbol: Ticker symbol.
             side: 'buy' or 'sell'.
-            qty: Number of shares.
+            qty: Number of shares (must be > 0 and finite).
             limit_price: Price estimate for position size calculation.
-                Required for buy orders on new positions (no existing holding).
-                For existing positions, falls back to current_price if omitted.
+                Required for buy orders on new positions and for sells that
+                exceed the existing long quantity (which open or grow a
+                short). For existing same-direction positions, falls back
+                to ``current_price`` if omitted.
 
         Returns:
             RiskResult with allowed status and rejection reason.
@@ -110,6 +113,17 @@ class RiskChecker:
             AlpacaClientError: If Alpaca API calls fail.
 
         """
+        qty_reason = _validate_qty(qty)
+        if qty_reason:
+            _logger.warning(
+                "risk_check_rejected",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                reason=qty_reason,
+            )
+            return RiskResult(allowed=False, rejection_reason=qty_reason)
+
         account = self._client.get_account()
         positions = self._client.get_positions()
         todays_orders = self._client.get_todays_filled_orders()
@@ -145,62 +159,153 @@ class RiskChecker:
             )
             return RiskResult(allowed=False, rejection_reason=reason)
 
-        # Checks 3 & 4 only apply to buy orders
-        if side.lower() == "buy" and account.equity > 0:
-            # Estimate order cost
-            existing = next(
-                (p for p in positions if p.symbol.upper() == symbol.upper()),
-                None,
+        if account.equity <= 0:
+            _logger.info("risk_check_passed", symbol=symbol, side=side, qty=qty)
+            return RiskResult(allowed=True, rejection_reason=None)
+
+        existing = next(
+            (p for p in positions if p.symbol.upper() == symbol.upper()),
+            None,
+        )
+        sizing = _sized_order(side, qty, limit_price, existing)
+        if sizing.rejection_reason:
+            _logger.warning(
+                "risk_check_rejected",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                reason=sizing.rejection_reason,
             )
-            price_est = limit_price or (existing.current_price if existing else 0.0)
+            return RiskResult(allowed=False, rejection_reason=sizing.rejection_reason)
 
-            if price_est <= 0:
-                reason = (
-                    "Cannot estimate position size: no limit_price provided "
-                    "and no existing position to infer price from. "
-                    "Pass --limit-price for market orders on new positions."
-                )
-                _logger.warning(
-                    "risk_check_rejected",
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    reason=reason,
-                )
-                return RiskResult(allowed=False, rejection_reason=reason)
+        # Pure reductions (sell within existing long, buy-to-cover within
+        # existing short) do not grow exposure; skip size/exposure checks.
+        if sizing.new_position_notional <= 0:
+            _logger.info("risk_check_passed", symbol=symbol, side=side, qty=qty)
+            return RiskResult(allowed=True, rejection_reason=None)
 
-            order_cost = qty * price_est
-            existing_value = existing.market_value if existing else 0.0
-            total_position = existing_value + order_cost
+        # Check 3: Position size — applies to long and short alike.
+        position_pct = sizing.new_position_notional / account.equity * 100
+        if position_pct > self.max_position_pct:
+            reason = (
+                f"Position would be {position_pct:.1f}% of equity "
+                f"(max {self.max_position_pct}%)"
+            )
+            _logger.warning(
+                "risk_check_rejected",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                reason=reason,
+            )
+            return RiskResult(allowed=False, rejection_reason=reason)
 
-            # Check 3: Position size
-            position_pct = total_position / account.equity * 100
-            if position_pct > self.max_position_pct:
-                reason = (
-                    f"Position would be {position_pct:.1f}% of equity "
-                    f"(max {self.max_position_pct}%)"
-                )
-                _logger.warning(
-                    "risk_check_rejected",
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    reason=reason,
-                )
-                return RiskResult(allowed=False, rejection_reason=reason)
-
-            # Check 4: Portfolio exposure
-            new_exposure_pct = (total_exposure + order_cost) / account.equity * 100
-            if new_exposure_pct > self.max_exposure_pct:
-                reason = f"Exposure would be {new_exposure_pct:.1f}% (max {self.max_exposure_pct}%)"
-                _logger.warning(
-                    "risk_check_rejected",
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    reason=reason,
-                )
-                return RiskResult(allowed=False, rejection_reason=reason)
+        # Check 4: Portfolio exposure
+        new_exposure_pct = (total_exposure + sizing.added_exposure) / account.equity * 100
+        if new_exposure_pct > self.max_exposure_pct:
+            reason = f"Exposure would be {new_exposure_pct:.1f}% (max {self.max_exposure_pct}%)"
+            _logger.warning(
+                "risk_check_rejected",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                reason=reason,
+            )
+            return RiskResult(allowed=False, rejection_reason=reason)
 
         _logger.info("risk_check_passed", symbol=symbol, side=side, qty=qty)
         return RiskResult(allowed=True, rejection_reason=None)
+
+
+class _OrderSizing:
+    """Resolved sizing for an order: notional, added exposure, or rejection.
+
+    `new_position_notional` is the dollar value of the resulting position on
+    the side that grows (long for buys-on-flat-or-long, short for sells past
+    existing long). `added_exposure` is the increment to gross exposure.
+    `rejection_reason` carries any pricing-failure message so the caller can
+    emit a uniform reject.
+    """
+
+    __slots__ = ("new_position_notional", "added_exposure", "rejection_reason")
+
+    def __init__(
+        self,
+        new_position_notional: float,
+        added_exposure: float,
+        rejection_reason: str | None,
+    ) -> None:
+        self.new_position_notional = new_position_notional
+        self.added_exposure = added_exposure
+        self.rejection_reason = rejection_reason
+
+
+def _validate_qty(qty: float) -> str | None:
+    """Return a rejection reason if qty is not a positive finite number."""
+    if not math.isfinite(qty):
+        return "Order qty must be a finite number"
+    if qty <= 0:
+        return "Order qty must be greater than zero"
+    return None
+
+
+def _sized_order(
+    side: str,
+    qty: float,
+    limit_price: float | None,
+    existing: object,
+) -> _OrderSizing:
+    """Compute the new-position notional and added exposure for an order.
+
+    A buy grows long exposure (or reduces a short). A sell reduces existing
+    long up to the held quantity; any excess opens or grows a short and is
+    treated as new risk-checked exposure on the short side.
+    """
+    side_lc = side.lower()
+    existing_qty = float(getattr(existing, "qty", 0.0) or 0.0)
+    existing_side = str(getattr(existing, "side", "long") or "long").lower()
+    existing_long = existing_qty if existing_side == "long" else 0.0
+    existing_short = existing_qty if existing_side == "short" else 0.0
+    existing_value = float(getattr(existing, "market_value", 0.0) or 0.0)
+    current_price = float(getattr(existing, "current_price", 0.0) or 0.0)
+
+    if side_lc == "buy":
+        new_long_qty = qty - existing_short
+        if new_long_qty <= 0:
+            return _OrderSizing(0.0, 0.0, None)
+        price = limit_price if limit_price and limit_price > 0 else current_price
+        if price <= 0:
+            return _OrderSizing(
+                0.0,
+                0.0,
+                (
+                    "Cannot estimate position size: no limit_price provided "
+                    "and no existing position to infer price from. "
+                    "Pass --limit-price for market orders on new positions."
+                ),
+            )
+        added_exposure = new_long_qty * price
+        new_position_notional = abs(existing_value) + added_exposure if existing_long else added_exposure
+        return _OrderSizing(new_position_notional, added_exposure, None)
+
+    if side_lc == "sell":
+        new_short_qty = qty - existing_long
+        if new_short_qty <= 0:
+            return _OrderSizing(0.0, 0.0, None)
+        price = limit_price if limit_price and limit_price > 0 else current_price
+        if price <= 0:
+            return _OrderSizing(
+                0.0,
+                0.0,
+                (
+                    "Cannot estimate short-position size: no limit_price "
+                    "provided and no existing position to infer price from. "
+                    "Pass --limit-price for sells that exceed the existing "
+                    "long quantity (these open or grow a short)."
+                ),
+            )
+        added_exposure = new_short_qty * price
+        new_position_notional = abs(existing_value) + added_exposure if existing_short else added_exposure
+        return _OrderSizing(new_position_notional, added_exposure, None)
+
+    return _OrderSizing(0.0, 0.0, f"Unsupported order side: {side}")

@@ -94,17 +94,24 @@ class TestCheckOrderAllowed:
         assert result.allowed is True
         assert result.rejection_reason is None
 
-    def test_sell_order_always_passes_size_checks(self, alpaca_client: AlpacaClient) -> None:
-        """Sell orders skip position size and exposure checks."""
+    def test_sell_within_existing_long_passes_size_checks(
+        self, alpaca_client: AlpacaClient
+    ) -> None:
+        """Selling within an existing long is a pure reduction — no size check."""
         alpaca_client._client.get_account.return_value = FakeAccount(
             equity="100000.00",
             last_equity="100000.00",
             long_market_value="90000.00",  # 90% exposure
         )
-        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_all_positions.return_value = [
+            FakePosition(
+                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
+            ),
+        ]
         alpaca_client._client.get_orders.return_value = []
 
         checker = RiskChecker(alpaca_client)
+        # Existing 100 long shares; selling all 100 stays within long quantity.
         result = checker.check_order("AAPL", "sell", 100, limit_price=200.0)
 
         assert result.allowed is True
@@ -437,11 +444,33 @@ class TestMarketOrderNoPriceEstimate:
 
         assert result.allowed is True
 
-    def test_sell_order_unaffected_by_price_estimate(
+    def test_sell_within_existing_long_no_price_estimate(
         self,
         alpaca_client: AlpacaClient,
     ) -> None:
-        """Sell orders skip position size checks entirely — no price needed."""
+        """Sell within an existing long needs no price estimate (pure reduction)."""
+        alpaca_client._client.get_account.return_value = FakeAccount(
+            equity="100000.00",
+            last_equity="100000.00",
+        )
+        alpaca_client._client.get_all_positions.return_value = [
+            FakePosition(
+                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
+            ),
+        ]
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        # Existing 100 long; selling 50 is a reduction, no short side opens.
+        result = checker.check_order("AAPL", "sell", 50)
+
+        assert result.allowed is True
+
+    def test_rejects_sell_without_position_and_without_price(
+        self,
+        alpaca_client: AlpacaClient,
+    ) -> None:
+        """A sell with no existing long *and* no price would open an unbounded short."""
         alpaca_client._client.get_account.return_value = FakeAccount(
             equity="100000.00",
             last_equity="100000.00",
@@ -452,7 +481,8 @@ class TestMarketOrderNoPriceEstimate:
         checker = RiskChecker(alpaca_client)
         result = checker.check_order("AAPL", "sell", 10000)
 
-        assert result.allowed is True
+        assert result.allowed is False
+        assert "short-position" in (result.rejection_reason or "")
 
 
 class TestAlpacaStringCasting:
@@ -482,6 +512,112 @@ class TestAlpacaStringCasting:
         assert status.daily_pnl_pct <= 0  # small loss (rounds to -0.0)
         assert isinstance(status.current_exposure_pct, float)
         assert status.current_exposure_pct > 0
+
+
+class TestShortSideRiskChecks:
+    """Sells that exceed the existing long quantity open or grow a short — the
+    same size and exposure ceilings must apply on that side."""
+
+    def test_rejects_short_that_breaches_position_limit(
+        self,
+        alpaca_client: AlpacaClient,
+    ) -> None:
+        """A sell with no existing long is a new short — position limit applies."""
+        alpaca_client._client.get_account.return_value = FakeAccount(
+            equity="100000.00",
+            last_equity="100000.00",
+            long_market_value="0.00",
+        )
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        # 60 * $200 = $12k = 12% short notional, breaches 10% position limit.
+        result = checker.check_order("AAPL", "sell", 60, limit_price=200.0)
+
+        assert result.allowed is False
+        assert "Position would be" in (result.rejection_reason or "")
+
+    def test_rejects_short_that_breaches_exposure_limit(
+        self,
+        alpaca_client: AlpacaClient,
+    ) -> None:
+        """Sell adding short exposure beyond max_exposure_pct is rejected."""
+        alpaca_client._client.get_account.return_value = FakeAccount(
+            equity="100000.00",
+            last_equity="100000.00",
+            long_market_value="88000.00",  # already 88% gross
+        )
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        # 25 * $200 = $5k short would push gross to 93% > 90%.
+        result = checker.check_order("XYZ", "sell", 25, limit_price=200.0)
+
+        assert result.allowed is False
+        assert "Exposure would be" in (result.rejection_reason or "")
+
+    def test_sell_exceeding_existing_long_only_checks_excess_short(
+        self,
+        alpaca_client: AlpacaClient,
+    ) -> None:
+        """Selling 150 of 100 held flips to a 50-share short — only excess
+        contributes to new short risk."""
+        alpaca_client._client.get_account.return_value = FakeAccount(
+            equity="100000.00",
+            last_equity="100000.00",
+            long_market_value="20000.00",
+        )
+        alpaca_client._client.get_all_positions.return_value = [
+            FakePosition(
+                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
+            ),
+        ]
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        # 50 excess * $200 = $10k = 10% — exactly at max_position_pct, passes.
+        result = checker.check_order("AAPL", "sell", 150, limit_price=200.0)
+
+        assert result.allowed is True
+
+
+class TestQtyValidation:
+    """The risk layer must reject non-positive and non-finite quantities."""
+
+    def test_rejects_zero_qty(self, alpaca_client: AlpacaClient) -> None:
+        alpaca_client._client.get_account.return_value = FakeAccount()
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        result = checker.check_order("AAPL", "buy", 0, limit_price=200.0)
+
+        assert result.allowed is False
+        assert "greater than zero" in (result.rejection_reason or "")
+
+    def test_rejects_negative_qty(self, alpaca_client: AlpacaClient) -> None:
+        alpaca_client._client.get_account.return_value = FakeAccount()
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        result = checker.check_order("AAPL", "buy", -5, limit_price=200.0)
+
+        assert result.allowed is False
+        assert "greater than zero" in (result.rejection_reason or "")
+
+    def test_rejects_non_finite_qty(self, alpaca_client: AlpacaClient) -> None:
+        alpaca_client._client.get_account.return_value = FakeAccount()
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        checker = RiskChecker(alpaca_client)
+        result = checker.check_order("AAPL", "buy", float("nan"), limit_price=200.0)
+
+        assert result.allowed is False
+        assert "finite" in (result.rejection_reason or "")
 
 
 class TestZeroEquityEdgeCase:

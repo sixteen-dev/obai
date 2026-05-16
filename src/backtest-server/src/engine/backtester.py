@@ -208,6 +208,11 @@ class BacktestConfig:
     timeframe: str = "daily"  # Phase 3: threaded through
     volume_scaled_slippage: bool = False
     spread_estimates: np.ndarray[Any, np.dtype[np.float64]] | None = None
+    # Starting capital for the run. Used to seed the equity curve so dollar
+    # P&L, position sizing, and drawdown match the strategy's
+    # `execution_config.initial_capital`. Default mirrors
+    # ``ExecutionConfig.initial_capital``.
+    initial_capital: float = 100_000.0
 
 
 def run_backtest(
@@ -253,7 +258,7 @@ def _execute_backtest(
     )
 
     n = len(market.dates)
-    equity = np.ones(n, dtype=np.float64) * 100_000.0
+    equity = np.ones(n, dtype=np.float64) * float(cfg.initial_capital)
     trades: list[Trade] = []
 
     # Parse no_entry_after cutoff time if configured
@@ -581,6 +586,7 @@ def run_multi_symbol_backtest(
             timeframe=cfg.timeframe,
             volume_scaled_slippage=cfg.volume_scaled_slippage,
             spread_estimates=cfg.spread_estimates,
+            initial_capital=cfg.initial_capital,
         )
         eq_curve, trades = run_backtest(
             df=sym_df,

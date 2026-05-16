@@ -268,20 +268,25 @@ def _compute_bench_metrics(
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
     risk_free_rate: float = RISK_FREE_RATE,
 ) -> _BenchmarkStats:
-    """Compute benchmark-relative metrics."""
+    """Compute benchmark-relative metrics.
+
+    Strategy and benchmark returns are aligned by date — not by array index —
+    so holidays, half-days, or other calendar gaps in the benchmark do not
+    silently misalign beta/alpha/IR with the strategy's return series.
+    """
     empty = _BenchmarkStats("", 0.0, 0.0, 0.0, 0.0, 0.0)
     if benchmark_df is None or benchmark_df.is_empty():
         return empty
 
     bench_eq = benchmark_df["close"].to_numpy().astype(np.float64)
-    bench_ret = np.diff(bench_eq) / bench_eq[:-1]
+    bench_dates_all = benchmark_df["date"].to_list()
 
-    min_len = min(len(strategy_returns), len(bench_ret))
-    strat_r = strategy_returns[:min_len]
-    bench_r = bench_ret[:min_len]
+    strat_r, bench_r, _aligned_dates = _align_returns_by_date(
+        strategy_returns, dates, bench_eq, bench_dates_all
+    )
 
-    total = float(bench_eq[-1] / bench_eq[0] - 1) * 100
-    cagr = _compute_cagr(bench_eq, dates)
+    total = float(bench_eq[-1] / bench_eq[0] - 1) * 100 if len(bench_eq) >= MIN_DATA_POINTS else 0.0
+    cagr = _compute_cagr(bench_eq, bench_dates_all)
     beta = _compute_beta(strat_r, bench_r)
     alpha = _compute_alpha(strat_r, bench_r, beta, bars_per_year, risk_free_rate)
     ir = _compute_information_ratio(strat_r, bench_r, bars_per_year)
@@ -298,6 +303,50 @@ def _compute_bench_metrics(
         alpha_pct=round(alpha, 4),
         beta=round(beta, 4),
         information_ratio=round(ir, 4),
+    )
+
+
+def _align_returns_by_date(
+    strategy_returns: np.ndarray[Any, np.dtype[np.float64]],
+    strategy_dates: list[Any],
+    bench_equity: np.ndarray[Any, np.dtype[np.float64]],
+    bench_dates: list[Any],
+) -> tuple[
+    np.ndarray[Any, np.dtype[np.float64]],
+    np.ndarray[Any, np.dtype[np.float64]],
+    list[Any],
+]:
+    """Align strategy and benchmark return series by explicit date keys.
+
+    Returns are paired on the dates present in both series. The function
+    returns the aligned strategy returns, the aligned benchmark returns, and
+    the matched benchmark dates (for downstream CAGR computation).
+    """
+    # `returns = diff(equity)/equity[:-1]`, so the i-th return corresponds to
+    # the i+1-th date in the equity series. Mirror that for the benchmark.
+    strat_return_dates = strategy_dates[1:] if len(strategy_dates) > 1 else []
+    bench_return_dates = bench_dates[1:] if len(bench_dates) > 1 else []
+    if len(bench_equity) < MIN_DATA_POINTS:
+        empty = np.array([], dtype=np.float64)
+        return empty, empty, []
+    bench_returns = np.diff(bench_equity) / bench_equity[:-1]
+
+    strat_index = {d: i for i, d in enumerate(strat_return_dates)}
+    aligned_strat: list[float] = []
+    aligned_bench: list[float] = []
+    aligned_dates: list[Any] = []
+    for j, bench_date in enumerate(bench_return_dates):
+        i = strat_index.get(bench_date)
+        if i is None or i >= len(strategy_returns):
+            continue
+        aligned_strat.append(float(strategy_returns[i]))
+        aligned_bench.append(float(bench_returns[j]))
+        aligned_dates.append(bench_date)
+
+    return (
+        np.array(aligned_strat, dtype=np.float64),
+        np.array(aligned_bench, dtype=np.float64),
+        aligned_dates,
     )
 
 
