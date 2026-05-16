@@ -36,6 +36,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--time-in-force", default="day", choices=["day", "gtc", "opg", "cls", "ioc", "fok"]
     )
+    parser.add_argument(
+        "--allow-after-hours",
+        action="store_true",
+        help=(
+            "Submit even if the market is closed. Default is to reject — "
+            "agent reasoning steps can miss this otherwise, and queued "
+            "market orders execute at the next open at unpredictable prices."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -54,6 +63,24 @@ def main() -> None:
     try:
         client = AlpacaClient()
         risk_checker = RiskChecker(client)
+
+        if not args.allow_after_hours:
+            clock = client.get_clock()
+            if not clock.get("is_open"):
+                print(
+                    json.dumps(
+                        {
+                            "error": (
+                                "Market is closed. Pass --allow-after-hours "
+                                "to queue the order, or wait for the next "
+                                "open."
+                            ),
+                            "next_open": str(clock.get("next_open", "")),
+                            "allowed": False,
+                        }
+                    )
+                )
+                sys.exit(1)
 
         # Pre-trade risk check
         risk_result = risk_checker.check_order(

@@ -61,7 +61,10 @@ async def get_candles(
         Exception: If candle fetch fails
     """
     try:
-        effective_limit = min(limit, MAX_LIMIT)
+        # Clamp lower bounds — negative limit/offset would silently produce
+        # surprising reverse slices instead of a clear error.
+        effective_limit = max(1, min(int(limit), MAX_LIMIT))
+        offset = max(0, int(offset))
         settings = get_settings()
         async with FMPClient(settings) as client:
             if interval == "daily":

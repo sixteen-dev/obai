@@ -96,6 +96,12 @@ testpaths = [
     "src/fundamentals-server/tests",
     "src/market-data-server/tests",
     "src/events-news-server/tests",
+    "src/backtest-server/tests",
+    "src/portfolio-server/tests",
+    "src/research-server/tests",
+    "src/prediction-markets-server/tests",
+    "src/obai/core_agents/tests",
+    "skills/autotrader/tests",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

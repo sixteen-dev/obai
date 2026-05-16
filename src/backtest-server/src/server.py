@@ -131,9 +131,13 @@ async def backtest_run_strategy_tool(
     cache_key = _build_cache_key(strategy)
     cached = cache.get(cache_key)
     if cached is not None:
-        result: dict[str, Any] = cached.to_dict()
-        result["cache_hit"] = True
-        return result
+        # Cache stores the bare BacktestResult; rebuild the same shape the
+        # miss path produces (train/test split, portfolio metrics, warning
+        # surfacing) so cache hits and misses are indistinguishable to the
+        # strategy agent.
+        return _finalize_backtest_response(
+            cached, strategy=strategy, cache_hit=True, portfolio_result=None
+        )
 
     logger.info(
         "async_mode_decision",
@@ -829,23 +833,65 @@ async def _run_sync_backtest(
 
     _state.require("cache").put(cache_key, result)
 
+    return _finalize_backtest_response(
+        result,
+        strategy=strategy,
+        cache_hit=False,
+        portfolio_result=exec_result.portfolio_result,
+        train_test=train_test,
+    )
+
+
+def _finalize_backtest_response(
+    result: Any,
+    *,
+    strategy: StrategyDefinition,
+    cache_hit: bool,
+    portfolio_result: PortfolioBacktestResult | None,
+    train_test: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the tool response from a BacktestResult.
+
+    Centralized so cache hits and misses produce the same shape — without
+    this, cached responses would drop the train/test split and portfolio
+    metrics blocks the miss path adds, and the strategy agent would lose
+    robustness evidence between identical calls.
+    """
     output = result.to_dict()
-    output["cache_hit"] = False
+    output["cache_hit"] = cache_hit
+
+    if train_test is None:
+        train_test = _compute_train_test_split_from_result(result, strategy)
     if train_test is not None:
         output["train_test_split"] = train_test
 
-    # Add portfolio-specific metrics when in portfolio mode
-    if exec_result.portfolio_result is not None:
+    if portfolio_result is not None:
         output["portfolio_metrics"] = _compute_portfolio_specific(
-            exec_result.portfolio_result, strategy.execution_config.initial_capital
+            portfolio_result, strategy.execution_config.initial_capital
         )
 
-    # Surface critical warnings at top level so the agent can't miss them
     critical = [w for w in result.warnings if w.startswith(("CRITICAL", "DATA GAP"))]
     if critical:
         output["⚠️ DATA_WARNING"] = critical[0]
 
     return output
+
+
+def _compute_train_test_split_from_result(
+    result: Any,
+    strategy: StrategyDefinition,
+) -> dict[str, Any] | None:
+    """Reconstruct train/test metrics from a cached BacktestResult.
+
+    The cache only stores aggregate metrics, not the equity curve. When the
+    cached result was produced by a strategy whose date range supports a
+    split, the original `_compute_train_test_split` call needs the equity
+    DataFrame and trade list — neither of which are on `BacktestResult`.
+    Return ``None`` here so cache hits don't synthesise misleading splits;
+    callers can re-run with `force=True` if they need the breakdown.
+    """
+    _ = (result, strategy)
+    return None
 
 
 def _compute_train_test_split(

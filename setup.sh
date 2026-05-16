@@ -349,7 +349,7 @@ if [ "$SKIP_MCP" = false ]; then
             ok "Pre-built images pulled successfully"
         else
             warn "Could not pull pre-built images — building locally"
-            info "Building 8 MCP server images (this may take a few minutes on first run)..."
+            info "Building 9 MCP server images (this may take a few minutes on first run)..."
             docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
         fi
     fi
@@ -379,13 +379,19 @@ if [ "$SKIP_MCP" = false ]; then
         "portfolio:8006"
         "backtest:8007"
         "research:8008"
+        "prediction-markets:8009"
     )
 
+    # `/health` is liveness only — the server is up but may have no working
+    # provider keys. `/health/ready` additionally verifies upstream
+    # connectivity / required keys, which is what setup should gate on.
     for entry in "${servers[@]}"; do
         name="${entry%%:*}"
         port="${entry##*:}"
-        if curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+        if curl -sf "http://localhost:$port/health/ready" >/dev/null 2>&1; then
             ok "$name-server (port $port)"
+        elif curl -sf "http://localhost:$port/health" >/dev/null 2>&1; then
+            warn "$name-server (port $port) — alive but not ready (check API keys / upstream)"
         else
             warn "$name-server (port $port) — not healthy yet, may still be starting"
         fi
@@ -553,6 +559,7 @@ if [ "$SKIP_MCP" = false ]; then
     echo "    portfolio       http://localhost:8006/mcp"
     echo "    backtest        http://localhost:8007/mcp"
     echo "    research        http://localhost:8008/mcp"
+    echo "    prediction-mkts http://localhost:8009/mcp"
 fi
 
 echo ""

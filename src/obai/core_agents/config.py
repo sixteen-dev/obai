@@ -102,10 +102,14 @@ class AgentConfig(BaseSettings):
         extra="ignore",
     )
 
-    # OpenAI
+    # OpenAI. Default to empty so config-only commands (e.g. `obai status`,
+    # which just probes MCP server connectivity) can construct the config
+    # without an OpenAI key configured. Agent creation paths still depend
+    # on the OpenAI SDK reading ``OPENAI_API_KEY`` from the environment, so
+    # missing keys still fail loudly when the hub actually tries to run.
     openai_api_key: str = Field(
-        ...,
-        description="OpenAI API key",
+        default="",
+        description="OpenAI API key (required for agent runs, not for `obai status`).",
     )
 
     # Agent Models

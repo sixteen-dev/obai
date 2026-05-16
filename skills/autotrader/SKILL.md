@@ -7,7 +7,7 @@ description: "Autonomous paper trading bot that manages a stock portfolio on Alp
 
 You have two capabilities: **analysis** (via OBaI CLI) and **execution** (via Python scripts). Analysis is read-only. Execution mutates your portfolio. Never mix them up.
 
-All commands run from `src/skills/autotrader/`.
+All commands run from `skills/autotrader/`.
 
 ---
 

@@ -10,6 +10,7 @@ Environment variables:
 
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
@@ -24,6 +25,12 @@ from alpaca.trading.requests import (
 
 from .logging_config import get_logger
 from .models import AccountInfo, OrderInfo, PositionInfo
+
+
+# US equity exchanges run on US/Eastern. Day-counting (daily trade limits,
+# "today's filled orders") must reference that calendar, not UTC, so 4–8pm ET
+# trades aren't accidentally counted against the next exchange day.
+_US_EXCHANGE_TZ = ZoneInfo("America/New_York")
 
 
 class AlpacaClientError(Exception):
@@ -204,25 +211,51 @@ class AlpacaClient:
 
         return [self._map_order(o) for o in orders]
 
-    def get_todays_filled_orders(self) -> list[OrderInfo]:
-        """Get today's filled orders for risk tracking."""
-        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    def get_todays_orders_for_limit(self) -> list[OrderInfo]:
+        """Get today's submitted+filled orders for daily-trade-limit accounting.
+
+        Day boundary is US Eastern (the exchange day), not UTC, so trades
+        between 8pm-midnight ET don't roll into the next exchange day. Both
+        filled and still-open submissions count against the limit so a queue
+        of unfilled orders can't exceed the configured submission cap.
+        """
+        midnight_et = datetime.now(tz=_US_EXCHANGE_TZ).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        after_utc = midnight_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             orders = self._client.get_orders(
                 filter=GetOrdersRequest(
-                    status=QueryOrderStatus.CLOSED,
-                    after=today,
-                    limit=100,
+                    status=QueryOrderStatus.ALL,
+                    after=after_utc,
+                    limit=200,
                 ),
             )
         except APIError as exc:
             raise AlpacaClientError(str(exc)) from exc
 
+        counted = {
+            OrderStatus.FILLED,
+            OrderStatus.PARTIALLY_FILLED,
+            OrderStatus.NEW,
+            OrderStatus.ACCEPTED,
+            OrderStatus.PENDING_NEW,
+            OrderStatus.ACCEPTED_FOR_BIDDING,
+        }
         return [
             self._map_order(o)
             for o in orders
-            if str(getattr(o, "status", "")) == OrderStatus.FILLED
+            if str(getattr(o, "status", "")) in {str(s) for s in counted}
         ]
+
+    def get_todays_filled_orders(self) -> list[OrderInfo]:
+        """Compatibility alias — same semantics as ``get_todays_orders_for_limit``.
+
+        Older callers asked specifically for filled orders, but day-trade
+        limits should count submissions too. Keep the old name working so
+        tests and scripts don't break, with the corrected behavior.
+        """
+        return self.get_todays_orders_for_limit()
 
     def cancel_order(self, order_id: str) -> None:
         """Cancel a specific order."""

@@ -21,9 +21,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.websockets import WebSocketState
 
 from clients.web.hub_bridge import HubBridge
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 _STATIC_DIR = Path(__file__).parent / "static"
 _SESSION_DB = Path.home() / ".obai" / "sessions.db"
 _PREFS_FILE = Path.home() / ".obai" / "preferences.json"
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _bootstrap_agent_system() -> None:
@@ -76,9 +78,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await hub.close()
 
 
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+class OriginGuardMiddleware(BaseHTTPMiddleware):
+    """Reject state-mutating requests with a non-local Origin header.
+
+    The web UI's `/api` routes are unauthenticated by design (they assume the
+    user is running OBaI locally for themselves). That assumption breaks if
+    another local app or a browser tab can post arbitrary requests through
+    the loopback interface. Reject mutating requests whose ``Origin`` is
+    not localhost; GETs are left untouched so the SPA still loads.
+    """
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        if request.method in _SAFE_METHODS:
+            return await call_next(request)
+        origin = request.headers.get("origin", "")
+        if origin and not _origin_is_local(origin):
+            return JSONResponse(
+                {"error": "Cross-origin request rejected"},
+                status_code=403,
+            )
+        return await call_next(request)
+
+
+def _origin_is_local(origin: str) -> bool:
+    """Return True if ``origin`` resolves to the loopback interface."""
+    # Origin format: "scheme://host[:port]"
+    try:
+        host = origin.split("://", 1)[1].split("/", 1)[0]
+        host = host.rsplit(":", 1)[0] if ":" in host and not host.startswith("[") else host
+        host = host.strip("[]")
+    except Exception:
+        return False
+    return host in _LOCAL_HOSTS
+
+
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
     app = FastAPI(title="OBaI Web UI", lifespan=lifespan)
+
+    # Reject cross-origin mutating requests before they reach any route.
+    app.add_middleware(OriginGuardMiddleware)
 
     # Static files
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -292,6 +334,15 @@ def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
     file_handler.setFormatter(logging.Formatter(log_fmt))
     handlers: list[logging.Handler] = [logging.StreamHandler(), file_handler]
     logging.basicConfig(level=logging.INFO, format=log_fmt, handlers=handlers)
+
+    if host not in _LOCAL_HOSTS:
+        logger.warning(
+            "OBaI web bound to %s — the local APIs are unauthenticated and the "
+            "session store + preferences are world-writable on this host. "
+            "Add auth/TLS in front of OBaI before exposing it beyond your "
+            "machine.",
+            host,
+        )
 
     uvicorn.run(
         create_app(),

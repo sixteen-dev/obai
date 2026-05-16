@@ -213,6 +213,23 @@ class RiskChecker:
             )
             return RiskResult(allowed=False, rejection_reason=reason)
 
+        # Check 5: Buying power on new long exposure. Broker-side rules will
+        # still bounce an underfunded buy, but rejecting locally keeps the
+        # daily-trade counter honest and produces a clearer error.
+        if side.lower() == "buy" and sizing.added_exposure > account.buying_power:
+            reason = (
+                f"Insufficient buying power: order needs "
+                f"${sizing.added_exposure:,.0f} but ${account.buying_power:,.0f} available"
+            )
+            _logger.warning(
+                "risk_check_rejected",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                reason=reason,
+            )
+            return RiskResult(allowed=False, rejection_reason=reason)
+
         _logger.info("risk_check_passed", symbol=symbol, side=side, qty=qty)
         return RiskResult(allowed=True, rejection_reason=None)
 

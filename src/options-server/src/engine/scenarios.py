@@ -137,6 +137,19 @@ def position_risk_profile(contracts: list[dict[str, Any]]) -> dict[str, Any]:
     Returns:
         Dict with net_greeks, max_profit, max_loss, breakevens.
     """
+    if not contracts:
+        msg = "position_risk_profile requires at least one contract"
+        raise ValueError(msg)
+
+    underlyings = {str(c.get("underlying_symbol", "")).upper() for c in contracts}
+    underlyings.discard("")
+    if len(underlyings) > 1:
+        msg = (
+            "position_risk_profile expects all legs on the same underlying; "
+            f"got {sorted(underlyings)}"
+        )
+        raise ValueError(msg)
+
     # Aggregate net Greeks
     net_delta = 0.0
     net_gamma = 0.0

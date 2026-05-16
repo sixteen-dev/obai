@@ -793,6 +793,10 @@ class CentralHubAgent:
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
+        # Optional specialists that failed startup. Exposed so clients can
+        # tell the user "research / prediction-markets is unavailable"
+        # instead of silently routing around it.
+        self.degraded_capabilities: list[str] = []
         self._initialized = False
 
         # Semantic cache for session context (lazy init)
@@ -1064,6 +1068,7 @@ class CentralHubAgent:
                         "Other agents unaffected.",
                     )
                     self.research_agent = None
+                    self.degraded_capabilities.append("research")
                 elif agent is self.prediction_markets_agent:
                     logger.warning(
                         "Prediction Markets Agent unavailable — "
@@ -1071,6 +1076,7 @@ class CentralHubAgent:
                         "Other agents unaffected.",
                     )
                     self.prediction_markets_agent = None
+                    self.degraded_capabilities.append("prediction_markets")
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result

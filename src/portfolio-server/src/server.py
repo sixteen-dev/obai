@@ -142,8 +142,10 @@ async def portfolio_expand_etf_holdings_tool(
                 ),
             }
 
-        # Apply limit
-        limited_holdings = holdings[:limit]
+        # Clamp display limit so negative slices don't return surprising
+        # holdings and very large requests don't blow up response size.
+        effective_limit = max(1, min(int(limit), 500))
+        limited_holdings = holdings[:effective_limit]
 
         # Format response
         result = {
