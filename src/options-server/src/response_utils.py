@@ -80,37 +80,61 @@ def format_api_error(error: Exception, api_name: str = "API") -> dict[str, Any]:
     }
 
 
+def _measure(data: dict[str, Any]) -> int:
+    return len(json.dumps(data, default=str))
+
+
+def _longest_list_key(data: dict[str, Any]) -> str | None:
+    """Return the top-level key holding the longest list value, or None."""
+    best_key: str | None = None
+    best_len = 0
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) > best_len:
+            best_key = key
+            best_len = len(val)
+    return best_key
+
+
 def truncate_response(data: dict[str, Any], max_chars: int = MAX_RESPONSE_CHARS) -> dict[str, Any]:
-    """Truncate response data if it exceeds character limit.
+    """Shrink response payload to fit within ``max_chars``.
 
-    Args:
-        data: Response dictionary to potentially truncate
-        max_chars: Maximum character limit (default: 25,000)
+    The previous implementation sliced the serialized JSON string by
+    character count and tried to re-parse it, which almost always failed
+    json.loads (slicing cuts inside a string or struct), so callers
+    silently got the metadata-only fallback even for small overruns.
 
-    Returns:
-        Original data if under limit, or truncated data with metadata
+    This version walks top-level list fields and pops tail items off the
+    longest one until the payload fits, then marks the response as
+    truncated. If no list-typed field remains shrinkable, falls back to
+    metadata.
     """
-    # Serialize to JSON to measure size
-    json_str = json.dumps(data, default=str)
-
-    # If under limit, return as-is
-    if len(json_str) <= max_chars:
+    size = _measure(data)
+    if size <= max_chars:
         return data
 
-    # Response is too large - need to truncate the JSON string
-    truncated_json = json_str[:max_chars] + "..."
+    trimmed_items = 0
+    while _measure(data) > max_chars:
+        key = _longest_list_key(data)
+        if key is None or len(data[key]) <= 1:
+            break
+        data[key].pop()
+        trimmed_items += 1
 
-    try:
-        # Try to parse the truncated JSON (might be invalid)
-        return cast(dict[str, Any], json.loads(truncated_json))
-    except json.JSONDecodeError:
-        # If truncated JSON is invalid, return metadata only
-        return {
+    final_size = _measure(data)
+    if final_size <= max_chars:
+        data["_truncated"] = True
+        data["_truncated_items"] = trimmed_items
+        return data
+
+    return cast(
+        dict[str, Any],
+        {
             "_truncated": True,
-            "_original_size_chars": len(json_str),
+            "_original_size_chars": size,
             "_error": "Response too large to serialize",
             "_truncation_message": (
-                f"Response of {len(json_str)} characters exceeds limit of {max_chars}. "
+                f"Response of {size} characters exceeds limit of {max_chars}. "
                 "Use pagination parameters (limit/offset) to retrieve data in smaller chunks."
             ),
-        }
+        },
+    )

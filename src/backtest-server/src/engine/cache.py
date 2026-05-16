@@ -82,6 +82,35 @@ class BacktestCache:
         path.write_text(json.dumps(data, indent=2))
         logger.info("cache_stored", key=cache_key)
 
+    def get_trades(self, cache_key: str) -> list[dict[str, object]] | None:
+        """Retrieve cached trade-level details if present and not expired.
+
+        Trades are stored in a sidecar file (``{key}.trades.json``) so the
+        main BacktestResult JSON stays small and LLM-friendly. The trade
+        log tool reads this sidecar to avoid re-running the whole strategy
+        just to repaginate trades.
+        """
+        path = self._trades_path(cache_key)
+        if not path.exists() or self._is_expired(path):
+            return None
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, list):
+                return None
+            return data
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("trade_cache_read_failed", key=cache_key, error=str(exc))
+            return None
+
+    def put_trades(self, cache_key: str, trades: list[dict[str, object]]) -> None:
+        """Write trades sidecar for later trade-log pagination."""
+        path = self._trades_path(cache_key)
+        path.write_text(json.dumps(trades))
+        logger.info("trades_stored", key=cache_key, count=len(trades))
+
+    def _trades_path(self, cache_key: str) -> Path:
+        return self.cache_dir / f"{cache_key}.trades.json"
+
     def clear(self, cache_key: str | None = None) -> int:
         """Clear cached results.
 

@@ -755,10 +755,14 @@ def _compute_portfolio_specific(
         max_count = float(np.max(pos_counts)) if np.max(pos_counts) > 0 else 1.0
         cap_util = float(np.mean(pos_counts) / max_count * 100)
 
-    # Turnover rate: sum of absolute trade PnL / mean equity
+    # Turnover rate: total notional traded (entry + exit) / mean equity.
+    # The old implementation used absolute realized P&L, which is just a
+    # measure of profitability variance — a flat round-trip (entry=exit)
+    # has zero P&L but real notional turnover. Turnover must reflect
+    # capital churned, not P&L volatility.
     mean_equity = float(np.mean(equity)) if len(equity) > 0 else initial_capital
-    total_abs_pnl = sum(abs(t.pnl) for t in result.trades)
-    turnover = total_abs_pnl / mean_equity if mean_equity > 0 else 0.0
+    total_notional = sum((t.entry_price + t.exit_price) * t.shares for t in result.trades)
+    turnover = total_notional / mean_equity if mean_equity > 0 else 0.0
 
     # Unique skipped symbols
     skipped_symbols = sorted({s["symbol"] for s in result.signals_skipped if "symbol" in s})

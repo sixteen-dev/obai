@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -542,20 +543,36 @@ async def backtest_get_trade_log_tool(
     except (json.JSONDecodeError, ValueError, KeyError) as exc:
         return {"isError": True, "error": f"Invalid strategy: {exc}"}
 
-    # Run the strategy (uses cache internally for metrics, but we need trades)
+    # Trade-list pagination must not re-run the strategy when the
+    # backtest's trades sidecar is already cached. Falls back to a full
+    # run only when there is no sidecar yet (e.g. cache evicted, or this
+    # strategy was never backtested in the current process).
+    cache: BacktestCache = _state.require("cache")
+    cache_key = _build_cache_key(strategy)
+    cached_trades = cache.get_trades(cache_key)
+    if cached_trades is not None:
+        total = len(cached_trades)
+        return {
+            "trades": cached_trades[offset : offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + limit < total,
+            "from_cache": True,
+        }
+
     exec_result = await _execute_strategy(strategy)
-    trades = exec_result.trades
+    trade_dicts_all = [t.to_dict() for t in exec_result.trades]
+    cache.put_trades(cache_key, trade_dicts_all)
 
-    total = len(trades)
-    page = trades[offset : offset + limit]
-    trade_dicts = [t.to_dict() for t in page]
-
+    total = len(trade_dicts_all)
     return {
-        "trades": trade_dicts,
+        "trades": trade_dicts_all[offset : offset + limit],
         "total": total,
         "offset": offset,
         "limit": limit,
         "has_more": offset + limit < total,
+        "from_cache": False,
     }
 
 
@@ -860,7 +877,9 @@ async def _run_sync_backtest(
         indicator_count=len(strategy.indicators),
     )
 
-    _state.require("cache").put(cache_key, result)
+    cache_obj = _state.require("cache")
+    cache_obj.put(cache_key, result)
+    cache_obj.put_trades(cache_key, [t.to_dict() for t in exec_result.trades])
 
     return _finalize_backtest_response(
         result,
@@ -1494,7 +1513,7 @@ def bootstrap() -> Settings:
         cache_dir=settings.backtest_cache_dir,
         ttl_hours=settings.backtest_cache_ttl_hours,
     )
-    _state.job_store = JobStore()
+    _state.job_store = JobStore(persist_dir=Path(settings.backtest_cache_dir) / "jobs")
 
     logger.info(
         "bootstrap_complete",
