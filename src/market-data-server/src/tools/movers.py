@@ -81,10 +81,26 @@ async def _index_movers(
     symbol_list = sorted(symbols)
     chunks = [symbol_list[i : i + _BATCH_SIZE] for i in range(0, len(symbol_list), _BATCH_SIZE)]
 
-    batch_results = await asyncio.gather(*(client.batch_quote(chunk) for chunk in chunks))
+    # `return_exceptions=True` keeps a single provider hiccup from killing
+    # the whole index mover response — bad chunks are logged and skipped.
+    batch_results = await asyncio.gather(
+        *(client.batch_quote(chunk) for chunk in chunks),
+        return_exceptions=True,
+    )
 
     all_quotes: list[dict[str, Any]] = []
+    failed_chunks = 0
     for i, batch in enumerate(batch_results):
+        if isinstance(batch, BaseException):
+            failed_chunks += 1
+            logger.warning(
+                "batch_quote_chunk_failed",
+                chunk=i,
+                requested=len(chunks[i]),
+                error=str(batch),
+                error_type=type(batch).__name__,
+            )
+            continue
         logger.info(
             "batch_quote_result",
             chunk=i,

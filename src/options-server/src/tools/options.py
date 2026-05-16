@@ -248,7 +248,7 @@ async def list_option_contracts(
     try:
         settings = get_settings()
         async with MassiveClient(settings) as client:
-            results = await client.list_option_contracts(
+            page = await client.list_option_contracts(
                 underlying_ticker=underlying_ticker,
                 expiration_date=expiration_date,
                 contract_type=contract_type,
@@ -256,9 +256,9 @@ async def list_option_contracts(
                 limit=limit,
             )
 
-            filtered_results = filter_option_contracts_list(results)
+            filtered_results = filter_option_contracts_list(page["results"])
 
-            return {
+            response: dict[str, Any] = {
                 "filters": {
                     "underlying_ticker": underlying_ticker,
                     "expiration_date": expiration_date,
@@ -267,7 +267,17 @@ async def list_option_contracts(
                 },
                 "count": len(filtered_results),
                 "contracts": filtered_results,
+                "pages_fetched": page["pages_fetched"],
+                "truncated": page["truncated"],
             }
+            if page["truncated"]:
+                response["warning"] = (
+                    "Result set was truncated at the page cap. Narrow the "
+                    "filter (e.g. by expiration_date) to see remaining "
+                    "contracts; ``next_cursor`` can be used to resume."
+                )
+                response["next_cursor"] = page["next_cursor"]
+            return response
     except Exception as e:
         log_error(
             logger,

@@ -13,16 +13,21 @@ _SPOT_PCTS = [-10.0, -5.0, -2.0, 0.0, 2.0, 5.0, 10.0]
 _VOL_PCTS = [-20.0, -10.0, 0.0, 10.0, 20.0]
 
 
+_VALID_DIRECTIONS = frozenset({"long", "short"})
+
+
 def _direction_sign(direction: str) -> int:
-    """Return +1 for 'long', -1 for 'short'.
+    """Return +1 for 'long', -1 for 'short', raising on any other value.
 
-    Args:
-        direction: 'long' or 'short'.
-
-    Returns:
-        Multiplier sign.
+    The previous behavior treated *anything* other than ``"long"`` as
+    ``-1``, so a bad upstream arg silently flipped a long position into a
+    short. Fail loud instead.
     """
-    return 1 if direction == "long" else -1
+    normalized = direction.lower() if isinstance(direction, str) else ""
+    if normalized not in _VALID_DIRECTIONS:
+        msg = f"direction must be 'long' or 'short'; got {direction!r}"
+        raise ValueError(msg)
+    return 1 if normalized == "long" else -1
 
 
 def position_pnl_scenarios(
@@ -132,6 +137,19 @@ def position_risk_profile(contracts: list[dict[str, Any]]) -> dict[str, Any]:
     Returns:
         Dict with net_greeks, max_profit, max_loss, breakevens.
     """
+    if not contracts:
+        msg = "position_risk_profile requires at least one contract"
+        raise ValueError(msg)
+
+    underlyings = {str(c.get("underlying_symbol", "")).upper() for c in contracts}
+    underlyings.discard("")
+    if len(underlyings) > 1:
+        msg = (
+            "position_risk_profile expects all legs on the same underlying; "
+            f"got {sorted(underlyings)}"
+        )
+        raise ValueError(msg)
+
     # Aggregate net Greeks
     net_delta = 0.0
     net_gamma = 0.0

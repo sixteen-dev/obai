@@ -413,6 +413,7 @@ function renderMarkdownInto(element, markdownText) {
     const html = marked.parse(normalizeAssistantContent(markdownText));
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
+    sanitizeMarkdownTree(doc.body);
     element.textContent = "";
     while (doc.body.firstChild) {
         element.appendChild(doc.body.firstChild);
@@ -423,6 +424,51 @@ function renderMarkdownInto(element, markdownText) {
         link.rel = "noopener";
     }
     enhanceCodeBlocks(element);
+}
+
+// Tool outputs flow through `marked` unchanged, so external strings can carry
+// raw HTML. Restrict to the tags `marked` emits from CommonMark and strip any
+// script-bearing attribute before the parsed tree is attached to the live DOM.
+const ALLOWED_TAGS = new Set([
+    "A", "ABBR", "B", "BLOCKQUOTE", "BR", "CODE", "DD", "DEL", "DIV", "DL",
+    "DT", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "I", "IMG", "LI",
+    "OL", "P", "PRE", "S", "SPAN", "STRONG", "SUB", "SUP", "TABLE", "TBODY",
+    "TD", "TFOOT", "TH", "THEAD", "TR", "U", "UL",
+]);
+const URL_ATTRS = new Set(["href", "src"]);
+const SAFE_URL_RE = /^(?:https?:|mailto:|tel:|#|\/|\.\/|\.\.\/)/i;
+
+function sanitizeMarkdownTree(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    const toRemove = [];
+    let node = walker.nextNode();
+    while (node) {
+        if (!ALLOWED_TAGS.has(node.tagName)) {
+            toRemove.push(node);
+        } else {
+            scrubAttributes(node);
+        }
+        node = walker.nextNode();
+    }
+    for (const el of toRemove) {
+        el.remove();
+    }
+}
+
+function scrubAttributes(el) {
+    for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith("on")) {
+            el.removeAttribute(attr.name);
+            continue;
+        }
+        if (URL_ATTRS.has(name)) {
+            const value = attr.value.trim();
+            if (!SAFE_URL_RE.test(value)) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    }
 }
 
 function normalizeAssistantContent(markdownText) {

@@ -3,6 +3,7 @@
 Uses fastmcp.Client for proper MCP protocol support over Streamable HTTP.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -118,7 +119,10 @@ class MCPClient:
 
         try:
             client = await self._ensure_connected()
-            tools: list[Tool] = await client.list_tools()
+            tools: list[Tool] = await self._with_retries(
+                lambda: asyncio.wait_for(client.list_tools(), timeout=self.timeout),
+                what=f"list_tools {self.base_url}",
+            )
 
             # Convert to dict format for compatibility with tool converter
             tool_dicts: list[dict[str, Any]] = []
@@ -166,7 +170,12 @@ class MCPClient:
 
         try:
             client = await self._ensure_connected()
-            result = await client.call_tool(tool_name, arguments)
+            result = await self._with_retries(
+                lambda: asyncio.wait_for(
+                    client.call_tool(tool_name, arguments), timeout=self.timeout
+                ),
+                what=f"call_tool {tool_name}",
+            )
 
             # Already a plain dict — return directly
             if isinstance(result, dict):
@@ -219,6 +228,41 @@ class MCPClient:
                 raise MCPServerError(f"Tool {tool_name} failed: {error_msg}") from e
 
             raise MCPClientError(f"Failed to call {tool_name}: {e}") from e
+
+    async def _with_retries(
+        self,
+        op: Any,
+        *,
+        what: str,
+    ) -> Any:
+        """Run ``op`` with timeout + bounded retries on transient errors.
+
+        ``op`` is a zero-arg callable returning a coroutine. Connection drops
+        and timeouts are retried up to ``self.max_retries`` times with simple
+        linear backoff. The final failure preserves the underlying exception
+        chain so callers can still distinguish timeout from server error.
+        """
+        attempts = max(1, self.max_retries + 1)
+        last_exc: BaseException | None = None
+        for attempt in range(attempts):
+            try:
+                return await op()
+            except (TimeoutError, asyncio.TimeoutError, ConnectionError) as exc:
+                last_exc = exc
+                if attempt == attempts - 1:
+                    break
+                backoff = 0.2 * (attempt + 1)
+                logger.warning(
+                    "MCP retry: %s attempt %d/%d failed (%s); sleeping %.2fs",
+                    what,
+                    attempt + 1,
+                    attempts,
+                    type(exc).__name__,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+        assert last_exc is not None
+        raise last_exc
 
     async def close(self) -> None:
         """Close the client connection and release resources."""

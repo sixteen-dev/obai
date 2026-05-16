@@ -9,6 +9,7 @@ import asyncio
 import time
 from typing import Any
 
+import httpx
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -544,7 +545,13 @@ async def health_check(_request: Request) -> JSONResponse:
 
 @mcp.custom_route("/health/ready", methods=["GET"])
 async def health_check_ready(_request: Request) -> JSONResponse:
-    """Readiness probe — can the server handle requests."""
+    """Readiness probe — verifies Gamma upstream is reachable.
+
+    Settings alone aren't a useful readiness signal because Polymarket APIs
+    are public (no keys to check). Probe Gamma for a 1-row response with a
+    tight timeout — if that fails, every prediction-market tool will also
+    fail and the service should report not-ready.
+    """
     try:
         s = get_settings()
     except RuntimeError:
@@ -553,7 +560,21 @@ async def health_check_ready(_request: Request) -> JSONResponse:
             status_code=503,
         )
 
-    # No API keys required — Polymarket APIs are public
+    probe_url = f"{s.gamma_api_base_url.rstrip('/')}/events?limit=1"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(probe_url)
+            response.raise_for_status()
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "status": "not_ready",
+                "reason": f"Gamma upstream unreachable: {type(exc).__name__}",
+                "service": s.server_name,
+            },
+            status_code=503,
+        )
+
     return JSONResponse({"status": "ready", "service": s.server_name})
 
 

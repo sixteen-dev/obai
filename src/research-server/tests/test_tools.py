@@ -7,6 +7,16 @@ from unittest.mock import AsyncMock, patch
 from src.clients.exa_client import ResearchResult
 
 
+def _patch_async_client(mock_cls):
+    """Wire the mocked ExaClient class so `async with ExaClient() as c:` returns
+    the same mock instance that the test will configure with `.search` etc.
+    """
+    mock_client = mock_cls.return_value
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return mock_client
+
+
 def _mock_search_results():
     """Create mock ResearchResult list."""
     return [
@@ -25,7 +35,7 @@ def _mock_search_results():
 class TestCompanyProfile:
     async def test_returns_structured_result(self):
         with patch("src.tools.company_profile.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=_mock_search_results())
 
             from src.tools.company_profile import research_company_profile
@@ -40,7 +50,7 @@ class TestCompanyProfile:
 
     async def test_uppercases_symbol(self):
         with patch("src.tools.company_profile.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=[])
 
             from src.tools.company_profile import research_company_profile
@@ -53,7 +63,7 @@ class TestCompanyProfile:
 class TestLeadership:
     async def test_default_person_is_ceo(self):
         with patch("src.tools.leadership.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=_mock_search_results())
 
             from src.tools.leadership import research_leadership
@@ -65,7 +75,7 @@ class TestLeadership:
 
     async def test_custom_person_name(self):
         with patch("src.tools.leadership.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=[])
 
             from src.tools.leadership import research_leadership
@@ -90,7 +100,7 @@ class TestProductSentiment:
 
     async def test_default_product(self):
         with patch("src.tools.product_sentiment.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=[])
 
             from src.tools.product_sentiment import research_product_sentiment
@@ -103,7 +113,7 @@ class TestProductSentiment:
 class TestCompetitiveLandscape:
     async def test_two_step_approach(self):
         with patch("src.tools.competitive_landscape.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=_mock_search_results())
             mock_client.find_similar = AsyncMock(return_value=_mock_search_results())
 
@@ -132,7 +142,7 @@ class TestGeneralResearch:
 
     async def test_optional_symbol(self):
         with patch("src.tools.general_research.ExaClient") as mock_cls:
-            mock_client = mock_cls.return_value
+            mock_client = _patch_async_client(mock_cls)
             mock_client.search = AsyncMock(return_value=[])
 
             from src.tools.general_research import research_general

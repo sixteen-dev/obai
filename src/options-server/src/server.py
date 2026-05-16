@@ -3,8 +3,10 @@
 import asyncio
 import json
 import time
-from datetime import date, datetime
+from datetime import datetime
+from datetime import time as dtime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -512,18 +514,24 @@ async def options_get_aggregates_tool(
 # =============================================================================
 
 
+_US_MARKET_TZ = ZoneInfo("America/New_York")
+_OPTION_EXPIRY_CUTOFF = dtime(16, 0)  # 4pm ET equity option expiration cutoff
+_HOURS_PER_YEAR = 365.25 * 24
+
+
 def _years_to_expiry(expiry_date: str) -> float:
-    """Convert expiry date string to years remaining.
+    """Convert an expiry date to fractional years remaining.
 
-    Args:
-        expiry_date: Expiration date in YYYY-MM-DD format.
-
-    Returns:
-        Time to expiry in fractional years (floored at 0).
+    Uses US market timezone (America/New_York) and the 4pm ET equity-option
+    expiration cutoff. Same-day expiries now report sub-day fractional years
+    instead of collapsing to 0, so 0DTE Greeks/IV/scenarios stay meaningful
+    during market hours.
     """
-    expiry = datetime.strptime(expiry_date, "%Y-%m-%d").date()
-    days = (expiry - date.today()).days
-    return max(days / 365.25, 0.0)
+    expiry_date_only = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+    expiry_dt = datetime.combine(expiry_date_only, _OPTION_EXPIRY_CUTOFF, _US_MARKET_TZ)
+    now_dt = datetime.now(tz=_US_MARKET_TZ)
+    seconds = (expiry_dt - now_dt).total_seconds()
+    return max(seconds / (_HOURS_PER_YEAR * 3600), 0.0)
 
 
 @mcp.tool(

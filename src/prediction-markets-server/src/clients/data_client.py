@@ -117,27 +117,45 @@ class DataClient:
         raw = await self._get(self._data_url, "/holders", params)
 
         holders: list[dict[str, Any]] = []
+        per_token: dict[str, list[dict[str, Any]]] = {}
         if isinstance(raw, list):
             for bucket in raw:
                 if not isinstance(bucket, dict):
                     continue
                 token_id = bucket.get("token", "")
                 nested = bucket.get("holders", [])
-                if isinstance(nested, list):
-                    for h in nested:
-                        if isinstance(h, dict):
-                            holders.append(self._normalize_holder(h, token_id))
+                if not isinstance(nested, list):
+                    continue
+                token_holders = [
+                    self._normalize_holder(h, token_id) for h in nested if isinstance(h, dict)
+                ]
+                token_holders.sort(key=lambda h: float(h.get("amount", 0) or 0), reverse=True)
+                per_token[token_id] = token_holders
+                holders.extend(token_holders)
 
-        # Concentration analysis across all outcome tokens
-        total_held = sum(h.get("amount", 0) for h in holders)
-        top5_held = sum(h.get("amount", 0) for h in holders[:5])
-        concentration_top5 = round(top5_held / total_held, 4) if total_held > 0 else 0
+        # Sort the flattened list by holder amount so aggregate top-N
+        # concentration reflects actual whales, not the upstream API's
+        # bucket-then-list order.
+        holders.sort(key=lambda h: float(h.get("amount", 0) or 0), reverse=True)
+        total_held = sum(float(h.get("amount", 0) or 0) for h in holders)
+        top5_held = sum(float(h.get("amount", 0) or 0) for h in holders[:5])
+        concentration_top5 = round(top5_held / total_held, 4) if total_held > 0 else 0.0
+
+        # Per-outcome concentration: same calculation scoped to each token.
+        per_token_concentration: dict[str, float] = {}
+        for token_id, token_holders in per_token.items():
+            token_total = sum(float(h.get("amount", 0) or 0) for h in token_holders)
+            top5 = sum(float(h.get("amount", 0) or 0) for h in token_holders[:5])
+            per_token_concentration[token_id] = (
+                round(top5 / token_total, 4) if token_total > 0 else 0.0
+            )
 
         return {
             "condition_id": condition_id,
             "holder_count": len(holders),
             "total_held": round(total_held, 2),
             "top5_concentration": concentration_top5,
+            "per_token_top5_concentration": per_token_concentration,
             "holders": holders,
         }
 

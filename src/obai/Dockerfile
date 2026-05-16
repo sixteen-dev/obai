@@ -1,5 +1,5 @@
-# Multi-stage build for tezQ agents package
-# Optimized for production deployment
+# Multi-stage build for the OBaI central app (hub + clients).
+# Optimized for production deployment.
 
 # Stage 1: Builder
 FROM python:3.12-slim AS builder
@@ -23,8 +23,8 @@ WORKDIR /app
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy agents code and prompts
-COPY agents/ ./agents/
+# Copy package code (central hub + specialist orchestration + clients)
+COPY core_agents/ ./core_agents/
 COPY clients/ ./clients/
 
 # Add venv to PATH
@@ -37,7 +37,6 @@ ENV PYTHONUNBUFFERED=1
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
-# Default command (override in docker-compose or deployment)
-# For CLI test: python -m clients.cli.chat
-# For Discord bot (future): python -m clients.discord.bot
-CMD ["python", "-m", "agents"]
+# Default command (override in docker-compose or deployment).
+# `obai` is the project entrypoint configured in pyproject.toml.
+CMD ["obai"]

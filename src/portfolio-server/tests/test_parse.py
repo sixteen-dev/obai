@@ -56,6 +56,29 @@ class TestParsePositions:
         aapl = next(p for p in positions if p["symbol"] == "AAPL")
         assert abs(aapl["weight"] - 0.50) < 0.01  # $50k / $100k total
 
+    def test_parse_dollar_k_suffix(self) -> None:
+        """`$50k AAPL` must parse as $50,000, not $50."""
+        result = parse_positions("$50k AAPL, $50k MSFT")
+
+        assert "isError" not in result
+        assert result["position_count"] == 2
+
+        portfolio = result["portfolio"]
+        aapl = next(p for p in portfolio["positions"] if p["symbol"] == "AAPL")
+        assert abs(aapl["weight"] - 0.50) < 0.01
+
+    def test_parse_dollar_million_suffix(self) -> None:
+        """`$1.2M` is treated as $1,200,000 and works for share-class tickers."""
+        result = parse_positions("$1.2M BRK.B, $300k AAPL")
+
+        assert "isError" not in result
+        assert result["position_count"] == 2
+
+        portfolio = result["portfolio"]
+        brk = next(p for p in portfolio["positions"] if p["symbol"] == "BRK.B")
+        # $1.2M / ($1.2M + $0.3M) = 0.8
+        assert abs(brk["weight"] - 0.80) < 0.01
+
     def test_parse_mixed_asset_types(self, sample_portfolio_mixed: str) -> None:
         """Test detection of different asset types."""
         result = parse_positions(sample_portfolio_mixed)

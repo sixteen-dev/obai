@@ -90,6 +90,8 @@ class TestGammaClientNormalization:
         assert result == {}
 
     def test_normalize_market_handles_invalid_prices(self):
+        # Unparseable prices are preserved as `None` so a true 0¢ price and
+        # a missing price stay distinguishable downstream.
         client = GammaClient()
         result = client._normalize_market(
             {
@@ -97,7 +99,7 @@ class TestGammaClientNormalization:
                 "outcomePrices": ["not_a_number", None],
             }
         )
-        assert result["outcome_prices"] == [0.0, 0.0]
+        assert result["outcome_prices"] == [None, None]
 
     def test_normalize_market_parses_json_string_fields(self):
         """Gamma API sometimes returns array fields as JSON strings."""
@@ -134,12 +136,19 @@ class TestGammaClientNormalization:
         assert result["market_url"] == "https://polymarket.com/event/btc-100k"
         assert result["slug"] == "will-btc-hit-100k-by-end-of-2026"
 
-    def test_normalize_market_empty_url_when_no_event_slug(self):
-        """No event slug means no market_url."""
+    def test_normalize_market_falls_back_to_market_slug_when_no_event_slug(self):
+        """Without an event slug, fall back to a market-slug URL so the user
+        still gets an actionable Polymarket link."""
         client = GammaClient()
         result = client._normalize_market(
             {"slug": "some-market", "events": [{"category": "crypto"}]}
         )
+        assert result["market_url"] == "https://polymarket.com/market/some-market"
+
+    def test_normalize_market_empty_url_when_no_slug_at_all(self):
+        """No event slug *and* no market slug → no URL to build."""
+        client = GammaClient()
+        result = client._normalize_market({"events": [{"category": "crypto"}]})
         assert result["market_url"] == ""
 
 

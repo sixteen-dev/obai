@@ -110,10 +110,12 @@ class TestImpliedVol:
         recovered_vol = implied_vol(price, spot, strike, time, rate, opt_type)
         assert recovered_vol == pytest.approx(sigma, abs=1e-4)
 
-    def test_iv_no_convergence(self) -> None:
-        """Absurd market price should return NaN."""
+    def test_iv_unreachable_price_returns_nan(self) -> None:
+        """A market price above the no-arbitrage upper bound (~spot) is
+        unreachable for any non-negative IV, so the bisection fallback
+        cannot bracket a root and the solver returns NaN."""
         result = implied_vol(
-            market_price=0.0001,
+            market_price=150.0,  # > spot=100, impossible for a call
             spot=100.0,
             strike=200.0,
             time=0.01,
@@ -122,9 +124,35 @@ class TestImpliedVol:
         )
         assert math.isnan(result)
 
+    def test_iv_deep_otm_short_expiry_converges(self) -> None:
+        """A deep-OTM short-expiry option with a tiny premium has a real
+        (high) IV — the bisection fallback finds it even when Newton
+        cannot. Regression test for the audit fix that added bracketing.
+        """
+        result = implied_vol(
+            market_price=0.0001,
+            spot=100.0,
+            strike=200.0,
+            time=0.01,
+            rate=0.05,
+            option_type="call",
+        )
+        assert not math.isnan(result)
+        assert 0.5 < result < 5.0
+
     def test_iv_expired_returns_nan(self) -> None:
         result = implied_vol(5.0, 100.0, 100.0, 0.0, 0.05, "call")
         assert math.isnan(result)
+
+    def test_iv_with_dividend_yield(self) -> None:
+        """IV solver round-trips when a dividend yield is supplied."""
+        sigma = 0.25
+        spot, strike, time, rate, q = 100.0, 100.0, 0.5, 0.04, 0.02
+        price = bs_price(spot, strike, time, rate, sigma, "call", dividend_yield=q)
+        recovered = implied_vol(
+            price, spot, strike, time, rate, "call", dividend_yield=q
+        )
+        assert recovered == pytest.approx(sigma, abs=1e-4)
 
 
 class TestExpiredOption:

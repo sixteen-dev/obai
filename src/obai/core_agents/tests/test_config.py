@@ -44,13 +44,13 @@ class TestAgentConfig:
 
     def test_default_models(self) -> None:
         """Test default model values."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert config.orchestrator_model == "gpt-5.5"
         assert config.specialist_model == "gpt-5-mini"
 
     def test_default_mcp_urls(self) -> None:
         """Test default MCP server URLs."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert "localhost:8001" in config.mcp_fundamentals_url
         assert "localhost:8002" in config.mcp_market_data_url
         assert "localhost:8003" in config.mcp_events_news_url
@@ -58,7 +58,7 @@ class TestAgentConfig:
 
     def test_get_agent_model_default(self) -> None:
         """Test get_agent_model falls back to specialist_model."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         # market_data_model is None by default, should return specialist_model
         model = config.get_agent_model("market_data")
         assert model == config.specialist_model
@@ -127,7 +127,7 @@ class TestGuardrailConfig:
 
     def test_guardrails_enabled_by_default(self) -> None:
         """Test guardrails are enabled by default."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert config.enable_guardrails is True
 
     def test_guardrails_can_be_disabled(self) -> None:

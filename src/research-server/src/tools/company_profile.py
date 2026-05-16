@@ -30,19 +30,19 @@ async def research_company_profile(
     """
     settings = get_settings()
     try:
-        client = ExaClient()
-        results = await client.search(
-            query=(
-                f"in-depth analysis of {company_name} ({symbol}) "
-                f"including its business model, recent strategy, and market position"
-            ),
-            search_type="auto",
-            num_results=settings.default_num_results,
-            category="company",
-            highlight_query=f"{company_name} strategy products market position growth",
-            start_published_date=_days_ago(days_back),
-            exclude_domains=["wikipedia.org"],
-        )
+        async with ExaClient() as client:
+            results = await client.search(
+                query=(
+                    f"in-depth analysis of {company_name} ({symbol}) "
+                    f"including its business model, recent strategy, and market position"
+                ),
+                search_type="auto",
+                num_results=settings.default_num_results,
+                category="company",
+                highlight_query=f"{company_name} strategy products market position growth",
+                start_published_date=_days_ago(days_back),
+                exclude_domains=["wikipedia.org"],
+            )
         return {
             "symbol": symbol.upper(),
             "company_name": company_name,

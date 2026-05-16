@@ -72,7 +72,17 @@ async def _resolve_weights(
 
     total_value = sum(market_values.values())
     if total_value == 0:
-        return [(p.symbol, 1.0 / len(positions)) for p in positions]
+        # Falling back to equal weights silently produces a *different*
+        # portfolio than the user supplied. Surface this loudly so the caller
+        # can surface "we couldn't price these holdings" instead of analyzing
+        # a fabricated portfolio.
+        missing = [pos.symbol for pos in positions if market_values.get(pos.symbol, 0.0) <= 0]
+        msg = (
+            "Portfolio could not be analyzed: no quotes were available for "
+            f"{', '.join(missing) or 'any supplied symbol'}. Re-check the "
+            "symbols or supply percentage weights directly."
+        )
+        raise ValueError(msg)
 
     return [(sym, val / total_value) for sym, val in market_values.items()]
 
@@ -313,22 +323,37 @@ def _build_risk_metrics(  # noqa: PLR0913
     else:
         sortino = 0.0
 
-    # Beta and R-squared
+    # Beta and R-squared. Constant return series (zero variance) make
+    # covariance and correlation undefined — guard explicitly and emit
+    # neutral values instead of letting NaN slip into the JSON response.
     if len(bench_returns) >= MIN_SERIES_LENGTH:
-        cov_matrix = np.cov(port_returns, bench_returns)
         bench_var = float(np.var(bench_returns, ddof=1))
-        beta = float(cov_matrix[0][1]) / bench_var if bench_var > 0 else 1.0
-        corr = np.corrcoef(port_returns, bench_returns)
-        r_squared = float(corr[0][1] ** 2)
+        port_var = float(np.var(port_returns, ddof=1))
+        if bench_var > 0 and port_var > 0:
+            cov_matrix = np.cov(port_returns, bench_returns)
+            beta = float(cov_matrix[0][1]) / bench_var
+            corr = np.corrcoef(port_returns, bench_returns)
+            corr_val = float(corr[0][1])
+            r_squared = corr_val * corr_val if np.isfinite(corr_val) else 0.0
+        else:
+            beta = 0.0
+            r_squared = 0.0
+        if not np.isfinite(beta):
+            beta = 0.0
+        if not np.isfinite(r_squared):
+            r_squared = 0.0
     else:
         beta = 1.0
         r_squared = 0.0
 
-    # Max drawdown
-    cumulative = np.cumprod(1 + port_returns)
-    # Use dates starting from index 1 (since returns are diff-based)
-    return_dates = aligned_dates[1:]
-    max_dd, current_dd, dd_start, dd_end = _compute_max_drawdown(cumulative, return_dates)
+    # Max drawdown.
+    # Prepend a 1.0 baseline so the running peak can reference the day-0
+    # value. Without this, a portfolio that drops on day 1 and never
+    # recovers has its "peak" set to (1 + r_1) < 1.0, which understates
+    # the true drawdown and labels the wrong day as the peak.
+    cumulative = np.concatenate(([1.0], np.cumprod(1 + port_returns)))
+    dates_with_base = [aligned_dates[0], *aligned_dates[1:]]
+    max_dd, current_dd, dd_start, dd_end = _compute_max_drawdown(cumulative, dates_with_base)
 
     # Total return and annualized return (CAGR)
     total_return = float(cumulative[-1]) - 1.0

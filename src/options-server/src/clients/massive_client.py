@@ -173,20 +173,19 @@ class MassiveClient:
         endpoint: str,
         params: dict[str, Any] | None = None,
         max_pages: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Fetch all pages of a paginated endpoint.
+    ) -> dict[str, Any]:
+        """Fetch up to ``max_pages`` of a paginated endpoint with truncation metadata.
 
-        Args:
-            endpoint: API endpoint path
-            params: Query parameters
-            max_pages: Maximum number of pages to fetch
-
-        Returns:
-            Combined list of all results
+        Returns a dict shaped ``{"results": [...], "truncated": bool,
+        "next_cursor": str | None, "pages_fetched": int}`` so callers can
+        warn the user when the page cap silently dropped data — which used
+        to be invisible for broad option chains.
         """
         all_results: list[dict[str, Any]] = []
         current_params = dict(params or {})
         pages_fetched = 0
+        next_cursor: str | None = None
+        truncated = False
 
         while pages_fetched < max_pages:
             data = await self._get(endpoint, current_params)
@@ -200,19 +199,29 @@ class MassiveClient:
             # Check for next page cursor
             next_url = data.get("next_url")
             if not next_url:
+                next_cursor = None
                 break
 
             # Extract cursor from next_url
-            # Massive returns full URL, we need to extract the cursor parameter
             if "cursor=" in next_url:
                 cursor = next_url.split("cursor=")[-1].split("&")[0]
                 current_params["cursor"] = cursor
+                next_cursor = cursor
             else:
+                next_cursor = None
                 break
 
             pages_fetched += 1
 
-        return all_results
+            if pages_fetched >= max_pages and next_cursor is not None:
+                truncated = True
+
+        return {
+            "results": all_results,
+            "truncated": truncated,
+            "next_cursor": next_cursor if truncated else None,
+            "pages_fetched": pages_fetched,
+        }
 
     # =========================================================================
     # MVP Tools - Critical Real-Time Options Endpoints
@@ -310,7 +319,7 @@ class MassiveClient:
         contract_type: str | None = None,
         expired: bool = False,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """List all option contracts with optional filters.
 
         Args:
@@ -321,7 +330,10 @@ class MassiveClient:
             limit: Maximum results per page
 
         Returns:
-            List of option contract references
+            Dict containing ``results`` (the list of contract references),
+            ``truncated`` (True if the page cap was hit before exhausting
+            the cursor), ``next_cursor`` (resume token when truncated), and
+            ``pages_fetched``.
         """
         endpoint = "/v3/reference/options/contracts"
         params: dict[str, Any] = {"limit": min(limit, 1000)}

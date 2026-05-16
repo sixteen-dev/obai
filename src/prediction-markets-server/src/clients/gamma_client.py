@@ -287,13 +287,17 @@ class GammaClient:
         outcomes = self._parse_json_field(raw.get("outcomes", []))
         outcome_prices = self._parse_json_field(raw.get("outcomePrices", []))
 
-        # Parse outcome prices from strings to floats
-        parsed_prices: list[float] = []
+        # Preserve parse failures as ``None`` instead of collapsing them to
+        # ``0.0``. A genuine 0¢ Polymarket price and a malformed price both
+        # land in the same downstream calculations otherwise, and consumers
+        # cannot distinguish "true zero-probability outcome" from "we don't
+        # know".
+        parsed_prices: list[float | None] = []
         for p in outcome_prices:
             try:
                 parsed_prices.append(float(p))
             except (ValueError, TypeError):
-                parsed_prices.append(0.0)
+                parsed_prices.append(None)
 
         # Parse clobTokenIds which may also be a JSON string
         clob_token_ids = self._parse_json_field(raw.get("clobTokenIds", []))
@@ -316,7 +320,15 @@ class GammaClient:
                             if label:
                                 event_tags.append(str(label))
                     break
-        market_url = f"https://polymarket.com/event/{event_slug}" if event_slug else ""
+        # Prefer the parent event slug because that's what Polymarket actually
+        # hosts; fall back to the market slug when no event was returned so
+        # the user still gets a clickable link instead of an empty string.
+        if event_slug:
+            market_url = f"https://polymarket.com/event/{event_slug}"
+        elif slug:
+            market_url = f"https://polymarket.com/market/{slug}"
+        else:
+            market_url = ""
 
         return {
             "condition_id": raw.get("conditionId", ""),

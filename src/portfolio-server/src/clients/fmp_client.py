@@ -372,16 +372,25 @@ class FMPClient:
             Falls back to default if API fails.
 
         """
+        rate, _ = await self.get_risk_free_rate_with_source()
+        return rate
+
+    async def get_risk_free_rate_with_source(self) -> tuple[Decimal, str]:
+        """Fetch the risk-free rate and return its source alongside the value.
+
+        Returns ``("treasury_3m", rate)`` on success and ``("fallback", rate)``
+        when the upstream call fails, so callers can disclose the source in
+        downstream risk metrics rather than silently using a stale default.
+        """
         try:
             rates = await self.get_treasury_rates()
             if rates and "month3" in rates:
-                # API returns percent (5.45), convert to decimal (0.0545)
-                return Decimal(str(rates["month3"])) / 100
+                return Decimal(str(rates["month3"])) / 100, "treasury_3m"
             logger.warning("risk_free_rate_fallback", reason="month3 not in response")
         except Exception as e:
             logger.warning("risk_free_rate_fallback", error=str(e), error_type=type(e).__name__)
 
-        return FALLBACK_RISK_FREE_RATE
+        return FALLBACK_RISK_FREE_RATE, "fallback"
 
     async def get_economic_indicator(self, name: str) -> Decimal | None:
         """Get economic indicator value from FMP API.

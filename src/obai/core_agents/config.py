@@ -102,10 +102,14 @@ class AgentConfig(BaseSettings):
         extra="ignore",
     )
 
-    # OpenAI
+    # OpenAI. Default to empty so config-only commands (e.g. `obai status`,
+    # which just probes MCP server connectivity) can construct the config
+    # without an OpenAI key configured. Agent creation paths still depend
+    # on the OpenAI SDK reading ``OPENAI_API_KEY`` from the environment, so
+    # missing keys still fail loudly when the hub actually tries to run.
     openai_api_key: str = Field(
-        ...,
-        description="OpenAI API key",
+        default="",
+        description="OpenAI API key (required for agent runs, not for `obai status`).",
     )
 
     # Agent Models
@@ -152,6 +156,13 @@ class AgentConfig(BaseSettings):
     prediction_markets_model: str | None = Field(
         default=None,
         description="Override model for prediction markets agent (uses specialist_model if None)",
+    )
+    guardrail_model: str = Field(
+        default="gpt-5-mini",
+        description=(
+            "Model for input guardrail validation. Pick a small, cheap model — "
+            "guardrails run on every query."
+        ),
     )
 
     # Reasoning effort and output verbosity. Two tiers, same shape as the
@@ -359,7 +370,7 @@ def get_config() -> AgentConfig:
     """
     global _config
     if _config is None:
-        _config = AgentConfig()  # type: ignore[call-arg]
+        _config = AgentConfig()
         _config.configure_logging()
         logger.debug("Agent configuration loaded")
     return _config
