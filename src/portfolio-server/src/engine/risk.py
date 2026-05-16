@@ -346,11 +346,14 @@ def _build_risk_metrics(  # noqa: PLR0913
         beta = 1.0
         r_squared = 0.0
 
-    # Max drawdown
-    cumulative = np.cumprod(1 + port_returns)
-    # Use dates starting from index 1 (since returns are diff-based)
-    return_dates = aligned_dates[1:]
-    max_dd, current_dd, dd_start, dd_end = _compute_max_drawdown(cumulative, return_dates)
+    # Max drawdown.
+    # Prepend a 1.0 baseline so the running peak can reference the day-0
+    # value. Without this, a portfolio that drops on day 1 and never
+    # recovers has its "peak" set to (1 + r_1) < 1.0, which understates
+    # the true drawdown and labels the wrong day as the peak.
+    cumulative = np.concatenate(([1.0], np.cumprod(1 + port_returns)))
+    dates_with_base = [aligned_dates[0], *aligned_dates[1:]]
+    max_dd, current_dd, dd_start, dd_end = _compute_max_drawdown(cumulative, dates_with_base)
 
     # Total return and annualized return (CAGR)
     total_return = float(cumulative[-1]) - 1.0

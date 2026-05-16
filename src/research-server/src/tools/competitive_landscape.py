@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from ..clients.exa_client import ExaClient, _days_ago
 from ..config import get_settings
@@ -10,6 +14,9 @@ from ..logging_config import get_logger, log_error
 from .freshness import freshness_summary
 
 logger = get_logger(__name__)
+
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_COMPANY_SUFFIXES = ("inc", "corp", "corporation", "co", "ltd", "llc", "plc", "ag", "sa")
 
 
 async def research_competitive_landscape(
@@ -74,26 +81,50 @@ async def research_competitive_landscape(
         raise
 
 
+def _normalize_for_match(text: str) -> str:
+    """Lowercase, strip non-alphanumerics, drop common company-name suffixes."""
+    s = _NON_ALNUM.sub("", text.lower())
+    for suffix in _COMPANY_SUFFIXES:
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s
+
+
+def _url_matches_company(url: str, normalized_company: str) -> bool:
+    """Check if URL's domain contains the normalized company name.
+
+    Filters out unrelated top results like aggregator pages or
+    competitor sites that would otherwise seed find_similar with junk.
+    """
+    if not normalized_company:
+        return False
+    host = urlparse(url).hostname or ""
+    domain = _NON_ALNUM.sub("", host.lower())
+    return normalized_company in domain or domain in normalized_company
+
+
 async def _resolve_company_url(client: ExaClient, company_name: str) -> str | None:
     """Resolve company name to its homepage URL via a quick Exa search.
 
-    Args:
-        client: Initialized ExaClient.
-        company_name: Company name to resolve.
-
-    Returns:
-        Company homepage URL or None if not found.
-
+    Looks at the top N results and only accepts one whose domain
+    contains the company name — otherwise downstream ``find_similar``
+    can be seeded with an unrelated site and return useless competitors.
     """
+    normalized = _normalize_for_match(company_name)
     try:
         results = await client.search(
             query=f"{company_name} official website",
             search_type="keyword",
-            num_results=1,
+            num_results=5,
             category="company",
         )
-        if results:
-            return results[0].url
-    except Exception:
-        logger.warning("company_url_resolve_failed", company=company_name)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("company_url_resolve_failed", company=company_name, error=str(exc))
+        return None
+
+    for result in results:
+        if _url_matches_company(result.url, normalized):
+            return result.url
+
+    logger.info("company_url_no_domain_match", company=company_name, candidates=len(results))
     return None
