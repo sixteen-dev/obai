@@ -1,10 +1,9 @@
-# OBaI E2E Regression — advisor/quant + recent-events case set v3
-# DRAFT — replaces v2; v1 preserved at cases.yaml.bak, v2 at cases.yaml.bak2.
+# OBaI E2E Regression — advisor/quant case set v2
+# DRAFT — replaces v1, which is preserved at cases.yaml.bak.
 #
 # Modeled on the workflow a real quant researcher or financial advisor follows
-# before placing a trade, expanded with hedge-fund / retail framings and
-# recent-events / catalyst-driven scenarios:
-#   1. Discovery       — what is interesting today?
+# before placing a trade:
+#   1. Discovery       — what's interesting today?
 #   2. Universe        — define a candidate set with constraints
 #   3. Thesis          — research the name(s)
 #   4. Risk            — portfolio context, concentration, drawdown
@@ -13,19 +12,16 @@
 #   7. Coordination    — multi-step queries that need several specialists in order
 #   8. Prediction mkts — event-driven trades
 #   9. Guardrail/bnd   — refusal, boundary, error handling
-#  10. Recent events   — catalyst / regime / macro queries (hedge-fund framing)
-#  11. Retail framings — "should I", DCA, tax-loss, meme-stock, IRA reallocation
-#  12. Knowledge base  — corpus-grounded vocabulary / strategy lookup
 #
 # OBaI skill coverage (every hub skill is exercised at least once):
-#   - obai-grounding-and-cache       : D1, D3, R2, R4, RT1
-#   - obai-stock-synthesis           : T2-T4, K1-K4, C1, M1-M3, RT2
-#   - obai-research-routing          : T1, M1
-#                                        banned on: B1, S1, S2, RT1
+#   - obai-grounding-and-cache       : D1, D3              (live numeric/freshness)
+#   - obai-stock-synthesis           : T2-T4, K1-K4, C1    (multi-specialist synthesis)
+#   - obai-research-routing          : T1                  (deep dive)
+#                                        banned on: B1, S1, S2
 #   - obai-prediction-market-routing : P1, P2, G2
-#   - obai-strategy-routing          : S1-S5, KB2, KB3
+#   - obai-strategy-routing          : S1-S5
 #
-# Field reference:
+# Field reference (preserved from v1):
 #   id, feature              — used in report
 #   query                    — verbatim user query
 #   expected_tools           — specialist tool spans that MUST appear
@@ -40,7 +36,7 @@
 #   smoke                    — included in smoke-only runs
 
 test_cases:
-  # ── 1. Discovery: what is the market doing today? ──
+  # ── 1. Discovery: what's the market doing today? ──
   - id: D1
     feature: sector_rotation
     query: "Which S&P 500 sectors are leading and lagging over the past month? Show 1M and 3M returns versus SPY and call out any clear rotation."
@@ -186,7 +182,7 @@ test_cases:
 
   - id: S4
     feature: walk_forward
-    query: "I run a 5/20 EMA crossover on SPY. Walk-forward test it with 2-year train, 6-month test, rolling, from 2015 onward. Tell me if it is robust or overfit."
+    query: "I run a 5/20 EMA crossover on SPY. Walk-forward test it with 2-year train, 6-month test, rolling, from 2015 onward. Tell me if it's robust or overfit."
     expected_tools: [strategy_analysis]
     expected_skills: [obai-strategy-routing]
     expect_async_job: true
@@ -232,38 +228,10 @@ test_cases:
     expected_skills: [obai-stock-synthesis]
     description: Confirm the move with price/volume, then look for catalysts.
 
-  - id: M1
-    feature: screen_then_research
-    query: "Screen U.S. large-caps in the semiconductors industry with forward P/E below 25 and revenue growth above 15%. Then build a quick research read on the top name from the screen."
-    expected_tools: [screener_lookup, research_analysis]
-    expected_sequence: [screener_lookup, research_analysis]
-    expected_skills: [obai-research-routing]
-    allowed_extras: [fundamentals_analysis, market_data_analysis, events_news_analysis]
-    description: Multi-step universe-build then thesis on the top hit (screen -> research order).
-
-  - id: M2
-    feature: news_then_portfolio
-    query: "A regional bank, say PNC, just reported a large unrealized loss on its bond book. I hold 20% KRE, 40% SPY, 40% bonds. What is the news impact and how does my portfolio absorb it?"
-    expected_tools: [events_news_analysis, portfolio_analysis]
-    expected_sequence: [events_news_analysis, portfolio_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [market_data_analysis, fundamentals_analysis]
-    description: News-shock -> portfolio impact assessment (events -> portfolio order).
-
-  - id: M3
-    feature: setup_then_backtest_then_exec
-    query: "MSFT reports earnings next week. Give me the setup, then backtest a post-earnings drift strategy of buying MSFT at the next-day open after an EPS beat and selling 10 trading days later, going back 5 years, then propose an entry / exit / size for a $100k allocation."
-    expected_tools: [events_news_analysis, strategy_analysis, market_data_analysis]
-    expected_sequence: [events_news_analysis, strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    expect_async_job: true
-    allowed_extras: [fundamentals_analysis]
-    description: Earnings setup -> historical drift backtest -> execution plan.
-
   # ── 8. Prediction markets ──
   - id: P1
     feature: pm_market_explainer
-    query: "Find the most liquid Polymarket market on the 2026 U.S. midterm Senate control. Explain how it resolves and what it is pricing right now."
+    query: "Find the most liquid Polymarket market on the 2026 U.S. midterm Senate control. Explain how it resolves and what it's pricing right now."
     expected_tools: [prediction_market_analysis]
     expected_skills: [obai-prediction-market-routing]
     smoke: true
@@ -304,110 +272,3 @@ test_cases:
     expected_tools: [market_data_analysis]
     allowed_extras: [screener_lookup]
     description: Common-name typo — should disambiguate to GOOGL/GOOG.
-
-  - id: ERR2
-    feature: ticker_rebrand
-    query: "Where is FB trading today?"
-    expected_tools: [market_data_analysis]
-    allowed_extras: [screener_lookup, events_news_analysis]
-    description: Rebrand disambiguation — FB no longer trades; should resolve to META.
-
-  # ── 10. Recent events / hedge-fund framings ──
-  - id: R1
-    feature: post_fed_sector_reaction
-    query: "After the most recent FOMC decision, which S&P sectors moved most over the following 5 trading days? Is the move consistent with what the dot plot implied?"
-    expected_tools: [market_data_analysis, events_news_analysis]
-    expected_sequence: [events_news_analysis, market_data_analysis]
-    description: Catalyst-driven sector reaction — events first to anchor the Fed action, then market data for the move.
-
-  - id: R2
-    feature: vix_term_structure
-    query: "What does the VIX term structure look like right now — contango or backwardation, and how steep is the front-month vs 3-month slope versus the trailing 1-year? What does that imply about near-term equity vol?"
-    expected_tools: [market_data_analysis]
-    expected_skills: [obai-grounding-and-cache]
-    description: Vol-regime read for a hedge-fund-style positioning question.
-
-  - id: R3
-    feature: megacap_earnings_postmortem
-    query: "For the most recent quarter, summarize the 1-day post-earnings reaction for NVDA, MSFT, GOOGL, META, AAPL, AMZN, and TSLA. Pair the move with the EPS / revenue surprise and call out any names where the reaction looked inconsistent with the print."
-    expected_tools: [events_news_analysis, fundamentals_analysis, market_data_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [research_analysis]
-    description: Cross-sectional earnings-reaction read across Mag-7 names.
-
-  - id: R4
-    feature: crowded_trade_unwind
-    query: "Inside the 'AI capex' theme — names like NVDA, AVGO, ANET, VRT, SMCI, and the hyperscalers — which have the largest 1-month drawdown relative to their 3-month trend? Is breadth in the basket deteriorating?"
-    expected_tools: [market_data_analysis]
-    expected_skills: [obai-grounding-and-cache]
-    allowed_extras: [screener_lookup]
-    description: Crowded-trade / breadth check inside a thematic basket.
-
-  - id: R5
-    feature: yield_curve_bank_correlation
-    query: "How has the 2s10s yield curve moved over the past 90 days, and how have regional bank stocks (use KRE as the proxy) reacted? Is the historical positive correlation breaking down?"
-    expected_tools: [market_data_analysis]
-    description: Cross-asset (rates vs equity sub-sector) correlation read.
-
-  - id: R6
-    feature: earnings_revision_breadth
-    query: "What is the breadth of upward versus downward EPS revisions for next quarter across the S&P 500 over the past 90 days? Which sectors lead and which lag?"
-    expected_tools: [fundamentals_analysis]
-    allowed_extras: [screener_lookup]
-    description: Revision-breadth read for sector positioning.
-
-  # ── 11. Retail framings ──
-  - id: RT1
-    feature: buy_the_dip
-    query: "QQQ pulled back about 4% over the past two weeks. From a technical standpoint, where are the next support levels and how does the current setup compare to similar pullbacks in the trailing year?"
-    expected_tools: [market_data_analysis]
-    expected_skills: [obai-grounding-and-cache]
-    expected_skills_absent: [obai-research-routing]
-    description: Retail "buy the dip" framing — must stay in market-data lane, not over-route to research.
-
-  - id: RT2
-    feature: dca_thesis_check
-    query: "I bought TSLA six months ago and I'm down about 15%. Is the long-term thesis still intact based on fundamentals, technicals, and any meaningful news in the past quarter — or is this a value trap?"
-    expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [research_analysis]
-    description: Retail DCA framing — should pull a balanced multi-specialist read, no advice language expected.
-
-  - id: RT3
-    feature: tax_loss_harvest
-    query: "My taxable account is NVDA 25%, GOOGL 20%, AAPL 20%, AMZN 15%, TSLA 10%, cash 10%. Which positions are down year-to-date enough to be sensible tax-loss harvesting candidates, and what replacements would keep the exposure roughly intact without triggering wash sale?"
-    expected_tools: [portfolio_analysis, market_data_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [screener_lookup]
-    description: Year-end tax-loss harvesting candidates with substitute names.
-
-  - id: RT4
-    feature: meme_stock_checkin
-    query: "Social media is talking about GME and AMC again. What does the data actually say — recent volume, short interest, and any genuine news catalysts versus chatter?"
-    expected_tools: [market_data_analysis, events_news_analysis]
-    allowed_extras: [screener_lookup]
-    description: Retail meme-stock "is it real" check — needs data + news, not narrative.
-
-  # ── 12. Knowledge-base / corpus grounding ──
-  - id: KB1
-    feature: kb_concept_lookup
-    query: "What is contango, and which futures-roll-related strategies does OBaI's corpus know about?"
-    expected_tools: [knowledge_base_lookup]
-    description: Named-concept lookup — librarian-style, no specialist handoff required.
-
-  - id: KB2
-    feature: kb_strategy_then_backtest
-    query: "Tell me what the corpus says about cross-sectional residual momentum, then backtest the 6-month version on the S&P 500 from 2015 onward."
-    expected_tools: [knowledge_base_lookup, strategy_analysis]
-    expected_sequence: [knowledge_base_lookup, strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    expect_async_job: true
-    description: Corpus grounding then strategy backtest — the KB lookup seeds vocabulary for the strategy handoff.
-
-  - id: KB3
-    feature: kb_named_vol_strategy_then_proxy_backtest
-    query: "What is VRP harvest, and can you test a simple version on SPY options or the closest available proxy?"
-    expected_tools: [knowledge_base_lookup, strategy_analysis]
-    expected_sequence: [knowledge_base_lookup, strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    description: Named volatility strategy plus proxy backtest — KB lookup must happen before strategy handoff even without the word corpus.

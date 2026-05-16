@@ -6,7 +6,6 @@ Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phase 2.3.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -17,48 +16,6 @@ from ..logging_config import get_logger
 from .store import DataStore
 
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class DownloadResult:
-    """Outcome of a multi-symbol download.
-
-    `data` holds successfully fetched DataFrames. `skipped` holds (symbol, reason)
-    pairs for symbols that failed — a single bad symbol must not abort the batch,
-    so failures are surfaced instead of raised. Callers should propagate `skipped`
-    to user-visible warnings; an empty `data` dict signals total failure.
-    """
-
-    data: dict[str, pl.DataFrame] = field(default_factory=dict)
-    skipped: list[tuple[str, str]] = field(default_factory=list)
-
-    def __contains__(self, symbol: str) -> bool:
-        """Membership-test successful symbols (proxies ``data``)."""
-        return symbol in self.data
-
-    def __iter__(self) -> Any:
-        """Iterate successful symbols (proxies ``data``)."""
-        return iter(self.data)
-
-    def __len__(self) -> int:
-        """Count successful symbols (proxies ``data``)."""
-        return len(self.data)
-
-    def __getitem__(self, symbol: str) -> pl.DataFrame:
-        """Look up a successful symbol's DataFrame (proxies ``data``)."""
-        return self.data[symbol]
-
-    def items(self) -> Any:
-        """Return (symbol, DataFrame) pairs of successful downloads."""
-        return self.data.items()
-
-    def keys(self) -> Any:
-        """Return successful symbol names."""
-        return self.data.keys()
-
-    def values(self) -> Any:
-        """Return successful DataFrames."""
-        return self.data.values()
 
 
 class DataDownloader:
@@ -228,16 +185,12 @@ class DataDownloader:
         start_date: str,
         end_date: str,
         timeframe: str = "daily",
-    ) -> DownloadResult:
+    ) -> dict[str, pl.DataFrame]:
         """Ensure data exists for all symbols, downloading if needed.
 
         Downloads are run concurrently with a semaphore to respect FMP rate
         limits. Cached symbols are resolved immediately without consuming a
-        semaphore slot. Per-symbol failures are recorded in the returned
-        ``DownloadResult.skipped`` list rather than raised — one bad symbol
-        (delisted ticker, unsupported share-class format, transient network
-        error) must not abort the whole batch when other symbols downloaded
-        successfully.
+        semaphore slot.
 
         Args:
             symbols: List of stock ticker symbols.
@@ -246,10 +199,7 @@ class DataDownloader:
             timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
 
         Returns:
-            ``DownloadResult`` with ``data`` (successful symbols) and
-            ``skipped`` (failed symbols and the reason each failed). The result
-            object supports dict-like access so callers iterating successful
-            symbols can use it transparently.
+            Dict mapping symbol → DataFrame.
 
         """
         dt_start = date.fromisoformat(start_date)
@@ -271,35 +221,8 @@ class DataDownloader:
                 )
             return symbol, _slice_date_range(full_df, dt_start, dt_end)
 
-        results = await asyncio.gather(
-            *[_fetch_one(s) for s in symbols],
-            return_exceptions=True,
-        )
-
-        data: dict[str, pl.DataFrame] = {}
-        skipped: list[tuple[str, str]] = []
-        for symbol, outcome in zip(symbols, results, strict=True):
-            if isinstance(outcome, BaseException):
-                reason = f"{type(outcome).__name__}: {outcome}"
-                logger.warning(
-                    "symbol_fetch_failed",
-                    symbol=symbol,
-                    error_type=type(outcome).__name__,
-                    error=str(outcome),
-                )
-                skipped.append((symbol, reason))
-                continue
-            data[outcome[0]] = outcome[1]
-
-        if skipped:
-            logger.warning(
-                "batch_download_partial",
-                requested=len(symbols),
-                succeeded=len(data),
-                skipped=len(skipped),
-            )
-
-        return DownloadResult(data=data, skipped=skipped)
+        pairs = await asyncio.gather(*[_fetch_one(s) for s in symbols])
+        return dict(pairs)
 
     async def _fetch_from_fmp(
         self,

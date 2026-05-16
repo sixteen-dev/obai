@@ -83,7 +83,6 @@ src/**/**/CLAUDE.md
 docs/design/
 docs/website/
 docs/*.md
-!docs/prediction-markets-historical-analytics-upgrade.md
 docs/CLAUDE.md
 
 # =============================================================================

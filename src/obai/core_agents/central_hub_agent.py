@@ -57,7 +57,6 @@ from .config import ReasoningEffort, Verbosity, get_cache_config, get_config
 from .events_news_agent import EventsNewsAgent
 from .fundamentals_agent import FundamentalsAgent
 from .guardrails import create_input_guardrail
-from .knowledge_base_agent import KnowledgeBaseAgent
 from .logging_config import configure_file_logging
 from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
@@ -791,7 +790,6 @@ class CentralHubAgent:
         self.strategy_agent: StrategyAgent | None = None
         self.research_agent: ResearchAgent | None = None
         self.prediction_markets_agent: PredictionMarketsAgent | None = None
-        self.knowledge_base_agent: KnowledgeBaseAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -977,23 +975,6 @@ class CentralHubAgent:
             if self.prediction_markets_agent and self.prediction_markets_agent.agent:
                 specialist_tools.append(self._build_prediction_tool())
 
-            if self.knowledge_base_agent and self.knowledge_base_agent.agent:
-                specialist_tools.append(
-                    self.knowledge_base_agent.agent.as_tool(
-                        tool_name="knowledge_base_lookup",
-                        tool_description=(
-                            "Looks up named trading strategies and market concepts "
-                            "(regimes, instruments, factors, mechanics) by name, alias, or "
-                            "natural-language description. Returns canonical corpus entries "
-                            "the hub uses to ground vocabulary and seed strategy handoffs. "
-                            "Read-only, librarian-style — never analyzes or recommends."
-                        ),
-                        on_stream=_create_stream_handler(
-                            "knowledge_base_lookup", "Knowledge Base Agent"
-                        ),
-                    )
-                )
-
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
             specialist_tools.append(set_preferences)
@@ -1052,7 +1033,6 @@ class CentralHubAgent:
         self.strategy_agent = StrategyAgent()
         self.research_agent = ResearchAgent()
         self.prediction_markets_agent = PredictionMarketsAgent()
-        self.knowledge_base_agent = KnowledgeBaseAgent()
 
         required = [
             self.fundamentals_agent,
@@ -1064,7 +1044,7 @@ class CentralHubAgent:
             self.strategy_agent,
         ]
 
-        optional = [self.research_agent, self.prediction_markets_agent, self.knowledge_base_agent]
+        optional = [self.research_agent, self.prediction_markets_agent]
         all_agents = [*required, *optional]
         results = await asyncio.gather(
             *[a.initialize() for a in all_agents],
@@ -1091,13 +1071,6 @@ class CentralHubAgent:
                         "Other agents unaffected.",
                     )
                     self.prediction_markets_agent = None
-                elif agent is self.knowledge_base_agent:
-                    logger.warning(
-                        "Knowledge Base Agent unavailable — "
-                        "knowledge_base_lookup tool disabled. "
-                        "Other agents unaffected.",
-                    )
-                    self.knowledge_base_agent = None
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result
@@ -1126,7 +1099,6 @@ class CentralHubAgent:
         self.strategy_agent = None
         self.research_agent = None
         self.prediction_markets_agent = None
-        self.knowledge_base_agent = None
         self.agent = None
         self._run_config = None
         self._initialized = False
@@ -1302,7 +1274,6 @@ class CentralHubAgent:
             "strategy": self.strategy_agent,
             "research": self.research_agent,
             "prediction_markets": self.prediction_markets_agent,
-            "knowledge_base": self.knowledge_base_agent,
         }
 
         if specialist_name not in specialists:

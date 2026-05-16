@@ -236,7 +236,7 @@ check_key() {
 }
 
 check_key "OPENAI_API_KEY"    "required" "needed for Agent SDK (all agents)"
-check_key "FMP_API_KEY"       "required" "needed for 6 of 10 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
+check_key "FMP_API_KEY"       "required" "needed for 6 of 8 MCP servers (fundamentals, market data, news, screening, portfolio, backtest)"
 check_key "MASSIVE_API_KEY"   "optional" "needed for options-server only"
 check_key "TAVILY_API_KEY"    "optional" "needed for events-news-server AI search"
 check_key "EXA_API_KEY"       "optional" "needed for research-server (Exa semantic search)"
@@ -349,7 +349,7 @@ if [ "$SKIP_MCP" = false ]; then
             ok "Pre-built images pulled successfully"
         else
             warn "Could not pull pre-built images — building locally"
-            info "Building 10 MCP server images (this may take a few minutes on first run)..."
+            info "Building 8 MCP server images (this may take a few minutes on first run)..."
             docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
         fi
     fi
@@ -379,8 +379,6 @@ if [ "$SKIP_MCP" = false ]; then
         "portfolio:8006"
         "backtest:8007"
         "research:8008"
-        "prediction-markets:8009"
-        "knowledge-base:8011"
     )
 
     for entry in "${servers[@]}"; do
@@ -547,16 +545,14 @@ if [ "$SKIP_MCP" = false ]; then
     echo ""
     # echo "  Qdrant:      http://localhost:6333/dashboard"  # disabled
     echo "  MCP Servers:"
-    echo "    fundamentals       http://localhost:8001/mcp"
-    echo "    market-data        http://localhost:8002/mcp"
-    echo "    events-news        http://localhost:8003/mcp"
-    echo "    options            http://localhost:8004/mcp"
-    echo "    screening          http://localhost:8005/mcp"
-    echo "    portfolio          http://localhost:8006/mcp"
-    echo "    backtest           http://localhost:8007/mcp"
-    echo "    research           http://localhost:8008/mcp"
-    echo "    prediction-markets http://localhost:8009/mcp"
-    echo "    knowledge-base     http://localhost:8011/mcp"
+    echo "    fundamentals    http://localhost:8001/mcp"
+    echo "    market-data     http://localhost:8002/mcp"
+    echo "    events-news     http://localhost:8003/mcp"
+    echo "    options         http://localhost:8004/mcp"
+    echo "    screening       http://localhost:8005/mcp"
+    echo "    portfolio       http://localhost:8006/mcp"
+    echo "    backtest        http://localhost:8007/mcp"
+    echo "    research        http://localhost:8008/mcp"
 fi
 
 echo ""

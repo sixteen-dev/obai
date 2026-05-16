@@ -218,10 +218,8 @@ class TestEnsureDataFreshnessWithRange:
         dl = DataDownloader(mock_fmp, mock_store)
         results = await dl.ensure_data(["AAPL"], "2020-01-01", "2024-12-31")
 
-        # Should NOT have been a cache hit — should have called download_symbol.
-        # `in results` exercises DownloadResult.__contains__ as a dict-like proxy.
+        # Should NOT have been a cache hit — should have called download_symbol
         assert "AAPL" in results
-        assert results.skipped == []
         assert mock_fmp.get_historical_daily.call_count >= 1
 
 
@@ -250,92 +248,3 @@ class TestDedup:
 
         # No duplicate dates
         assert result["date"].is_duplicated().sum() == 0
-
-
-class TestEnsureDataPartialFailure:
-    """A single failing symbol must not abort the batch."""
-
-    @pytest.mark.asyncio()
-    async def test_one_bad_symbol_does_not_kill_batch(
-        self,
-        mock_fmp: AsyncMock,
-        mock_store: MagicMock,
-    ) -> None:
-        """Two-symbol fetch: one succeeds, one raises — batch returns the success."""
-        good_rows = _make_ohlcv(date(2023, 1, 2), 100)
-
-        async def fetch_side_effect(symbol: str, *_args: Any, **_kwargs: Any) -> Any:
-            if symbol == "BAD":
-                msg = "Client error '402 Payment Required'"
-                raise RuntimeError(msg)
-            return good_rows
-
-        mock_fmp.get_historical_daily.side_effect = fetch_side_effect
-
-        dl = DataDownloader(mock_fmp, mock_store)
-        result = await dl.ensure_data(
-            ["AAPL", "BAD"], "2023-01-01", "2023-12-31"
-        )
-
-        # Good symbol present; bad symbol absent but reported in skipped.
-        assert "AAPL" in result
-        assert "BAD" not in result
-        assert len(result.skipped) == 1
-        skipped_symbol, skipped_reason = result.skipped[0]
-        assert skipped_symbol == "BAD"
-        assert "402" in skipped_reason
-
-    @pytest.mark.asyncio()
-    async def test_all_symbols_fail_returns_empty_with_reasons(
-        self,
-        mock_fmp: AsyncMock,
-        mock_store: MagicMock,
-    ) -> None:
-        """When every symbol fails, the result is empty but skipped lists each reason."""
-
-        async def fetch_side_effect(symbol: str, *_args: Any, **_kwargs: Any) -> Any:
-            msg = f"network glitch on {symbol}"
-            raise ConnectionError(msg)
-
-        mock_fmp.get_historical_daily.side_effect = fetch_side_effect
-
-        dl = DataDownloader(mock_fmp, mock_store)
-        result = await dl.ensure_data(
-            ["AAA", "BBB"], "2023-01-01", "2023-12-31"
-        )
-
-        assert len(result) == 0
-        assert {sym for sym, _ in result.skipped} == {"AAA", "BBB"}
-        for _, reason in result.skipped:
-            assert "ConnectionError" in reason
-
-    @pytest.mark.asyncio()
-    async def test_dotted_share_class_normalized_through_to_fmp(
-        self,
-        mock_fmp: AsyncMock,
-        mock_store: MagicMock,
-    ) -> None:
-        """Dotted share-class tickers stay identifiable through the downloader.
-
-        The downloader passes the symbol identity through unchanged in the
-        returned dict key; the dot-to-dash normalization happens at the
-        fmp_client layer and is asserted there separately. This test guards
-        the downloader's identity-preserving behavior.
-        """
-        mock_fmp.get_historical_daily.return_value = _make_ohlcv(
-            date(2023, 1, 2), 50
-        )
-
-        dl = DataDownloader(mock_fmp, mock_store)
-        result = await dl.ensure_data(
-            ["BRK.B"], "2023-01-01", "2023-12-31"
-        )
-
-        # User-facing key stays "BRK.B".
-        assert "BRK.B" in result
-        # And the FMP client was called at least once for that symbol identity.
-        # (The dot->dash normalization is asserted at the fmp_client layer in
-        # tests/test_fmp_client.py; this test just guards the downloader's
-        # identity-preserving behavior.)
-        assert mock_fmp.get_historical_daily.call_count >= 1
-
