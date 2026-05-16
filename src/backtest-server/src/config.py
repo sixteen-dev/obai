@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # Disk Budget
     max_db_size_gb: float = Field(default=5.0, gt=0.0)
 
+    # Operator-only confirmation token required to use the destructive
+    # ``backtest_manage_storage_tool(action="prune", ...)``. Leave unset to
+    # disable prune entirely; set to a long random string to enable.
+    storage_admin_token: str = Field(default="")
+
     # Cache Configuration
     backtest_cache_dir: str = Field(default="./data/cache")
     backtest_cache_ttl_hours: int = Field(default=24)

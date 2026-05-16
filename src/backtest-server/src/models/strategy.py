@@ -320,10 +320,8 @@ class PositionSizing:
                 f"Unsupported allocation_mode '{self.allocation_mode}'. "
                 f"Supported: {sorted(SUPPORTED_ALLOCATION_MODES)}"
             )
-        if not 0 < self.max_position_pct <= 100:
-            errors.append(
-                f"max_position_pct must be in (0, 100]; got {self.max_position_pct}"
-            )
+        if not 0 < self.max_position_pct <= _MAX_PCT:
+            errors.append(f"max_position_pct must be in (0, 100]; got {self.max_position_pct}")
         if self.max_positions < 1:
             errors.append(f"max_positions must be >= 1; got {self.max_positions}")
         return errors
@@ -341,14 +339,10 @@ class RiskManagement:
     def validate(self) -> list[str]:
         """Reject negative or absurd stop/take-profit values."""
         errors: list[str] = []
-        if self.stop_loss_pct is not None and not 0 < self.stop_loss_pct <= 100:
-            errors.append(
-                f"stop_loss_pct must be in (0, 100]; got {self.stop_loss_pct}"
-            )
+        if self.stop_loss_pct is not None and not 0 < self.stop_loss_pct <= _MAX_PCT:
+            errors.append(f"stop_loss_pct must be in (0, 100]; got {self.stop_loss_pct}")
         if self.take_profit_pct is not None and self.take_profit_pct <= 0:
-            errors.append(
-                f"take_profit_pct must be positive; got {self.take_profit_pct}"
-            )
+            errors.append(f"take_profit_pct must be positive; got {self.take_profit_pct}")
         return errors
 
 
@@ -379,6 +373,7 @@ class ExecutionConfig:
 
 
 _MIN_BACKTEST_DAYS = 30
+_MAX_PCT = 100.0
 
 
 @dataclass

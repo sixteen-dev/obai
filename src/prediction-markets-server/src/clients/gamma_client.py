@@ -320,7 +320,15 @@ class GammaClient:
                             if label:
                                 event_tags.append(str(label))
                     break
-        market_url = f"https://polymarket.com/event/{event_slug}" if event_slug else ""
+        # Prefer the parent event slug because that's what Polymarket actually
+        # hosts; fall back to the market slug when no event was returned so
+        # the user still gets a clickable link instead of an empty string.
+        if event_slug:
+            market_url = f"https://polymarket.com/event/{event_slug}"
+        elif slug:
+            market_url = f"https://polymarket.com/market/{slug}"
+        else:
+            market_url = ""
 
         return {
             "condition_id": raw.get("conditionId", ""),

@@ -323,13 +323,25 @@ def _build_risk_metrics(  # noqa: PLR0913
     else:
         sortino = 0.0
 
-    # Beta and R-squared
+    # Beta and R-squared. Constant return series (zero variance) make
+    # covariance and correlation undefined — guard explicitly and emit
+    # neutral values instead of letting NaN slip into the JSON response.
     if len(bench_returns) >= MIN_SERIES_LENGTH:
-        cov_matrix = np.cov(port_returns, bench_returns)
         bench_var = float(np.var(bench_returns, ddof=1))
-        beta = float(cov_matrix[0][1]) / bench_var if bench_var > 0 else 1.0
-        corr = np.corrcoef(port_returns, bench_returns)
-        r_squared = float(corr[0][1] ** 2)
+        port_var = float(np.var(port_returns, ddof=1))
+        if bench_var > 0 and port_var > 0:
+            cov_matrix = np.cov(port_returns, bench_returns)
+            beta = float(cov_matrix[0][1]) / bench_var
+            corr = np.corrcoef(port_returns, bench_returns)
+            corr_val = float(corr[0][1])
+            r_squared = corr_val * corr_val if np.isfinite(corr_val) else 0.0
+        else:
+            beta = 0.0
+            r_squared = 0.0
+        if not np.isfinite(beta):
+            beta = 0.0
+        if not np.isfinite(r_squared):
+            r_squared = 0.0
     else:
         beta = 1.0
         r_squared = 0.0

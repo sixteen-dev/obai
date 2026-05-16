@@ -373,15 +373,24 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
     action: str,
     timeframe: str | None = None,
     older_than_days: int | None = None,
+    confirm_token: str | None = None,
 ) -> dict[str, Any]:
     """Manage DuckDB data storage — check status or prune old data.
 
     Design doc: Phase 2.4.
 
+    The ``prune`` action is destructive (deletes cached OHLCV rows). Any
+    client connected to this MCP server could trigger it, so we require an
+    out-of-band confirmation token before performing the delete. The token
+    is sourced from the ``BACKTEST_STORAGE_ADMIN_TOKEN`` setting and is
+    never logged. Status reads are always allowed.
+
     Args:
         action: "status" to report DB stats, "prune" to delete old data.
         timeframe: Timeframe to prune (required for prune action).
         older_than_days: Delete data older than this many days (required for prune).
+        confirm_token: Operator-supplied token matching
+            ``BACKTEST_STORAGE_ADMIN_TOKEN``. Required for ``prune``.
 
     Returns:
         Storage status or prune results.
@@ -412,6 +421,27 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
         }
 
     if action == "prune":
+        settings = _state.settings
+        expected_token = (
+            getattr(settings, "storage_admin_token", "") if settings is not None else ""
+        )
+        if not expected_token:
+            return {
+                "isError": True,
+                "error": (
+                    "Prune is disabled because BACKTEST_STORAGE_ADMIN_TOKEN is "
+                    "not configured on the server."
+                ),
+            }
+        if not confirm_token or confirm_token != expected_token:
+            return {
+                "isError": True,
+                "error": (
+                    "Prune requires a valid confirm_token matching "
+                    "BACKTEST_STORAGE_ADMIN_TOKEN."
+                ),
+            }
+
         if not timeframe:
             return {"isError": True, "error": "timeframe required for prune action"}
         if timeframe not in SUPPORTED_TIMEFRAMES:

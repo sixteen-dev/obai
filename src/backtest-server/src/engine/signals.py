@@ -106,10 +106,14 @@ def _build_condition_expr(condition: Condition) -> pl.Expr:
     if simple is not None:
         return simple
 
+    # Crossing semantics: the previous bar was strictly on one side, and the
+    # current bar is on or past the other side. Using `>=` / `<=` on the
+    # current bar catches equality-edge crossings (e.g. RSI exactly touching
+    # 30) which the strict-on-both-sides version would silently drop.
     if condition.operator == "crosses_above":
-        return (left.shift(1) < right.shift(1)) & (left > right)
+        return (left.shift(1) < right.shift(1)) & (left >= right)
     if condition.operator == "crosses_below":
-        return (left.shift(1) > right.shift(1)) & (left < right)
+        return (left.shift(1) > right.shift(1)) & (left <= right)
 
     msg = f"Unsupported operator: {condition.operator}"
     raise ValueError(msg)

@@ -186,9 +186,7 @@ async def backtest_prediction_setup(
                 # them so the aggregate stats don't get poisoned.
                 continue
 
-            history_result = await clob.get_price_history(
-                yes_token, interval="max", fidelity=500
-            )
+            history_result = await clob.get_price_history(yes_token, interval="max", fidelity=500)
             history = history_result.get("history", [])
             if len(history) < 2:
                 continue
