@@ -857,7 +857,7 @@ def _finalize_backtest_response(
     metrics blocks the miss path adds, and the strategy agent would lose
     robustness evidence between identical calls.
     """
-    output = result.to_dict()
+    output: dict[str, Any] = dict(result.to_dict())
     output["cache_hit"] = cache_hit
 
     if train_test is None:

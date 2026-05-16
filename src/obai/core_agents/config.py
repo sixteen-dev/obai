@@ -370,7 +370,7 @@ def get_config() -> AgentConfig:
     """
     global _config
     if _config is None:
-        _config = AgentConfig()  # type: ignore[call-arg]
+        _config = AgentConfig()
         _config.configure_logging()
         logger.debug("Agent configuration loaded")
     return _config

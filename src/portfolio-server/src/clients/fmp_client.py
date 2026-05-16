@@ -376,10 +376,10 @@ class FMPClient:
         return rate
 
     async def get_risk_free_rate_with_source(self) -> tuple[Decimal, str]:
-        """Same as ``get_risk_free_rate`` but also returns the source label.
+        """Fetch the risk-free rate and return its source alongside the value.
 
         Returns ``("treasury_3m", rate)`` on success and ``("fallback", rate)``
-        when the upstream call fails so callers can disclose the source in
+        when the upstream call fails, so callers can disclose the source in
         downstream risk metrics rather than silently using a stale default.
         """
         try:

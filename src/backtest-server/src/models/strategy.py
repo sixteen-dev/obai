@@ -320,6 +320,12 @@ class PositionSizing:
                 f"Unsupported allocation_mode '{self.allocation_mode}'. "
                 f"Supported: {sorted(SUPPORTED_ALLOCATION_MODES)}"
             )
+        if not 0 < self.max_position_pct <= 100:
+            errors.append(
+                f"max_position_pct must be in (0, 100]; got {self.max_position_pct}"
+            )
+        if self.max_positions < 1:
+            errors.append(f"max_positions must be >= 1; got {self.max_positions}")
         return errors
 
 
@@ -331,6 +337,19 @@ class RiskManagement:
     take_profit_pct: float | None = None
     close_eod: bool = False  # Phase 3.4: force close at session end
     no_entry_after: str | None = None  # Phase 3.4: "15:30" — no new entries after
+
+    def validate(self) -> list[str]:
+        """Reject negative or absurd stop/take-profit values."""
+        errors: list[str] = []
+        if self.stop_loss_pct is not None and not 0 < self.stop_loss_pct <= 100:
+            errors.append(
+                f"stop_loss_pct must be in (0, 100]; got {self.stop_loss_pct}"
+            )
+        if self.take_profit_pct is not None and self.take_profit_pct <= 0:
+            errors.append(
+                f"take_profit_pct must be positive; got {self.take_profit_pct}"
+            )
+        return errors
 
 
 @dataclass
@@ -346,6 +365,17 @@ class ExecutionConfig:
     initial_capital: float = 100_000.0
     volume_scaled_slippage: bool = False
     estimate_spread: bool = False
+
+    def validate(self) -> list[str]:
+        """Reject negative fees and non-positive starting capital."""
+        errors: list[str] = []
+        if self.slippage_pct < 0:
+            errors.append(f"slippage_pct must be >= 0; got {self.slippage_pct}")
+        if self.commission_pct < 0:
+            errors.append(f"commission_pct must be >= 0; got {self.commission_pct}")
+        if self.initial_capital <= 0:
+            errors.append(f"initial_capital must be > 0; got {self.initial_capital}")
+        return errors
 
 
 _MIN_BACKTEST_DAYS = 30
@@ -416,12 +446,31 @@ class DataConfig:
         return errors
 
 
+MAX_UNIVERSE_SIZE = 250
+
+
 @dataclass
 class Universe:
     """Stock universe and benchmark configuration."""
 
     symbols: list[str] = field(default_factory=list)
     benchmark: str = "SPY"
+
+    def validate(self) -> list[str]:
+        """Reject universes too large to download safely.
+
+        Each symbol triggers at least one FMP candle request and as many
+        indicator computations as the strategy defines. Without a cap a
+        strategy with `symbols: [...500 names]` can exhaust provider
+        quotas or available memory mid-backtest.
+        """
+        errors: list[str] = []
+        if len(self.symbols) > MAX_UNIVERSE_SIZE:
+            errors.append(
+                f"Universe has {len(self.symbols)} symbols; max supported is "
+                f"{MAX_UNIVERSE_SIZE}. Narrow with the screener before backtesting."
+            )
+        return errors
 
 
 @dataclass
@@ -445,12 +494,15 @@ class StrategyDefinition:
             errors.append("Strategy name cannot be empty")
         if not self.universe.symbols:
             errors.append("Universe must have at least one symbol")
+        errors.extend(self.universe.validate())
         errors.extend(self.data_config.validate())
         for ind in self.indicators:
             errors.extend(ind.validate())
         errors.extend(self.entry_rules.validate())
         errors.extend(self.exit_rules.validate())
         errors.extend(self.position_sizing.validate())
+        errors.extend(self.risk_management.validate())
+        errors.extend(self.execution_config.validate())
 
         # Portfolio mode requires daily timeframe (intraday bars collapse to same date key)
         if (

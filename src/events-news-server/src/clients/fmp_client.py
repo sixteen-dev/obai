@@ -20,6 +20,14 @@ MAX_RETRIES = 3
 RETRY_DELAYS = [0.5, 1.0, 2.0]  # Exponential backoff in seconds
 
 
+class FMPAPIError(Exception):
+    """Raised when FMP returns HTTP 200 with an error body (auth, quota, etc.)."""
+
+    def __init__(self, message: str, endpoint: str) -> None:
+        self.endpoint = endpoint
+        super().__init__(f"FMP API error on /{endpoint}: {message}")
+
+
 class FMPClient:
     """Client for Financial Modeling Prep API - Events and News endpoints."""
 
@@ -97,7 +105,15 @@ class FMPClient:
             try:
                 response = await self.client.get(url, params=query_params)
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                # FMP serves subscription/auth/rate-limit failures inside a
+                # 200 OK body with an "Error Message" key. Treat that as a
+                # failed call so the data doesn't flow downstream as
+                # legitimate content.
+                if isinstance(data, dict) and "Error Message" in data:
+                    msg = data.get("Error Message", "Unknown FMP API error")
+                    raise FMPAPIError(str(msg), endpoint)
+                return data
 
             except httpx.HTTPError as e:
                 last_error = e

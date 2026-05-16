@@ -16,6 +16,24 @@ from ..logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def _find_yes_token(token_ids: list[Any], outcomes: list[Any]) -> str | None:
+    """Return the CLOB token ID that maps to the YES outcome.
+
+    The previous behavior assumed ``token_ids[0]`` was YES, which breaks for
+    multi-outcome markets and any market where Polymarket reorders outputs.
+    Pair token IDs with their declared outcome label and pick the literal
+    YES; bail out if the pairing is ambiguous so the caller can skip the
+    market entirely.
+    """
+    if len(token_ids) != len(outcomes):
+        return None
+    for token_id, outcome in zip(token_ids, outcomes, strict=True):
+        label = str(outcome).strip().upper() if outcome is not None else ""
+        if label == "YES":
+            return str(token_id)
+    return None
+
+
 def _parse_window_seconds(window: str) -> int | None:
     """Parse compact windows like 6h, 3d, or 30m into seconds."""
     unit = window[-1:].lower()
@@ -157,11 +175,19 @@ async def backtest_prediction_setup(
 
         for market in filtered:
             token_ids = market.get("clob_token_ids", [])
+            outcomes = market.get("outcomes", [])
             if not token_ids:
                 continue
 
+            yes_token = _find_yes_token(token_ids, outcomes)
+            if yes_token is None:
+                # Multi-outcome or reordered markets without an explicit YES
+                # token can't be priced against a YES/NO assumption — skip
+                # them so the aggregate stats don't get poisoned.
+                continue
+
             history_result = await clob.get_price_history(
-                token_ids[0], interval="max", fidelity=500
+                yes_token, interval="max", fidelity=500
             )
             history = history_result.get("history", [])
             if len(history) < 2:
@@ -259,12 +285,19 @@ async def backtest_prediction_setup(
             round(resolved_yes / total_resolved, 4) if total_resolved > 0 else None
         )
 
+        warnings: list[str] = [
+            "min_liquidity is not applied to resolved markets (order books "
+            "are gone post-resolution and current liquidity is 0). Filtering "
+            "is performed on lifetime volume only."
+        ]
+
         return {
             "tool": "backtest_prediction_setup",
             "setup_description": setup_description,
+            "warnings": warnings,
             "evaluated_setup": {
                 "min_volume": min_volume,
-                "min_liquidity": min_liquidity,
+                "min_liquidity_requested_not_applied": min_liquidity,
                 "yes_entry_price_range": [price_threshold_min, price_threshold_max],
                 "forward_windows": forward_windows,
             },

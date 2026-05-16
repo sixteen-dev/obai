@@ -92,6 +92,7 @@ class OriginGuardMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
+        """Forward safe requests; reject mutating ones from non-local origins."""
         if request.method in _SAFE_METHODS:
             return await call_next(request)
         origin = request.headers.get("origin", "")

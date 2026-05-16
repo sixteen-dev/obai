@@ -90,6 +90,8 @@ class TestGammaClientNormalization:
         assert result == {}
 
     def test_normalize_market_handles_invalid_prices(self):
+        # Unparseable prices are preserved as `None` so a true 0¢ price and
+        # a missing price stay distinguishable downstream.
         client = GammaClient()
         result = client._normalize_market(
             {
@@ -97,7 +99,7 @@ class TestGammaClientNormalization:
                 "outcomePrices": ["not_a_number", None],
             }
         )
-        assert result["outcome_prices"] == [0.0, 0.0]
+        assert result["outcome_prices"] == [None, None]
 
     def test_normalize_market_parses_json_string_fields(self):
         """Gamma API sometimes returns array fields as JSON strings."""
