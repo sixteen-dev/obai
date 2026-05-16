@@ -276,6 +276,30 @@ services:
       retries: 3
       start_period: 30s
 
+  knowledge-base-server:
+    image: ghcr.io/sixteen-dev/obai/knowledge-base-server:${OBAI_VERSION:-latest}
+    build:
+      context: ./src/knowledge-base-server
+      dockerfile: Dockerfile
+    container_name: obai-knowledge-base-server
+    ports:
+      - "8011:8011"
+    environment:
+      # No API keys required — corpus.db is baked into the image at build time.
+      # Server Configuration
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8011
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8011/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   # qdrant-data:  # disabled with the qdrant service above
   backtest-data:

@@ -1,6 +1,6 @@
 ---
 name: obai-strategy-routing
-description: Use when the user wants to build, test, backtest, optimize, refine, repair, compare, or follow up on a systematic trading strategy. Covers strategy design, backtesting, optimization, robustness analysis, rule generation, strategy repair/comparison, execution handoff, and strategy job follow-ups. Excludes prediction markets.
+description: Use when the user wants to build, test, backtest, optimize, refine, repair, compare, or follow up on a systematic trading strategy. Covers strategy design, backtesting, optimization, robustness analysis, corpus-grounded named strategy or market-concept lookup before strategy handoff, rule generation, strategy repair/comparison, execution handoff, and strategy job follow-ups. Excludes prediction markets.
 ---
 
 # OBaI Strategy Routing
@@ -41,10 +41,11 @@ If prediction-market intent and equity-strategy intent both appear in the same r
 
 ## Required handoff inputs
 
-Before calling `strategy_analysis`, the Hub is responsible for resolving only two things:
+Before calling `strategy_analysis`, the Hub is responsible for resolving three things — in this order:
 
-- a concrete tradable universe (tickers), via direct user input or `screener_lookup`
-- the user's strategy objective family (e.g., momentum, mean-reversion, breakout), inferred from the request when not explicit
+1. **Vocabulary gate.** Call `knowledge_base_lookup` before `strategy_analysis`. This is a blocking precondition. Skip only when the user's text passes the self-contained rule test in `## Corpus consultation` — every executable ingredient literally written in the user's wording.
+2. A concrete tradable universe (tickers), via direct user input or `screener_lookup`.
+3. The user's strategy objective family, inferred from the request when not explicit.
 
 Everything else — entry logic, exit logic, risk controls, capital, sizing, timeframe, benchmark, data assumptions — stays inside the user's quoted request. Do not extract these into separate Hub-authored fields. The Strategy Agent owns implementation details.
 
@@ -74,15 +75,39 @@ Gather context from other specialists only when the strategy family materially d
 - Value, quality, fundamental-factor, balance-sheet → `fundamentals_analysis`
 - Portfolio overlay, hedging, exposure-aware sizing → `portfolio_analysis`
 - Thematic, competitive, structural-research-driven → `research_analysis`
-- Options-structure-dependent (e.g., covered call, wheel, vol selling) → `options_analysis`
+- Options-structure-dependent strategy family → `options_analysis`
 
-For purely technical strategy intent (momentum, mean-reversion, breakout, RSI/MACD/SMA-driven), skip pre-strategy context. The Strategy Agent fetches its own technical data.
+For purely technical indicator- or rule-driven strategy intent, skip pre-strategy context. The Strategy Agent fetches its own technical data.
 
 Engine-vs-family distinction: even though the backtest engine only executes technical signals, fundamental/value/event context still informs how the Strategy Agent shapes the technical rules used as proxies. Gather domain context whenever the strategy family depends on it, regardless of engine capability — the data informs strategy design. Keep the prep concise and avoid long historical data pulls.
 
 Do not add context calls merely to make the Hub look comprehensive.
 
 Do not gather long context that the Strategy Agent can fetch or evaluate directly.
+
+## Corpus consultation
+
+The corpus is the authority for named strategies and market concepts. Where it has an entry, that entry carries the source-defined signal, engine_fit posture, and approximation notes — substitutes built from training memory drift from the source the moment a corpus-covered name appears.
+
+**Blocking rule.** When the vocabulary gate fires and `knowledge_base_lookup` is available, the call is a precondition to `strategy_analysis`. Do not hand off until one of these is true:
+
+- the lookup matched and a compact seed is in `Strategy context`;
+- the lookup returned no match and a no-match note is in `Strategy context`;
+- the tool is unsurfaced and an unavailable-tool note is in `Strategy context`.
+
+Optional context specialists do not substitute for this lookup. When both are useful, corpus first.
+
+**Skip test.** Skip only when every executable ingredient is in the user's text: tradable instrument or universe, signal inputs or indicators, numeric parameters or thresholds, entry condition, exit or holding condition. Any ingredient implied by a named term — not literally written — means call the lookup. Familiarity, obviousness, or training-memory confidence is not a reason to skip. A definitional question paired with a strategy ask in the same turn is never self-contained.
+
+**Lookup input.** Pass the shortest salient strategy or concept phrase from the user's wording. No dates, tickers, constraints, or output-format requests unless they are part of the named term itself. Preserving the user query verbatim inside `User request` does not stand in for the lookup — the strategy specialist cannot resolve corpus vocabulary; only the librarian can.
+
+**One attempt per concept.** One lookup per named concept or strategy. If the response surfaces `related_strategies` and you choose to follow up, make a second lookup with the strategy id. Never ask the librarian to chain.
+
+**Retry hook.** A degraded `strategy_analysis` result — zero trades, "could not implement", a reject without concrete rules, or you re-prompting with a fresh framing — means call `knowledge_base_lookup` before the next attempt. The loop is usually the corpus answering a question you guessed at.
+
+**Seed propagation.** After a matched lookup, add a compact note to the existing `Context` bullet in `Strategy context`: entry id plus only the guidance that changes implementation (engine_fit, signal definition, universe constraint, approximation note). No new sections or fields. After a no-match or unavailable result, write the brief note in the same bullet and proceed.
+
+**Coverage realism.** The corpus is partial — many valid queries return no match. A null result is informative; the engine handles strategies the corpus does not cover. Missing entry ≠ invalid strategy.
 
 ## Handoff format
 
@@ -92,16 +117,16 @@ Use this exact two-block structure when calling `strategy_analysis`:
 User request: [original user request, preserved verbatim]
 Strategy context:
 - Universe: [tickers] (source: user or screener)
-- User objective: [momentum/mean-reversion/breakout/etc — mark as inferred when not explicit]
-- Timeframe: [daily/1hour/15min/5min — only when the user mentions day trading, scalping, or intraday]
+- User objective: [strategy objective family — mark as inferred when not explicit]
+- Timeframe: [requested timeframe — only when the user mentions day trading, scalping, or intraday]
 - Constraints: [user-provided constraints only — leave blank if none]
-- Preferences: [saved user preferences (benchmark, initial capital, risk tolerance, horizon) — pass through verbatim from the injected USER_PREFERENCES; omit the bullet only if no preferences are loaded]
+- Preferences: [saved user preferences — pass through verbatim from the injected USER_PREFERENCES; omit the bullet only if no preferences are loaded]
 - Context: [summarized key findings from specialist outputs, if any]
 ```
 
 These are the ONLY two top-level headers allowed. Do not invent additional sections — not for preferences, constraints, routing, or design notes. Any other content goes inside one of the two existing blocks (or it does not belong in the handoff).
 
-Follow-up shorthand: for status checks or drill-downs on prior output that introduce no new facts (e.g., "is job ABC123 done?", "explain the Sharpe number"), you may emit the `Strategy context:` header with no bullets beneath it. The `User request:` block must still carry the user's wording verbatim. Reruns, parameter tweaks, or anything that references prior strategy state need full bullets including the prior strategy in `Context:` — the Strategy Agent is stateless and cannot resolve "that" without explicit context.
+Follow-up shorthand: for status checks or drill-downs on prior output that introduce no new facts, you may emit the `Strategy context:` header with no bullets beneath it. The `User request:` block must still carry the user's wording verbatim. Reruns, parameter tweaks, or anything that references prior strategy state need full bullets including the prior strategy in `Context:` — the Strategy Agent is stateless and cannot resolve shorthand without explicit context.
 
 Rules for filling the template:
 

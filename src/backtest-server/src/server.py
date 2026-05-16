@@ -992,21 +992,25 @@ def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
             last_valid = float(arr[i])
 
 
-async def _execute_strategy(  # noqa: PLR0915
+async def _execute_strategy(  # noqa: PLR0912, PLR0915
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
     """Execute a full strategy: download → indicators → signals → backtest."""
     downloader = _state.require("downloader")
     timeframe = strategy.data_config.timeframe
-    symbol_dfs = await downloader.ensure_data(
+    download = await downloader.ensure_data(
         symbols=strategy.universe.symbols,
         start_date=strategy.data_config.start_date,
         end_date=strategy.data_config.end_date,
         timeframe=timeframe,
     )
+    symbol_dfs = download.data
 
     if not symbol_dfs:
         msg = "No data available for any symbol"
+        if download.skipped:
+            reasons = "; ".join(f"{s}: {r}" for s, r in download.skipped)
+            msg = f"{msg}. All symbols failed to download: {reasons}"
         raise ValueError(msg)
 
     # Check data coverage — warn prominently if FMP returned far less than requested
@@ -1016,19 +1020,30 @@ async def _execute_strategy(  # noqa: PLR0915
         strategy.data_config.end_date,
         timeframe,
     )
+    for skipped_symbol, skipped_reason in download.skipped:
+        data_warnings.append(
+            f"Skipped symbol {skipped_symbol} during download ({skipped_reason}); "
+            f"backtest proceeded on the remaining universe."
+        )
 
     # Load benchmark data if configured
     benchmark_df = None
     benchmark_sym = strategy.universe.benchmark
     if benchmark_sym and benchmark_sym not in symbol_dfs:
-        bench_dfs = await downloader.ensure_data(
+        bench_download = await downloader.ensure_data(
             symbols=[benchmark_sym],
             start_date=strategy.data_config.start_date,
             end_date=strategy.data_config.end_date,
             timeframe=timeframe,
         )
-        if benchmark_sym in bench_dfs:
-            benchmark_df = bench_dfs[benchmark_sym]
+        if benchmark_sym in bench_download.data:
+            benchmark_df = bench_download.data[benchmark_sym]
+        elif bench_download.skipped:
+            _, bench_reason = bench_download.skipped[0]
+            data_warnings.append(
+                f"Benchmark {benchmark_sym} could not be downloaded ({bench_reason}); "
+                f"strategy metrics will run without a benchmark comparison."
+            )
 
     exec_cfg = strategy.execution_config
     config = BacktestConfig(

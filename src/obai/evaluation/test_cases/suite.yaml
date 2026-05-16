@@ -1,11 +1,15 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 181 test cases across 7 active categories (A-E, G, H; F pending).
+# 202 test cases across 9 active categories (A-E, G, H, I, J; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 #   prediction markets,
 # Category H: Deep company research — Exa-powered research agent queries.
 #   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
+# Category I: Recent events / hedge-fund + retail framings — catalyst-driven
+#   queries that resolve "recent" at runtime via relative time windows.
+# Category J: Knowledge-base / corpus grounding — exercises the
+#   knowledge_base_lookup specialist (named strategy / concept corpus).
 #
 # Usage:
 #   python -m evaluation evaluate --suite                    # Run all
@@ -1387,6 +1391,213 @@ test_cases:
     query_type: competitive_moat_research
     expected_tools: [research_analysis]
     description: Deep competitive moat analysis — tests structural vs recent data
+
+  # ─────────────────────────────────────────────
+  # Category I: Recent events / hedge fund + retail framings
+  # ─────────────────────────────────────────────
+  # Catalyst-driven and persona-flavored queries. Treats "recent" as resolved
+  # at runtime — phrasing uses relative time windows ("the most recent FOMC",
+  # "over the past 90 days") so cases stay valid across regimes.
+  #
+  # Personas:
+  #   - Hedge fund / quant: vol regime, factor breadth, crowded-trade unwind,
+  #     cross-asset correlation, revision breadth, dispersion.
+  #   - Retail investor:    buy-the-dip framing, DCA thesis-check, tax-loss
+  #     harvesting, meme-stock noise check, IRA / Roth allocation, crypto.
+
+  # --- I1-I7: Hedge-fund framings ---
+
+  - id: I1
+    query: "After the most recent FOMC decision, which S&P 500 sectors moved most over the following five trading days? Is the move consistent with what the dot plot implied?"
+    category: I
+    query_type: post_fed_sector_reaction
+    expected_tools: [market_data_analysis, events_news_analysis]
+    description: Catalyst-driven sector reaction — events to anchor the Fed action, then market data for the move
+
+  - id: I2
+    query: "What does the VIX term structure look like right now — contango or backwardation, and how steep is the front-month vs three-month slope versus the trailing year? What does that imply about near-term equity vol?"
+    category: I
+    query_type: vix_term_structure
+    expected_tools: [market_data_analysis]
+    description: Vol-regime read for hedge-fund-style positioning
+
+  - id: I3
+    query: "For the most recent quarter, summarize the one-day post-earnings reaction for NVDA, MSFT, GOOGL, META, AAPL, AMZN, and TSLA. Pair the move with the EPS / revenue surprise and call out any names where the reaction looked inconsistent with the print."
+    category: I
+    query_type: megacap_earnings_postmortem
+    expected_tools: [events_news_analysis, fundamentals_analysis, market_data_analysis]
+    description: Cross-sectional earnings-reaction read across the Mag 7
+
+  - id: I4
+    query: "Inside the AI capex basket — NVDA, AVGO, ANET, VRT, SMCI, and the hyperscalers — which names have the largest one-month drawdown relative to their three-month trend? Is breadth in the basket deteriorating?"
+    category: I
+    query_type: crowded_trade_unwind
+    expected_tools: [market_data_analysis]
+    description: Crowded-trade breadth check inside a thematic basket
+
+  - id: I5
+    query: "How has the 2s10s yield curve moved over the past 90 days, and how have regional bank stocks (use KRE as the proxy) reacted? Is the historical positive correlation breaking down?"
+    category: I
+    query_type: yield_curve_bank_correlation
+    expected_tools: [market_data_analysis]
+    description: Cross-asset (rates vs equity sub-sector) correlation read
+
+  - id: I6
+    query: "What is the breadth of upward versus downward EPS revisions for next quarter across the S&P 500 over the past 90 days? Which sectors lead and which lag?"
+    category: I
+    query_type: earnings_revision_breadth
+    expected_tools: [fundamentals_analysis]
+    description: Revision-breadth read for sector positioning
+
+  - id: I7
+    query: "Russell 2000 names with short interest above 20% of float and a positive news catalyst in the past 30 days — give me the list and flag any with unusual call-volume activity."
+    category: I
+    query_type: short_squeeze_setup
+    expected_tools: [screener_lookup, events_news_analysis]
+    description: Short-squeeze setup screen with news catalyst overlay
+
+  # --- I8-I14: Retail-investor framings ---
+
+  - id: I8
+    query: "QQQ pulled back about 4% over the past two weeks. From a technical standpoint, where are the next support levels and how does the current setup compare to similar pullbacks in the trailing year?"
+    category: I
+    query_type: retail_buy_the_dip
+    expected_tools: [market_data_analysis]
+    description: Retail buy-the-dip framing — should stay in the market-data lane
+
+  - id: I9
+    query: "I bought TSLA six months ago and I'm down about 15%. Is the long-term thesis still intact based on fundamentals, technicals, and meaningful news in the past quarter — or is this a value trap?"
+    category: I
+    query_type: retail_dca_thesis_check
+    expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
+    description: Retail DCA framing — balanced multi-specialist read
+
+  - id: I10
+    query: "My taxable account is NVDA 25%, GOOGL 20%, AAPL 20%, AMZN 15%, TSLA 10%, cash 10%. Which positions are down year-to-date enough to be sensible tax-loss harvesting candidates, and what replacement names would keep the exposure roughly intact without triggering a wash sale?"
+    category: I
+    query_type: retail_tax_loss_harvest
+    expected_tools: [portfolio_analysis, market_data_analysis]
+    description: Year-end tax-loss harvesting with replacement suggestions
+
+  - id: I11
+    query: "Social media is talking about GME and AMC again. What does the data actually say — recent volume, short interest, and any genuine news catalysts versus chatter?"
+    category: I
+    query_type: retail_meme_stock_check
+    expected_tools: [market_data_analysis, events_news_analysis]
+    description: Meme-stock data-vs-narrative check
+
+  - id: I12
+    query: "I have a Roth IRA holding 60% VOO, 20% QQQ, 20% bonds. What does my real exposure look like under a stagflation scenario, and how would I tilt it if I expect rates to stay higher for longer?"
+    category: I
+    query_type: retail_ira_reallocation
+    expected_tools: [portfolio_analysis]
+    description: Roth IRA stagflation scenario and tilt suggestion
+
+  - id: I13
+    query: "I currently hold 5% BTC and 2% ETH in my taxable account. How has that crypto allocation performed versus adding the same dollar amount to QQQ over the past year, and how does it shift my overall portfolio risk?"
+    category: I
+    query_type: retail_crypto_allocation
+    expected_tools: [market_data_analysis, portfolio_analysis]
+    description: Retail crypto allocation performance and risk impact
+
+  - id: I14
+    query: "Backtest a strategy of buying SPY at the close on CPI-release days when the index closes down more than 0.5% and selling on the close three trading days later, from 2015 onward."
+    category: I
+    query_type: post_cpi_mean_reversion
+    expected_tools: [strategy_analysis]
+    description: Catalyst-conditioned mean-reversion backtest tied to a recurring macro print
+
+  # ─────────────────────────────────────────────
+  # Category J: Knowledge-base / corpus grounding
+  # ─────────────────────────────────────────────
+  # Exercises the knowledge_base_lookup specialist (corpus of named trading
+  # strategies and market concepts). Librarian-style: no analysis, no
+  # interpretation, no fallback to model training data.
+  #
+  # Coverage:
+  #   - Named concept lookup
+  #   - Named strategy lookup
+  #   - Concept -> strategy follow-up (two separate KB calls)
+  #   - Vague vocabulary disambiguation
+  #   - Category browse
+  #   - KB-grounded backtest (KB lookup seeds strategy_analysis handoff)
+  #   - Fabrication guard (unknown term -> "no corpus match", no improvisation)
+
+  - id: J1
+    query: "What is contango? Quick definition and which futures-roll-related strategies the OBaI corpus knows about."
+    category: J
+    query_type: kb_concept_lookup
+    expected_tools: [knowledge_base_lookup]
+    description: Named-concept lookup with related-strategies follow-up
+
+  - id: J2
+    query: "Describe the wheel strategy as the OBaI corpus has it — when to consider, when to avoid, and the main failure modes."
+    category: J
+    query_type: kb_strategy_lookup
+    expected_tools: [knowledge_base_lookup]
+    description: Named-strategy lookup, full record fields surfaced
+
+  - id: J3
+    query: "What does a 'low dispersion regime' mean, and which corpus strategies are sensitive to it?"
+    category: J
+    query_type: kb_vague_vocab
+    expected_tools: [knowledge_base_lookup]
+    description: Vocabulary disambiguation — concept lookup, then related strategies
+
+  - id: J4
+    query: "What categories of trading strategies and market concepts does the OBaI knowledge base cover? Give me the counts per category."
+    category: J
+    query_type: kb_category_browse
+    expected_tools: [knowledge_base_lookup]
+    description: Category browse — should use kb_list_categories_tool
+
+  - id: J5
+    query: "Tell me what the corpus says about cross-sectional residual momentum, then backtest the six-month version on the S&P 500 from 2015 onward."
+    category: J
+    query_type: kb_then_backtest
+    expected_tools: [knowledge_base_lookup, strategy_analysis]
+    expected_sequence: [knowledge_base_lookup, strategy_analysis]
+    description: Corpus grounding seeds a strategy backtest handoff (two specialists, KB first)
+
+  - id: J6
+    query: "What does the corpus say about the 'Shetty oscillator' indicator?"
+    category: J
+    query_type: kb_fabrication_guard
+    expected_tools: [knowledge_base_lookup]
+    description: Unknown-term guard — librarian must report no corpus match, not improvise from training data
+
+  - id: J7
+    query: "What is contango and backtest a futures-roll strategy that benefits from it on crude oil from 2015 onward."
+    category: J
+    query_type: kb_concept_then_backtest
+    expected_tools: [knowledge_base_lookup, strategy_analysis]
+    expected_sequence: [knowledge_base_lookup, strategy_analysis]
+    description: Implicit concept lookup seeds a futures-roll strategy backtest
+
+  - id: J8
+    query: "Find an OBaI strategy related to low-dispersion regimes and test it on S&P 500 stocks from 2010 onward."
+    category: J
+    query_type: kb_regime_discovery_then_backtest
+    expected_tools: [knowledge_base_lookup, strategy_analysis]
+    expected_sequence: [knowledge_base_lookup, strategy_analysis]
+    description: Regime vocabulary lookup, related strategy selection, then backtest
+
+  - id: J9
+    query: "Explain cross-sectional residual momentum and backtest the six-month version on the S&P 500 from 2015 onward."
+    category: J
+    query_type: kb_strategy_lookup_then_backtest
+    expected_tools: [knowledge_base_lookup, strategy_analysis]
+    expected_sequence: [knowledge_base_lookup, strategy_analysis]
+    description: Named strategy lookup seeds a concrete backtest
+
+  - id: J10
+    query: "What is VRP harvest, and can you test a simple version on SPY options or the closest available proxy?"
+    category: J
+    query_type: kb_named_strategy_then_proxy_backtest
+    expected_tools: [knowledge_base_lookup, strategy_analysis]
+    expected_sequence: [knowledge_base_lookup, strategy_analysis]
+    description: KB resolves strategy; strategy engine handles native or proxy feasibility
+
 
   # ─────────────────────────────────────────────
   # Category F: Session/Context (Multi-Turn)

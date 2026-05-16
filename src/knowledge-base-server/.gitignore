@@ -1,0 +1,15 @@
+# Raw source artifacts are large and mixed-license.
+sources/
+
+# Local acquisition / drafting state.
+state/
+
+# Private derived entries are for local use only.
+corpus_private/
+
+# Drafts require review before becoming public corpus entries.
+corpus/_drafts/
+corpus_private/_drafts/
+
+# Regenerable SQLite index and SQLite sidecar files.
+corpus.db*

@@ -68,6 +68,19 @@ def _build_date_chunks(
     return chunks
 
 
+def _to_fmp_symbol(symbol: str) -> str:
+    """Normalize an equity ticker for the FMP HTTP layer.
+
+    FMP uses dashes for share-class separators (BRK-B, BF-B) where Yahoo / common
+    listings often use dots (BRK.B, BF.B). A dotted symbol returns HTTP 402 from
+    FMP's historical-price-eod endpoint, which masquerades as a subscription
+    error and aborts the whole batch under asyncio.gather. Translate at the
+    HTTP boundary only; callers keep the original symbol form for cache keys,
+    log fields, and the returned result mapping.
+    """
+    return symbol.replace(".", "-")
+
+
 class FMPClient:
     """Client for fetching historical OHLCV data from FMP API."""
 
@@ -121,7 +134,7 @@ class FMPClient:
 
         """
         endpoint = "historical-price-eod/full"
-        params: dict[str, str] = {"apikey": self.api_key, "symbol": symbol}
+        params: dict[str, str] = {"apikey": self.api_key, "symbol": _to_fmp_symbol(symbol)}
         if start_date:
             params["from"] = start_date
         if end_date:
@@ -263,7 +276,7 @@ class FMPClient:
             List of OHLCV dicts.
 
         """
-        params: dict[str, str] = {"apikey": self.api_key, "symbol": symbol}
+        params: dict[str, str] = {"apikey": self.api_key, "symbol": _to_fmp_symbol(symbol)}
         if start_date:
             params["from"] = start_date
         if end_date:

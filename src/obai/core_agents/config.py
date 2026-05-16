@@ -92,6 +92,7 @@ class AgentConfig(BaseSettings):
         mcp_screener_url: URL for stock screener MCP server.
         mcp_portfolio_url: URL for portfolio analysis MCP server.
         mcp_backtest_url: URL for backtest strategy MCP server.
+        mcp_knowledge_base_url: URL for knowledge base MCP server (corpus lookup).
         mcp_timeout: Timeout for MCP requests in seconds.
         mcp_max_retries: Maximum retries for MCP requests.
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
@@ -226,6 +227,10 @@ class AgentConfig(BaseSettings):
     mcp_prediction_markets_url: str = Field(
         default="http://localhost:8009/mcp",
         description="Prediction markets MCP server URL",
+    )
+    mcp_knowledge_base_url: str = Field(
+        default="http://localhost:8011/mcp",
+        description="Knowledge base MCP server URL (corpus lookup)",
     )
 
     # MCP Client Settings
