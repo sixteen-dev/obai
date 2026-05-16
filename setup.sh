@@ -69,7 +69,7 @@ done
 
 load_env_file() {
     local env_file="$1"
-    local line
+    local line trimmed key value
 
     [ -f "$env_file" ] || return 0
 
@@ -77,11 +77,22 @@ load_env_file() {
         # Tolerate UTF-8 BOMs and CRLF files from browsers/editors.
         line="${line#$'\xEF\xBB\xBF'}"
         line="${line%$'\r'}"
-        line="${line%%#*}"
-        line="${line// /}"
+        trimmed="${line#"${line%%[![:space:]]*}"}"  # ltrim
+        # Skip blank lines and full-line comments. Inline `#` in values is
+        # preserved (passwords/tokens legitimately contain it), so we only
+        # treat `#` as a comment marker when it's the first non-space char.
+        [ -z "$trimmed" ] && continue
+        [ "${trimmed:0:1}" = "#" ] && continue
 
-        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.+$ ]]; then
-            export "$line"
+        if [[ "$trimmed" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            # Strip a single matching pair of wrapping quotes so quoted
+            # values containing spaces or `#` round-trip cleanly.
+            if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+                value="${BASH_REMATCH[1]}"
+            fi
+            export "$key=$value"
         fi
     done < "$env_file"
 }

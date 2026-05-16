@@ -437,8 +437,7 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
             return {
                 "isError": True,
                 "error": (
-                    "Prune requires a valid confirm_token matching "
-                    "BACKTEST_STORAGE_ADMIN_TOKEN."
+                    "Prune requires a valid confirm_token matching BACKTEST_STORAGE_ADMIN_TOKEN."
                 ),
             }
 
