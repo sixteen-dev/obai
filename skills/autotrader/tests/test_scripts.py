@@ -240,14 +240,18 @@ class TestExecuteTradeScript:
         data = json.loads(output)
         assert data["status"] == "accepted"
 
-    def test_sell_order_skips_position_checks(self, mock_env: None) -> None:
+    def test_sell_within_existing_long_skips_position_checks(self, mock_env: None) -> None:
+        """A sell that reduces an existing long is a pure reduction and
+        does not need a limit price or exposure recheck."""
         mock_client = _make_mock_client()
         mock_client.get_account.return_value = FakeAccount(
             equity="100000.00",
             last_equity="100000.00",
-            long_market_value="90000.00",  # 90% exposure
+            long_market_value="90000.00",
         )
-        mock_client.get_all_positions.return_value = []
+        mock_client.get_all_positions.return_value = [
+            FakePosition(symbol="AAPL", qty="100", side="long", current_price="195.00"),
+        ]
         with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
             from scripts.execute_trade import main
 
@@ -258,6 +262,31 @@ class TestExecuteTradeScript:
 
         data = json.loads(output)
         assert data["status"] == "accepted"
+
+    def test_sell_opening_short_without_limit_price_rejected(
+        self, mock_env: None
+    ) -> None:
+        """A sell that opens or grows a short must include --limit-price so
+        the risk engine can size the resulting short position. Without a
+        price, the order is rejected (see lib/risk.py:_sized_order)."""
+        mock_client = _make_mock_client()
+        mock_client.get_account.return_value = FakeAccount(
+            equity="100000.00",
+            last_equity="100000.00",
+            long_market_value="0.00",
+        )
+        mock_client.get_all_positions.return_value = []
+        with (
+            patch("lib.alpaca_client.TradingClient", return_value=mock_client),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            from scripts.execute_trade import main
+
+            _capture_stdout(
+                main,
+                args=["execute_trade.py", "--symbol", "AAPL", "--side", "sell", "--qty", "10"],
+            )
+        assert exc_info.value.code == 1
 
 
 class TestClosePositionScript:

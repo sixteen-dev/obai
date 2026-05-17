@@ -333,7 +333,9 @@ def breakeven_at_expiry(
         Breakeven underlying price at expiry.
     """
     # Long and short have same breakeven — the difference is
-    # which side profits above/below it.
-    if option_type == "call":
+    # which side profits above/below it. Normalize the input so
+    # callers using "CALL" / "Put" / etc. don't silently get the
+    # wrong leg's breakeven formula.
+    if _normalize_option_type(option_type) == "call":
         return strike + premium
     return strike - premium

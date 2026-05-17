@@ -44,6 +44,25 @@ def _safe_float(value: object) -> float:
     return float(str(value))
 
 
+def _status_value(status: object) -> str:
+    """Return the canonical lowercase Alpaca order status.
+
+    The Alpaca SDK is inconsistent: some response paths give back an
+    ``OrderStatus`` enum, others give back the raw string value
+    ("filled", "new", ...). ``str(enum)`` is ``"OrderStatus.FILLED"``,
+    which compares equal to neither the string ``"filled"`` nor
+    ``OrderStatus.FILLED.value``. Use ``.value`` when available and fall
+    back to lowercasing the string form so both shapes produce the same
+    key for set/dict lookups.
+    """
+    if status is None:
+        return ""
+    value = getattr(status, "value", None)
+    if isinstance(value, str):
+        return value.lower()
+    return str(status).lower()
+
+
 _SIDE_MAP = {"buy": OrderSide.BUY, "sell": OrderSide.SELL}
 _TIF_MAP = {
     "day": TimeInForce.DAY,
@@ -234,18 +253,24 @@ class AlpacaClient:
         except APIError as exc:
             raise AlpacaClientError(str(exc)) from exc
 
+        # Compare against `.value` (e.g. "filled"), not `str(enum)` which
+        # is "OrderStatus.FILLED". The Alpaca SDK returns OrderStatus
+        # enums when fully typed but raw strings on some response paths
+        # (paginated lists, websocket-derived models). Normalize both
+        # sides through `_status_value` so the same set of canonical
+        # lowercase strings matches either shape.
         counted = {
-            OrderStatus.FILLED,
-            OrderStatus.PARTIALLY_FILLED,
-            OrderStatus.NEW,
-            OrderStatus.ACCEPTED,
-            OrderStatus.PENDING_NEW,
-            OrderStatus.ACCEPTED_FOR_BIDDING,
+            OrderStatus.FILLED.value,
+            OrderStatus.PARTIALLY_FILLED.value,
+            OrderStatus.NEW.value,
+            OrderStatus.ACCEPTED.value,
+            OrderStatus.PENDING_NEW.value,
+            OrderStatus.ACCEPTED_FOR_BIDDING.value,
         }
         return [
             self._map_order(o)
             for o in orders
-            if str(getattr(o, "status", "")) in {str(s) for s in counted}
+            if _status_value(getattr(o, "status", None)) in counted
         ]
 
     def get_todays_filled_orders(self) -> list[OrderInfo]:
@@ -391,7 +416,7 @@ class AlpacaClient:
             qty=_safe_float(getattr(order, "qty", 0)),
             filled_qty=_safe_float(getattr(order, "filled_qty", 0)),
             order_type=str(getattr(order, "type", "")),
-            status=str(getattr(order, "status", "")),
+            status=_status_value(getattr(order, "status", None)),
             limit_price=_safe_float(lp) if lp is not None else None,
             stop_price=_safe_float(sp) if sp is not None else None,
             filled_avg_price=_safe_float(fap) if fap is not None else None,

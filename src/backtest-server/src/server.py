@@ -137,7 +137,11 @@ async def backtest_run_strategy_tool(
         # surfacing) so cache hits and misses are indistinguishable to the
         # strategy agent.
         return _finalize_backtest_response(
-            cached, strategy=strategy, cache_hit=True, portfolio_result=None
+            cached,
+            strategy=strategy,
+            cache_hit=True,
+            portfolio_result=None,
+            cache_key=cache_key,
         )
 
     logger.info(
@@ -881,6 +885,19 @@ async def _run_sync_backtest(
     cache_obj.put(cache_key, result)
     cache_obj.put_trades(cache_key, [t.to_dict() for t in exec_result.trades])
 
+    # Persist the miss-path finalization blocks so cache hits don't lose
+    # the train/test split or portfolio_metrics that the strategy agent
+    # relies on for robustness comparisons.
+    extras: dict[str, Any] = {}
+    if train_test is not None:
+        extras["train_test_split"] = train_test
+    if exec_result.portfolio_result is not None:
+        extras["portfolio_metrics"] = _compute_portfolio_specific(
+            exec_result.portfolio_result, strategy.execution_config.initial_capital
+        )
+    if extras:
+        cache_obj.put_extras(cache_key, extras)
+
     return _finalize_backtest_response(
         result,
         strategy=strategy,
@@ -890,26 +907,35 @@ async def _run_sync_backtest(
     )
 
 
-def _finalize_backtest_response(
+def _finalize_backtest_response(  # noqa: PLR0913
     result: Any,
     *,
     strategy: StrategyDefinition,
     cache_hit: bool,
     portfolio_result: PortfolioBacktestResult | None,
     train_test: dict[str, Any] | None = None,
+    cache_key: str | None = None,
 ) -> dict[str, Any]:
     """Build the tool response from a BacktestResult.
 
-    Centralized so cache hits and misses produce the same shape — without
-    this, cached responses would drop the train/test split and portfolio
-    metrics blocks the miss path adds, and the strategy agent would lose
-    robustness evidence between identical calls.
+    Centralized so cache hits and misses produce the same shape — the
+    miss path supplies ``train_test`` and ``portfolio_result`` directly;
+    the cache-hit path passes ``cache_key`` so we can rehydrate both
+    blocks from the extras sidecar persisted by the miss path.
     """
     output: dict[str, Any] = dict(result.to_dict())
     output["cache_hit"] = cache_hit
 
-    if train_test is None:
-        train_test = _compute_train_test_split_from_result(result, strategy)
+    extras: dict[str, object] | None = None
+    if cache_hit and cache_key is not None:
+        cache_obj: BacktestCache | None = _state.cache
+        if cache_obj is not None:
+            extras = cache_obj.get_extras(cache_key)
+
+    if train_test is None and extras is not None:
+        cached_split = extras.get("train_test_split")
+        if isinstance(cached_split, dict):
+            train_test = cached_split
     if train_test is not None:
         output["train_test_split"] = train_test
 
@@ -917,6 +943,10 @@ def _finalize_backtest_response(
         output["portfolio_metrics"] = _compute_portfolio_specific(
             portfolio_result, strategy.execution_config.initial_capital
         )
+    elif extras is not None:
+        cached_portfolio = extras.get("portfolio_metrics")
+        if isinstance(cached_portfolio, dict):
+            output["portfolio_metrics"] = cached_portfolio
 
     critical = [w for w in result.warnings if w.startswith(("CRITICAL", "DATA GAP"))]
     if critical:

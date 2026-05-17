@@ -90,6 +90,7 @@ docs/CLAUDE.md
 # =============================================================================
 scripts/*
 !scripts/release.sh
+!scripts/run-all-tests.sh
 !scripts/hooks/
 !scripts/hooks/pre-commit
 # E2E regression run outputs
