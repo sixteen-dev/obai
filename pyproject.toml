@@ -89,33 +89,19 @@ constraint-dependencies = [
 
 # Tool configurations for the entire monorepo
 [tool.pytest.ini_options]
-testpaths = [
-    "tests",
-    "src/screening-server/tests",
-    "src/options-server/tests",
-    "src/fundamentals-server/tests",
-    "src/market-data-server/tests",
-    "src/events-news-server/tests",
-    "src/backtest-server/tests",
-    "src/portfolio-server/tests",
-    "src/research-server/tests",
-    "src/prediction-markets-server/tests",
-    "src/obai/core_agents/tests",
-    "skills/autotrader/tests",
-]
+# Each service has its own pyproject.toml with its own "src" package
+# layout, so root-level pytest cannot resolve service-internal imports
+# (multiple services share the package name "src"). Root pytest is
+# intentionally a no-op — use scripts/run-all-tests.sh to run every
+# service's pytest from its own directory, or `uv run pytest` from
+# inside one service directory for a single suite.
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=src",
-    "--cov-report=term-missing:skip-covered",
-    "--cov-report=html:reports/coverage",
-    "--cov-report=xml:reports/coverage.xml",
-]
+# Skip every monorepo subtree at the root level: no service's tests are
+# discoverable from here. Run them per-service via scripts/run-all-tests.sh.
+norecursedirs = ["src", "skills", "tests", "docs", "data", "reports", ".venv", ".claude", "artifacts", "scripts", "vector_bucket"]
+addopts = ["--strict-markers", "--strict-config"]
+
 
 [tool.coverage.run]
 source = ["src/"]

@@ -9,8 +9,14 @@ WORKDIR /app
 # Install uv for fast dependency management
 RUN pip install --no-cache-dir uv
 
-# Copy dependency files
-COPY pyproject.toml ./
+# Copy dependency files + the packages they declare. The hatchling backend
+# does an editable install of the obai project itself, so the source dirs
+# named in [tool.hatch.build.targets.wheel] and the force-include map must
+# exist on disk before `uv sync` runs.
+COPY pyproject.toml README.md ./
+COPY core_agents/ ./core_agents/
+COPY clients/ ./clients/
+COPY evaluation/ ./evaluation/
 
 # Install dependencies (no dev dependencies)
 RUN uv sync --no-dev
@@ -26,6 +32,8 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy package code (central hub + specialist orchestration + clients)
 COPY core_agents/ ./core_agents/
 COPY clients/ ./clients/
+COPY evaluation/ ./evaluation/
+COPY pyproject.toml README.md ./
 
 # Add venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"

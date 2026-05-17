@@ -111,6 +111,35 @@ class BacktestCache:
     def _trades_path(self, cache_key: str) -> Path:
         return self.cache_dir / f"{cache_key}.trades.json"
 
+    def get_extras(self, cache_key: str) -> dict[str, object] | None:
+        """Retrieve cached train/test + portfolio_metrics blocks if present.
+
+        Kept in a sidecar (``{key}.extras.json``) for the same reason as
+        ``get_trades``: the main BacktestResult is the LLM-facing payload
+        and shouldn't carry blocks that only the finalization layer adds
+        on the miss path.
+        """
+        path = self._extras_path(cache_key)
+        if not path.exists() or self._is_expired(path):
+            return None
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, dict):
+                return None
+            return data
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("extras_cache_read_failed", key=cache_key, error=str(exc))
+            return None
+
+    def put_extras(self, cache_key: str, extras: dict[str, object]) -> None:
+        """Persist the train/test + portfolio_metrics finalization blocks."""
+        path = self._extras_path(cache_key)
+        path.write_text(json.dumps(extras, default=str))
+        logger.info("extras_stored", key=cache_key, keys=sorted(extras.keys()))
+
+    def _extras_path(self, cache_key: str) -> Path:
+        return self.cache_dir / f"{cache_key}.extras.json"
+
     def clear(self, cache_key: str | None = None) -> int:
         """Clear cached results.
 
