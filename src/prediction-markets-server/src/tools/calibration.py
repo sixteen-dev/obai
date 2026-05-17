@@ -16,6 +16,7 @@ limitations, quality_flags, reliability_label.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -41,6 +42,13 @@ from ..logging_config import get_logger
 from ..storage import PredictionStore, PriceRow
 
 logger = get_logger(__name__)
+
+# CLOB fetches are network-bound; parallelize per-token with a small
+# semaphore so wide windows finish well under the MCP timeout. Five is a
+# conservative bound that fits Polymarket's observed concurrency budget
+# without tripping rate limits.
+_BACKFILL_CONCURRENCY = 5
+
 
 _SUPPORTED_MODES: tuple[SamplingMode, ...] = (
     "market_bucket_once",
@@ -348,6 +356,8 @@ async def _backfill_selected(
     markets_with_history = 0
     price_rows_loaded = 0
 
+    # Phase 1: persist market metadata sequentially (DuckDB-bound, fast).
+    market_jobs: list[tuple[str, Any]] = []  # (condition_id, TokenRow)
     for condition_id in selection_ids:
         payload = payloads_by_cid.get(condition_id)
         if payload is None:
@@ -357,38 +367,48 @@ async def _backfill_selected(
         except (ValueError, KeyError):
             continue
         cache_actions["markets"]["count"] += 1
-        market_has_rows = False
         for token in market_result.tokens:
-            tokens_seen += 1
-            price_result = await downloader.ensure_price_history(
+            market_jobs.append((condition_id, token))
+
+    # Phase 2: fan out per-token CLOB fetches under a bounded semaphore.
+    sem = asyncio.Semaphore(_BACKFILL_CONCURRENCY)
+
+    async def _fetch_one(cid: str, token: Any) -> tuple[str, str, Any]:
+        async with sem:
+            result = await downloader.ensure_price_history(
                 token_id=token.token_id,
-                condition_id=condition_id,
+                condition_id=cid,
                 fidelity_minutes=fidelity,
                 interval="max",
                 now=now,
                 max_history_points=max_history_points,
             )
-            cache_actions["price_history"][token.token_id] = {
-                "action": price_result.cache_action,
-                "source": price_result.source,
-                "fidelity_minutes": price_result.fidelity_minutes,
-                "rows": price_result.rows_written,
-                "coverage_start": _iso(price_result.coverage_start),
-                "coverage_end": _iso(price_result.coverage_end),
-            }
-            if price_result.coverage_start is not None:
-                coverage_start = _min_dt(coverage_start, price_result.coverage_start)
-            if price_result.coverage_end is not None:
-                coverage_end = _max_dt(coverage_end, price_result.coverage_end)
-            row_count = price_result.rows_written or _existing_row_count(
-                downloader.store, token.token_id
-            )
-            price_rows_loaded += row_count
-            if row_count > 0:
-                tokens_with_history += 1
-                market_has_rows = True
-        if market_has_rows:
-            markets_with_history += 1
+            return cid, token.token_id, result
+
+    price_results = await asyncio.gather(*(_fetch_one(cid, tok) for cid, tok in market_jobs))
+
+    # Phase 3: aggregate stats and per-market history bookkeeping serially.
+    tokens_seen = len(market_jobs)
+    markets_with_rows: set[str] = set()
+    for cid, token_id, price_result in price_results:
+        cache_actions["price_history"][token_id] = {
+            "action": price_result.cache_action,
+            "source": price_result.source,
+            "fidelity_minutes": price_result.fidelity_minutes,
+            "rows": price_result.rows_written,
+            "coverage_start": _iso(price_result.coverage_start),
+            "coverage_end": _iso(price_result.coverage_end),
+        }
+        if price_result.coverage_start is not None:
+            coverage_start = _min_dt(coverage_start, price_result.coverage_start)
+        if price_result.coverage_end is not None:
+            coverage_end = _max_dt(coverage_end, price_result.coverage_end)
+        row_count = price_result.rows_written or _existing_row_count(downloader.store, token_id)
+        price_rows_loaded += row_count
+        if row_count > 0:
+            tokens_with_history += 1
+            markets_with_rows.add(cid)
+    markets_with_history = len(markets_with_rows)
 
     return {
         "cache_actions": cache_actions,

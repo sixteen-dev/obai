@@ -241,10 +241,15 @@ class AgentConfig(BaseSettings):
 
     # MCP Client Settings
     mcp_timeout: float = Field(
-        default=30.0,
+        default=180.0,
         ge=1.0,
         le=300.0,
-        description="MCP request timeout in seconds",
+        description=(
+            "MCP request timeout in seconds. Historical-analytics tools "
+            "(calibration, longshot, backtest) need to backfill price "
+            "history across hundreds of tokens before returning, so 30s "
+            "is far too tight; 180s leaves headroom even for wide windows."
+        ),
     )
     mcp_max_retries: int = Field(
         default=2,
