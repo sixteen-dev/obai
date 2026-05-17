@@ -104,22 +104,28 @@ async def analyze_prediction_calibration(
         start_date=start_date,
         end_date=end_date,
     )
-    # When a query was supplied we used public_search, which ignores the
-    # category/date filters above; keep them as a client-side guard. For
-    # the listing path the Gamma server already filtered, so the local
-    # category check would only mis-fire on Gamma's idiosyncratic
-    # category strings (e.g. "US-current-affairs" instead of "politics").
+    # Gamma's market.category is not reliable for historical closed-market
+    # discovery: listing returns values like "US-current-affairs", while
+    # public_search often returns None on nested markets. Push category to
+    # Gamma as tag_slug/events_tag in _discover_candidates and do not repeat
+    # an exact client-side category check here.
     filters = UniverseFilters(
-        category=category if query.strip() else None,
+        category=None,
         min_lifetime_volume=min_lifetime_volume,
         start_date=start_date,
         end_date=end_date,
         require_resolved=False,  # candidates not yet resolved-tagged; we refresh + tag below
     )
     selection = select_candidate_universe(candidates, filters, max_markets)
+    payloads_by_cid: dict[str, dict[str, Any]] = {
+        (c.get("condition_id") or "").strip(): c
+        for c in candidates
+        if (c.get("condition_id") or "").strip()
+    }
 
     backfill_summary = await _backfill_selected(
         selection_ids=selection.condition_ids,
+        payloads_by_cid=payloads_by_cid,
         downloader=downloader,
         fidelity=fidelity,
         max_history_points=max_history_points,
@@ -247,6 +253,7 @@ async def _discover_candidates(
             query=query.strip(),
             limit_per_type=capped_limit,
             events_status="closed",
+            events_tag=[category.strip().lower()] if category.strip() else None,
         )
         events = result.get("events", []) if isinstance(result, dict) else []
         markets: list[dict[str, Any]] = []
@@ -270,12 +277,19 @@ async def _discover_candidates(
 async def _backfill_selected(
     *,
     selection_ids: list[str],
+    payloads_by_cid: dict[str, dict[str, Any]],
     downloader: HistoryDownloader,
     fidelity: int,
     max_history_points: int,
     now: datetime,
 ) -> dict[str, Any]:
-    """Refresh every selected market + its price history. Aggregates cache actions."""
+    """Refresh every selected market + its price history. Aggregates cache actions.
+
+    Uses the candidate payloads already returned by Gamma instead of
+    re-fetching by condition_id — Gamma's /markets condition_id filter is
+    broken (silently returns the wrong market or none), so the per-market
+    refetch was previously dropping the entire selection on the floor.
+    """
     cache_actions: dict[str, Any] = {
         "markets": {"action": "refreshed", "count": 0},
         "price_history": {},
@@ -288,8 +302,11 @@ async def _backfill_selected(
     price_rows_loaded = 0
 
     for condition_id in selection_ids:
+        payload = payloads_by_cid.get(condition_id)
+        if payload is None:
+            continue
         try:
-            market_result = await downloader.ensure_market(condition_id, now=now)
+            market_result = await downloader.ensure_market_from_payload(payload, now=now)
         except (ValueError, KeyError):
             continue
         cache_actions["markets"]["count"] += 1

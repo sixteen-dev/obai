@@ -38,6 +38,8 @@ def _payload(condition_id: str, terminal_yes: bool = True) -> dict[str, Any]:
 class _FakeGamma:
     def __init__(self, payloads: dict[str, dict[str, Any]]) -> None:
         self._payloads = payloads
+        self.list_calls: list[dict[str, Any]] = []
+        self.search_calls: list[dict[str, Any]] = []
 
     async def list_markets(  # noqa: PLR0913 — must match production GammaClient.list_markets signature
         self,
@@ -51,6 +53,13 @@ class _FakeGamma:
         end_date_max: str = "",
         tag_slug: str = "",
     ) -> list[dict[str, Any]]:
+        self.list_calls.append(
+            {
+                "end_date_min": end_date_min,
+                "end_date_max": end_date_max,
+                "tag_slug": tag_slug,
+            }
+        )
         return list(self._payloads.values())[:limit]
 
     async def public_search(
@@ -61,6 +70,7 @@ class _FakeGamma:
         events_status: str = "",
         events_tag: list[str] | None = None,
     ) -> dict[str, Any]:
+        self.search_calls.append({"events_status": events_status, "events_tag": events_tag})
         return {"events": [{"markets": list(self._payloads.values())}], "pagination": {}}
 
     async def get_market(self, identifier: str) -> dict[str, Any]:
@@ -170,6 +180,31 @@ async def test_backtest_rule_lifetime_volume_limitation_present(fixtures) -> Non
     text = " ".join(result["limitations"])
     assert "lifetime" in text
     assert result["filters"]["volume_filter_mode"] == "lifetime_static"
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_pushes_category_to_gamma_tag(fixtures) -> None:
+    """The structured rule category is a Gamma tag filter, not a local exact match."""
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "hold_to_resolution"},
+            "filters": {"category": "politics"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert dl.gamma.list_calls[-1] == {
+        "end_date_min": "",
+        "end_date_max": "",
+        "tag_slug": "politics",
+    }
+    assert result["selected_condition_ids"] == ["0xA", "0xB"]
 
 
 @pytest.mark.asyncio

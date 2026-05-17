@@ -90,15 +90,21 @@ async def backtest_prediction_rule(
         category=rule.filters.category or "",
     )
     filters = UniverseFilters(
-        category=rule.filters.category if query.strip() else None,
+        category=None,
         min_lifetime_volume=rule.filters.min_lifetime_volume,
         start_date=None,
         end_date=None,
         require_resolved=False,
     )
     selection = select_candidate_universe(candidates, filters, max_markets)
+    payloads_by_cid: dict[str, dict[str, Any]] = {
+        (c.get("condition_id") or "").strip(): c
+        for c in candidates
+        if (c.get("condition_id") or "").strip()
+    }
     backfill_summary = await _backfill_selected(
         selection_ids=selection.condition_ids,
+        payloads_by_cid=payloads_by_cid,
         downloader=downloader,
         fidelity=fidelity,
         max_history_points=max_history_points,

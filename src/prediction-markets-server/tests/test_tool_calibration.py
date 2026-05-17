@@ -40,6 +40,8 @@ class _FakeGamma:
     ) -> None:
         self._candidates = candidates
         self._payloads = payloads
+        self.list_calls: list[dict[str, Any]] = []
+        self.search_calls: list[dict[str, Any]] = []
 
     async def list_markets(  # noqa: PLR0913 — must match production GammaClient.list_markets signature
         self,
@@ -53,6 +55,13 @@ class _FakeGamma:
         end_date_max: str = "",
         tag_slug: str = "",
     ) -> list[dict[str, Any]]:
+        self.list_calls.append(
+            {
+                "end_date_min": end_date_min,
+                "end_date_max": end_date_max,
+                "tag_slug": tag_slug,
+            }
+        )
         return self._candidates[:limit]
 
     async def public_search(
@@ -63,6 +72,7 @@ class _FakeGamma:
         events_status: str = "",
         events_tag: list[str] | None = None,
     ) -> dict[str, Any]:
+        self.search_calls.append({"events_status": events_status, "events_tag": events_tag})
         return {"events": [{"markets": self._candidates}], "pagination": {}}
 
     async def get_market(self, identifier: str) -> dict[str, Any]:
@@ -199,3 +209,95 @@ async def test_calibration_rejects_unknown_sampling_mode(downloader_and_store) -
             max_history_points=1000,
             now=_now(),
         )
+
+
+@pytest.mark.asyncio
+async def test_listing_path_pushes_category_and_dates_to_gamma(downloader_and_store) -> None:
+    """Category/date filters should be applied server-side on Gamma list calls."""
+    dl, store = downloader_and_store
+    await analyze_prediction_calibration(
+        downloader=dl,
+        store=store,
+        category="politics",
+        start_date=datetime(2024, 11, 5, tzinfo=timezone.utc),
+        end_date=datetime(2026, 5, 17, tzinfo=timezone.utc),
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert dl.gamma.list_calls[-1] == {
+        "end_date_min": "2024-11-05",
+        "end_date_max": "2026-05-17",
+        "tag_slug": "politics",
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_path_uses_events_tag_without_category_mismatch() -> None:
+    """public_search nested markets often lack category; do not exact-match them locally."""
+    payloads = {f"0x{i}": _payload(f"0x{i}") for i in range(2)}
+    candidates = [{**payload, "category": None} for payload in payloads.values()]
+    store = PredictionStore(manager=PredictionDuckDBManager(db_path=":memory:"))
+    store.ensure_connected()
+    dl = HistoryDownloader(
+        gamma=_FakeGamma(candidates, payloads),
+        clob=_FakeClob(),
+        data_client=_FakeData(),
+        store=store,
+    )
+    result = await analyze_prediction_calibration(
+        downloader=dl,
+        store=store,
+        query="politics",
+        category="politics",
+        max_markets=2,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert dl.gamma.search_calls[-1] == {
+        "events_status": "closed",
+        "events_tag": ["politics"],
+    }
+    assert result["selected_condition_ids"] == ["0x0", "0x1"]
+    assert "category_mismatch" not in result["data_coverage"]["skipped_reasons"]
+
+
+
+@pytest.mark.asyncio
+async def test_backfill_uses_listing_payload_not_get_market() -> None:
+    """Calibration backfill must use the listing payload, not refetch by condition_id.
+
+    Gamma's /markets condition_id filter is broken (returns 0 or an
+    unrelated market). The calibration backfill must skip the
+    per-condition_id refetch entirely and use the normalized payload
+    that list_markets already returned.
+    """
+    payloads = {f"0x{i}": _payload(f"0x{i}") for i in range(3)}
+    candidates = list(payloads.values())
+    store = PredictionStore(manager=PredictionDuckDBManager(db_path=":memory:"))
+    store.ensure_connected()
+
+    class _BrokenGetMarketGamma(_FakeGamma):
+        async def get_market(self, identifier: str) -> dict[str, Any]:
+            # Simulate Gamma silently dropping the lookup (the actual prod
+            # behavior we observed: /markets?condition_ids=<cid> returns []).
+            msg = f"condition_id lookup is broken: {identifier}"
+            raise ValueError(msg)
+
+    dl = HistoryDownloader(
+        gamma=_BrokenGetMarketGamma(candidates, payloads),
+        clob=_FakeClob(),
+        data_client=_FakeData(),
+        store=store,
+    )
+    result = await analyze_prediction_calibration(
+        downloader=dl,
+        store=store,
+        max_markets=3,
+        fidelity=60,
+        max_history_points=1000,
+        now=_now(),
+    )
+    coverage = result["data_coverage"]
+    assert coverage["markets_with_history"] == 3
+    assert coverage["price_rows_loaded"] > 0

@@ -93,7 +93,12 @@ class HistoryDownloader:
         is "fetched" on first ever write, "refreshed" on subsequent writes.
 
         Args:
-            identifier: slug, condition_id, or numeric ID.
+            identifier: slug, condition_id, or numeric ID. Note: Gamma's
+                /markets endpoint silently ignores condition_id filter
+                params, so a raw 0x... condition_id is unreliable — prefer
+                a slug. Bulk callers that already have the normalized
+                Gamma payload should use ensure_market_from_payload to skip
+                this lookup entirely.
             now: Current timestamp (passed explicitly for testability).
 
         Returns:
@@ -104,11 +109,39 @@ class HistoryDownloader:
             identifier
         )
         raw = await self.gamma.get_market(identifier)
-        market, tokens = gamma_market_to_rows(raw, fetched_at=now)
+        return await self._persist_market_payload(raw, existed=existed, now=now)
+
+    async def ensure_market_from_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        now: datetime,
+    ) -> MarketEnsureResult:
+        """Persist a normalized Gamma payload without an extra Gamma re-fetch.
+
+        For bulk callers (calibration/longshot/backtest) that already hold
+        the normalized Gamma payload from list_markets/public_search, the
+        per-condition_id re-fetch in ensure_market is both redundant and
+        broken: Gamma's /markets endpoint silently ignores condition_ids
+        filter params and returns either an empty list or an unrelated
+        market.
+        """
+        condition_id = (payload.get("condition_id") or "").strip()
+        existed = bool(condition_id) and self.store.get_market(condition_id) is not None
+        return await self._persist_market_payload(payload, existed=existed, now=now)
+
+    async def _persist_market_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        existed: bool,
+        now: datetime,
+    ) -> MarketEnsureResult:
+        """Shared normalization + DB write path for ensure_market variants."""
+        market, tokens = gamma_market_to_rows(payload, fetched_at=now)
         await self.store.upsert_market(market)
         await self.store.upsert_tokens(tokens)
         await self._record_market_meta(market, now)
-
         action: CacheAction = "refreshed" if existed else "fetched"
         return MarketEnsureResult(
             market=market,
