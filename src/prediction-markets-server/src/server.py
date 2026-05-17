@@ -770,14 +770,21 @@ async def analyze_longshot_bias_tool(
 
 
 def _parse_iso_or_none(value: str) -> datetime | None:
-    """Parse an ISO-8601 string into an aware UTC datetime; empty input → None."""
+    """Parse an ISO-8601 string into an aware UTC datetime; empty input → None.
+
+    A non-empty but unparseable input is a caller mistake (the agent passed
+    something the tool cannot use), so surface it loudly via ValueError —
+    the silent ``None`` fallback used to make the agent narrate "the tool
+    rejected the date" while really the date was being dropped.
+    """
     if not value:
         return None
     cleaned = value.strip().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(cleaned)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        msg = f"Invalid ISO-8601 date {value!r}; expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"
+        raise ValueError(msg) from exc
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
