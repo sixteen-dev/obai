@@ -198,9 +198,15 @@ async def analyze_prediction_calibration(
         lifetime_volume_filter_used=min_lifetime_volume is not None,
         sparse_short_horizon=_short_horizon_sparse(metrics),
     )
+    universe_composition = _build_universe_composition(
+        store=store,
+        selected_condition_ids=selection.condition_ids,
+        metrics=metrics,
+    )
     return {
         "tool": "analyze_prediction_calibration",
         "universe": "gamma_closed_markets",
+        "universe_composition": universe_composition,
         "selected_condition_ids": selection.condition_ids,
         "filters": {
             "query": query,
@@ -225,6 +231,47 @@ async def analyze_prediction_calibration(
         "limitations": _limitations(min_lifetime_volume),
         "quality_flags": flags,
         "reliability_label": reliability_label(coverage, flags),
+    }
+
+
+def _build_universe_composition(
+    *,
+    store: PredictionStore,
+    selected_condition_ids: list[str],
+    metrics: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize what landed in the selected universe.
+
+    Surfaces event-slug concentration and the TTR distribution across all
+    observation rows. Both are needed so the caller can tell when a result
+    is degenerate (one event dominating, or every observation in the same
+    TTR bucket) before quoting numbers.
+    """
+    event_counts: dict[str, int] = {}
+    for cid in selected_condition_ids:
+        row = store.get_market(cid)
+        if row is None:
+            continue
+        slug = (row.get("event_slug") or "").strip() or "__unknown__"
+        event_counts[slug] = event_counts.get(slug, 0) + 1
+
+    ttr_totals: dict[str, int] = {}
+    seen_mode: dict[str, Any] | None = None
+    for mode_summary in metrics.values():
+        if not isinstance(mode_summary, dict):
+            continue
+        seen_mode = mode_summary
+        for bucket in mode_summary.get("buckets") or []:
+            label = bucket.get("ttr_bucket") or "__unknown__"
+            ttr_totals[label] = ttr_totals.get(label, 0) + int(bucket.get("sample_size") or 0)
+        break  # one mode is enough for the distribution shape
+
+    return {
+        "distinct_event_slugs": len(event_counts),
+        "event_slug_breakdown": dict(sorted(event_counts.items(), key=lambda kv: -kv[1])),
+        "ttr_bucket_distribution": ttr_totals,
+        "ttr_strata_present": sum(1 for v in ttr_totals.values() if v > 0),
+        "sampling_mode_observed": (seen_mode or {}).get("sampling_mode"),
     }
 
 

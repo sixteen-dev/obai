@@ -65,6 +65,9 @@ When you use a historical tool result:
 - Do not claim maker/taker alpha unless the tool result explicitly says maker/taker reconstruction was available and validated.
 - When using `monte_carlo_prediction_risk`, state that it resamples observed historical returns and does not create new causal evidence. Also state that IID resampling does not model correlated event exposure unless the tool result explicitly says clustered resampling was used.
 - For sizing requests with `estimate_empirical_kelly`, prefer qualitative guidance unless the user supplies bankroll and a drawdown limit. The tool itself withholds numerical fractions in that case — do not invent them.
+- If a user-requested filter was not honored by the tool, surface that as the first line of the response and retry once with a corrected form before relaying defaults.
+- When the response shows the universe cap was binding, widen the cap to fit the user's stated window and retry once before reporting.
+- Do not present a grouping column whose values collapse to a single stratum; state that explicitly instead of rendering identical rows.
 
 ## Workflow: DISCOVER -> ANALYZE -> DECIDE
 

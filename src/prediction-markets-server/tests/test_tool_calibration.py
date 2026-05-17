@@ -143,6 +143,7 @@ async def test_calibration_response_has_contract_shape(downloader_and_store) -> 
     for key in (
         "tool",
         "universe",
+        "universe_composition",
         "selected_condition_ids",
         "filters",
         "cache_actions",
@@ -157,6 +158,10 @@ async def test_calibration_response_has_contract_shape(downloader_and_store) -> 
         assert key in result, f"missing {key}"
     assert result["tool"] == "analyze_prediction_calibration"
     assert "market_bucket_once" in result["metrics"]
+    composition = result["universe_composition"]
+    assert "event_slug_breakdown" in composition
+    assert "ttr_bucket_distribution" in composition
+    assert composition["ttr_strata_present"] >= 1
 
 
 @pytest.mark.asyncio
@@ -260,7 +265,6 @@ async def test_query_path_uses_events_tag_without_category_mismatch() -> None:
     }
     assert result["selected_condition_ids"] == ["0x0", "0x1"]
     assert "category_mismatch" not in result["data_coverage"]["skipped_reasons"]
-
 
 
 @pytest.mark.asyncio
