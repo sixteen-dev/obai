@@ -200,6 +200,14 @@ async def test_update_meta_and_get_coverage(store: PredictionStore) -> None:
     assert coverage is not None
     assert coverage["row_count"] == 42
     assert coverage["quality_flags"] == "sparse_short_horizon_history"
+    # Regression: DuckDB TIMESTAMP columns surface as naive datetimes; the
+    # store must promote them to UTC-aware so callers can safely mix them
+    # with aware datetimes from the cached-path helper without raising
+    # `TypeError: can't compare offset-naive and offset-aware datetimes`.
+    for key in ("first_timestamp", "last_timestamp", "last_refreshed"):
+        ts = coverage[key]
+        assert ts is not None
+        assert ts.tzinfo is not None, f"{key} must be tz-aware"
     store.close()
 
 

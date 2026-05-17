@@ -13,7 +13,7 @@ This module owns row normalization for two reasons:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..logging_config import get_logger
@@ -298,11 +298,14 @@ class PredictionStore:
         ).fetchone()
         if result is None:
             return None
+        # DuckDB TIMESTAMP columns surface as naive Python datetimes; promote
+        # them to UTC-aware here so callers cannot accidentally mix aware and
+        # naive datetimes (which raises TypeError when comparing or sorting).
         return {
-            "first_timestamp": result[0],
-            "last_timestamp": result[1],
+            "first_timestamp": _as_utc(result[0]),
+            "last_timestamp": _as_utc(result[1]),
             "row_count": result[2],
-            "last_refreshed": result[3],
+            "last_refreshed": _as_utc(result[3]),
             "quality_flags": result[4],
             "fidelity_minutes": result[5],
         }
@@ -410,6 +413,15 @@ ON CONFLICT (entity_type, entity_id, source, fidelity_minutes) DO UPDATE SET
     quality_flags = excluded.quality_flags,
     last_refreshed = excluded.last_refreshed
 """
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Promote a naive datetime to UTC-aware; pass None through unchanged."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def _market_params(r: MarketRow) -> list[Any]:
