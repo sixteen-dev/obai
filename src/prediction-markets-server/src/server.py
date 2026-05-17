@@ -6,6 +6,7 @@ Design doc: docs/design/POLYMARKET_ANALYSIS_SYSTEM.md
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -790,7 +791,7 @@ def _parse_iso_or_none(value: str) -> datetime | None:
 
 
 async def backtest_prediction_rule_tool(
-    rule: dict[str, Any],
+    rule_json: str,
     query: str = "",
     max_markets: int = 100,
     fidelity: int = 60,
@@ -799,10 +800,11 @@ async def backtest_prediction_rule_tool(
     """Backtest a structured prediction-market rule (§10.4 V1 schema).
 
     Args:
-        rule: Rule payload. V1 supports {"side": "YES", "entry":
-            {"price_min": float, "price_max": float}, "exit": {"type":
-            "hold_to_resolution"}, "filters": {...}}. Unsupported fields
-            are rejected loudly.
+        rule_json: JSON-encoded rule payload. V1 supports {"side": "YES",
+            "entry": {"price_min": float, "price_max": float}, "exit":
+            {"type": "hold_to_resolution"}, "filters": {...}}. Unsupported
+            fields are rejected loudly. Passed as a string (not an object)
+            so the tool input schema stays strict-mode compatible.
         query: Optional free-text discovery topic.
         max_markets: Hard cap on selected market universe (default 100).
         fidelity: Sampled-price resolution in minutes (default 60).
@@ -815,6 +817,12 @@ async def backtest_prediction_rule_tool(
         limitations, quality_flags, and reliability_label.
 
     """
+    try:
+        rule = json.loads(rule_json)
+    except json.JSONDecodeError as exc:
+        return {"isError": True, "error": f"Invalid rule JSON: {exc}"}
+    if not isinstance(rule, dict):
+        return {"isError": True, "error": "rule_json must decode to an object."}
     settings = get_settings()
     store = get_prediction_store()
     gamma = GammaClient()
@@ -852,7 +860,7 @@ async def backtest_prediction_rule_tool(
 
 
 def monte_carlo_prediction_risk_tool(
-    monte_carlo_input: dict[str, Any] | None = None,
+    monte_carlo_input_json: str | None = None,
     returns: list[float] | None = None,
     num_paths: int = 1000,
     starting_bankroll: float = 1.0,
@@ -862,14 +870,16 @@ def monte_carlo_prediction_risk_tool(
 ) -> dict[str, Any]:
     """IID bootstrap Monte Carlo over a return series (§13.2).
 
-    Accepts either a ``monte_carlo_input`` dict from
+    Accepts either a JSON-encoded ``monte_carlo_input`` from
     ``backtest_prediction_rule`` or an inline ``returns`` list — exactly
     one of the two must be supplied. The response always includes the
     IID limitation language and an ``iid_monte_carlo_assumption`` quality
     flag.
 
     Args:
-        monte_carlo_input: Compact dict from backtest_prediction_rule.
+        monte_carlo_input_json: JSON string of the compact dict returned
+            by backtest_prediction_rule. Passed as a string so the tool
+            input schema stays strict-mode compatible.
         returns: Inline return-on-cost list (use only when not chaining
             from a backtest).
         num_paths: Number of synthetic paths (≤ 10,000).
@@ -883,6 +893,19 @@ def monte_carlo_prediction_risk_tool(
         percentiles, ruin_probability, limitations, quality_flags.
 
     """
+    monte_carlo_input: dict[str, Any] | None
+    if monte_carlo_input_json is None:
+        monte_carlo_input = None
+    else:
+        try:
+            monte_carlo_input = json.loads(monte_carlo_input_json)
+        except json.JSONDecodeError as exc:
+            return {"isError": True, "error": f"Invalid monte_carlo_input JSON: {exc}"}
+        if not isinstance(monte_carlo_input, dict):
+            return {
+                "isError": True,
+                "error": "monte_carlo_input_json must decode to an object.",
+            }
     try:
         result = monte_carlo_prediction_risk(
             monte_carlo_input=monte_carlo_input,
@@ -903,7 +926,7 @@ def monte_carlo_prediction_risk_tool(
 
 
 def estimate_empirical_kelly_tool(
-    monte_carlo_input: dict[str, Any] | None = None,
+    monte_carlo_input_json: str | None = None,
     returns: list[float] | None = None,
     starting_bankroll: float | None = None,
     max_drawdown_limit: float | None = None,
@@ -920,7 +943,9 @@ def estimate_empirical_kelly_tool(
     constraints).
 
     Args:
-        monte_carlo_input: Compact dict from backtest_prediction_rule.
+        monte_carlo_input_json: JSON string of the compact dict from
+            backtest_prediction_rule. Passed as a string so the tool
+            input schema stays strict-mode compatible.
         returns: Inline return-on-cost list (alternative to monte_carlo_input).
         starting_bankroll: Optional bankroll; absent → qualitative output.
         max_drawdown_limit: Optional drawdown cap; absent → qualitative output.
@@ -934,6 +959,19 @@ def estimate_empirical_kelly_tool(
         None when qualitative), limitations, quality_flags.
 
     """
+    monte_carlo_input: dict[str, Any] | None
+    if monte_carlo_input_json is None:
+        monte_carlo_input = None
+    else:
+        try:
+            monte_carlo_input = json.loads(monte_carlo_input_json)
+        except json.JSONDecodeError as exc:
+            return {"isError": True, "error": f"Invalid monte_carlo_input JSON: {exc}"}
+        if not isinstance(monte_carlo_input, dict):
+            return {
+                "isError": True,
+                "error": "monte_carlo_input_json must decode to an object.",
+            }
     try:
         result = estimate_empirical_kelly(
             monte_carlo_input=monte_carlo_input,
