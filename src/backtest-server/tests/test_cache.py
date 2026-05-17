@@ -100,6 +100,23 @@ class TestBacktestCache:
         cache = BacktestCache(str(tmp_path))
         assert cache.clear("nope") == 0
 
+    def test_clear_unlinks_trades_and_extras_sidecars(self, tmp_path: object) -> None:
+        """Regression: clear("k") used to leave {k}.trades.json and
+        {k}.extras.json on disk, so get_trades / get_extras kept returning
+        stale data after the main BacktestResult was evicted. All three
+        files must be unlinked together.
+        """
+        cache = BacktestCache(str(tmp_path))
+        cache.put("k", _make_result())
+        cache.put_trades("k", [{"a": 1}])
+        cache.put_extras("k", {"b": 2})
+
+        assert cache.clear("k") == 1
+
+        assert cache.get("k") is None
+        assert cache.get_trades("k") is None
+        assert cache.get_extras("k") is None
+
     def test_corrupted_cache_file(self, tmp_path: object) -> None:
         """Corrupted cache file should return None and be cleaned up."""
         cache = BacktestCache(str(tmp_path))

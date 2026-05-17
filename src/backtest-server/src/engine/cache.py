@@ -141,20 +141,38 @@ class BacktestCache:
         return self.cache_dir / f"{cache_key}.extras.json"
 
     def clear(self, cache_key: str | None = None) -> int:
-        """Clear cached results.
+        """Clear cached results plus their trades/extras sidecars.
+
+        A cache entry actually spans three files — the main BacktestResult
+        JSON, the trades sidecar, and the extras sidecar. Clearing only
+        the main file left ``get_trades`` / ``get_extras`` returning stale
+        data for the same key. Unlink all three together.
 
         Args:
             cache_key: If provided, clear only that specific entry.
                        If None, clear all cached results.
 
         Returns:
-            Number of cache entries cleared.
+            Number of cache entries cleared (counts the main file; the
+            sidecars are companions to that entry).
 
         """
         if cache_key is not None:
-            path = self._key_path(cache_key)
-            if path.exists():
-                path.unlink()
+            removed_main = False
+            for path in (
+                self._key_path(cache_key),
+                self._trades_path(cache_key),
+                self._extras_path(cache_key),
+            ):
+                if path.exists():
+                    path.unlink()
+                    if (
+                        path.suffix == ".json"
+                        and ".trades." not in path.name
+                        and ".extras." not in path.name
+                    ):
+                        removed_main = True
+            if removed_main:
                 logger.info("cache_cleared", key=cache_key)
                 return 1
             return 0
@@ -162,7 +180,11 @@ class BacktestCache:
         count = 0
         for path in self.cache_dir.glob("*.json"):
             path.unlink()
-            count += 1
+            # Only count main entries (not trades/extras sidecars) so the
+            # returned tally matches the number of distinct strategies
+            # cleared, not the total file count.
+            if ".trades." not in path.name and ".extras." not in path.name:
+                count += 1
 
         logger.info("cache_cleared_all", count=count)
         return count
