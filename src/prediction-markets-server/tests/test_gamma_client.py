@@ -137,8 +137,7 @@ class TestGammaClientNormalization:
         assert result["slug"] == "will-btc-hit-100k-by-end-of-2026"
 
     def test_normalize_market_falls_back_to_market_slug_when_no_event_slug(self):
-        """Without an event slug, fall back to a market-slug URL so the user
-        still gets an actionable Polymarket link."""
+        """Fall back to market-slug URL when no event slug — preserves Polymarket link."""
         client = GammaClient()
         result = client._normalize_market(
             {"slug": "some-market", "events": [{"category": "crypto"}]}

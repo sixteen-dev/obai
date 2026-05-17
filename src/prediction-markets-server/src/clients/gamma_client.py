@@ -368,6 +368,12 @@ class GammaClient:
             "order_min_size": raw.get("orderMinSize"),
             "tick_size": raw.get("orderPriceMinTickSize"),
             "one_week_price_change": raw.get("oneWeekPriceChange"),
+            # Resolution fields — feed storage/resolution.py. Surfaced even when
+            # absent on the payload so downstream code can rely on the keys
+            # existing rather than guarding every access.
+            "uma_resolution_status": raw.get("umaResolutionStatus"),
+            "resolved_by": raw.get("resolvedBy"),
+            "winning_outcome": raw.get("winningOutcome"),
         }
 
     @staticmethod

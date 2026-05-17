@@ -1,6 +1,6 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 181 test cases across 7 active categories (A-E, G, H; F pending).
+# 187 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 #   prediction markets,
@@ -1210,6 +1210,90 @@ test_cases:
     query_type: prediction_market_followup_slug_trade_memo
     expected_tools: [prediction_market_analysis]
     description: "Single-turn regression for prediction-market follow-up routing: prior World Cup group markets should be drilled down through prediction_market_analysis using slugs, not rephrased market names."
+
+  # G.8 — Prediction Markets Historical Analytics (Phase 3-5 tools)
+  #
+  # Exercises analyze_prediction_calibration, analyze_longshot_bias,
+  # backtest_prediction_rule, monte_carlo_prediction_risk, and
+  # estimate_empirical_kelly across mid-2026 real-world topics, plus
+  # regression cases for the four bugs flagged in code review:
+  #   - post-resolution rows leaking into observations (P1)
+  #   - boundary-price bucket misclassification (P2)
+  #   - TTR filter evaluated at invocation time instead of entry time (P2)
+  #   - resolution fingerprint missing from data_fingerprint chain (P2)
+
+  - id: G43
+    query: "Polymarket politics markets that resolved since the 2024 US election cycle — were the YES prices actually calibrated, or did the market systematically over- or under-price? Group by price bucket and time-to-resolution, and tell me the sample size and reliability label."
+    category: G
+    query_type: prediction_market_calibration_politics
+    expected_tools: [prediction_market_analysis]
+    description: Historical calibration on resolved politics markets — exercises analyze_prediction_calibration; response should quote sample_size, market_count, effective_n, reliability label, and the standard limitations.
+    smoke: true
+
+  - id: G44
+    query: "Run calibration on Polymarket sports markets resolved over the past 12 months. I specifically want to see realized win rate for markets that priced in the 0.90-0.95 range — has heavy-favorite pricing been right? Use 0.05 buckets and report both the market_bucket_once and sample_weighted modes."
+    category: G
+    query_type: prediction_market_calibration_boundary_bucket
+    expected_tools: [prediction_market_analysis]
+    description: "Regression for the boundary-bucket fix (0.90 prices must land in the 0.90-0.95 bucket, not 0.85-0.90). Also exercises sampling_mode='both' so the response carries effective_n separately from raw_observation_count."
+
+  - id: G45
+    query: "Has the longshot bias shown up in Polymarket NBA Finals championship markets this season? Look at sub-10¢ longshots versus 90¢+ favorites and tell me realized win rate, implied probability, and per-contract YES return for each tail. Note the sample size limits."
+    category: G
+    query_type: prediction_market_longshot_nba
+    expected_tools: [prediction_market_analysis]
+    description: analyze_longshot_bias on NBA Finals markets — response should report tail counts, distinct markets, excess return, and any sample_size_below_30 / distinct_markets_below_20 quality flags.
+    smoke: true
+
+  - id: G46
+    query: "Backtest this Polymarket rule for the 2026 cycle: buy YES on politics markets when YES was priced between 5¢ and 15¢, hold to resolution, only count markets with at least $25,000 lifetime volume. I want sample size, win rate, return-on-cost distribution, examples, monte_carlo_input, and the lifetime-volume contamination warning. Use backtest_prediction_rule, not the legacy setup test."
+    category: G
+    query_type: prediction_market_backtest_rule_politics_longshot
+    expected_tools: [prediction_market_analysis]
+    description: backtest_prediction_rule on a structured YES longshot rule with explicit min_lifetime_volume + volume_filter_mode lifetime_static. Response must contain monte_carlo_input and the §11.4 lifetime-volume limitation.
+
+  - id: G47
+    query: "Same Polymarket longshot rule as before — YES between 5¢ and 15¢ on politics markets — but only count entries where there are at least 30 days remaining to resolution at the entry timestamp. Show me whether the time-to-resolution filter actually keeps a meaningful sample, or whether it eliminates most markets."
+    category: G
+    query_type: prediction_market_backtest_ttr_filter
+    expected_tools: [prediction_market_analysis]
+    description: "Regression for the TTR-at-entry-time fix. Previously min_days_to_resolution>0 silently dropped every closed market (now-end_date is negative); this query must return a non-zero sample when valid early entries exist, and the skipped count should appear as ttr_min_unmet, not ttr_filter_skipped."
+
+  - id: G48
+    query: "Take the monte_carlo_input from that 5¢-15¢ politics longshot backtest and stress it with Monte Carlo. Use a $25,000 bankroll, position fraction 5%, 30% max drawdown limit, 2,000 paths, seed 12345. I want median terminal wealth, p5/p95 terminal wealth, p95 and p99 max drawdown, probability of breaching the drawdown limit, and ruin probability. State the IID resampling caveat in the summary."
+    category: G
+    query_type: prediction_market_monte_carlo_chained
+    expected_tools: [prediction_market_analysis]
+    description: monte_carlo_prediction_risk consuming the upstream backtest's monte_carlo_input. Response must state sampling_method='iid_bootstrap' and include the §13.2 IID limitation verbatim.
+    smoke: true
+
+  - id: G49
+    query: "How much should I size a Polymarket longshot trade given the kind of edge that 5-15¢ politics market backtests show? I haven't told you my bankroll or how much drawdown I can stomach — give me the qualitative read first."
+    category: G
+    query_type: prediction_market_kelly_qualitative
+    expected_tools: [prediction_market_analysis]
+    description: "Sizing request WITHOUT bankroll/drawdown constraints — per §13.3, estimate_empirical_kelly must return qualitative guidance only and the agent must not invent numerical fractions. Tests the qualitative_sizing_only quality flag."
+
+  - id: G50
+    query: "Now size that 5¢-15¢ politics longshot strategy properly. My bankroll is $25,000, I can tolerate at most 20% drawdown, use a confidence haircut of 0.5. Give me naive Kelly, half Kelly, capped Kelly, the drawdown-constrained fraction, and your conservative recommendation. State the IID caveat."
+    category: G
+    query_type: prediction_market_kelly_numerical
+    expected_tools: [prediction_market_analysis]
+    description: estimate_empirical_kelly with all risk constraints supplied — response must contain numerical fractions, kelly_method, and the IID caveat. Conservative fraction should be the min of haircut-applied half-Kelly and drawdown-constrained fraction.
+
+  - id: G51
+    query: "Calibrate Polymarket Fed-decision markets since the start of the rate-cut cycle. Use 0.05 price buckets and tell me which time-to-resolution bucket is the most sample-rich. Flag any 0_3h-bucket samples that look suspicious — I don't want terminal 1.0 or 0.0 prints leaking in as 'short horizon' evidence."
+    category: G
+    query_type: prediction_market_calibration_post_resolution_guard
+    expected_tools: [prediction_market_analysis]
+    description: "Regression for the post-resolution filter (P1). Calibration on Fed-decision markets must not show degenerate 0_3h observations with implied_probability in {0.0, 1.0}; the loader filters timestamp > end_date at the DB layer."
+
+  - id: G52
+    query: "Run the full historical workflow on Polymarket June 2026 FOMC markets that have resolved. First calibrate by price bucket and time-to-resolution. Then run a longshot bias analysis with longshot threshold 0.15 and favorite threshold 0.85. Then backtest YES buys in the 5¢-15¢ band hold-to-resolution. Then Monte Carlo with $50k bankroll, 10% position size, 25% drawdown cap. Then size with confidence haircut 0.4."
+    category: G
+    query_type: prediction_market_historical_workflow_end_to_end
+    expected_tools: [prediction_market_analysis]
+    description: End-to-end pipeline across all five new historical tools in a single user turn. Tests that the agent chains calibration → longshot → backtest_prediction_rule → monte_carlo_prediction_risk → estimate_empirical_kelly while preserving the monte_carlo_input fingerprint between tools.
 
 
   # ─────────────────────────────────────────────
