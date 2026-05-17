@@ -50,6 +50,8 @@ class _FakeGamma:
         order: str = "endDate",
         ascending: bool = False,
         end_date_min: str = "",
+        end_date_max: str = "",
+        tag_slug: str = "",
     ) -> list[dict[str, Any]]:
         return self._candidates[:limit]
 

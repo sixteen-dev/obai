@@ -87,9 +87,10 @@ async def backtest_prediction_rule(
         downloader=downloader,
         query=query,
         max_markets=max_markets,
+        category=rule.filters.category or "",
     )
     filters = UniverseFilters(
-        category=rule.filters.category,
+        category=rule.filters.category if query.strip() else None,
         min_lifetime_volume=rule.filters.min_lifetime_volume,
         start_date=None,
         end_date=None,

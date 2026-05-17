@@ -95,9 +95,12 @@ async def analyze_longshot_bias(
         downloader=downloader,
         query=query,
         max_markets=max_markets,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
     )
     filters = UniverseFilters(
-        category=category or None,
+        category=category if query.strip() else None,
         min_lifetime_volume=min_lifetime_volume,
         start_date=start_date,
         end_date=end_date,

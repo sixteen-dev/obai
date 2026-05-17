@@ -100,9 +100,17 @@ async def analyze_prediction_calibration(
         downloader=downloader,
         query=query,
         max_markets=max_markets,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
     )
+    # When a query was supplied we used public_search, which ignores the
+    # category/date filters above; keep them as a client-side guard. For
+    # the listing path the Gamma server already filtered, so the local
+    # category check would only mis-fire on Gamma's idiosyncratic
+    # category strings (e.g. "US-current-affairs" instead of "politics").
     filters = UniverseFilters(
-        category=category or None,
+        category=category if query.strip() else None,
         min_lifetime_volume=min_lifetime_volume,
         start_date=start_date,
         end_date=end_date,
@@ -222,8 +230,17 @@ async def _discover_candidates(
     downloader: HistoryDownloader,
     query: str,
     max_markets: int,
+    category: str = "",
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch closed market candidates, with a query path and a listing path."""
+    """Fetch closed market candidates, with a query path and a listing path.
+
+    Pushes the user-supplied ``category`` to Gamma as a ``tag_slug`` filter
+    and the date window as ``end_date_min``/``end_date_max``. The Gamma
+    listing endpoint does not populate per-market category/tags on closed
+    markets, so server-side filtering is the only reliable path.
+    """
     capped_limit = max(min(max_markets * 2, 500), 1)  # oversample before filtering
     if query.strip():
         result = await downloader.gamma.public_search(
@@ -244,6 +261,9 @@ async def _discover_candidates(
         closed=True,
         order="endDate",
         ascending=False,
+        end_date_min=start_date.date().isoformat() if start_date is not None else "",
+        end_date_max=end_date.date().isoformat() if end_date is not None else "",
+        tag_slug=category.strip().lower(),
     )
 
 

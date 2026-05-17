@@ -53,6 +53,8 @@ class GammaClient:
         order: str = "volume24hr",
         ascending: bool = False,
         end_date_min: str = "",
+        end_date_max: str = "",
+        tag_slug: str = "",
     ) -> list[dict[str, Any]]:
         """List markets with filters.
 
@@ -66,6 +68,13 @@ class GammaClient:
             ascending: Sort direction.
             end_date_min: ISO date string (YYYY-MM-DD). Exclude markets
                 ending before this date.
+            end_date_max: ISO date string (YYYY-MM-DD). Exclude markets
+                ending after this date.
+            tag_slug: Gamma tag slug filter (e.g. "politics", "crypto",
+                "sports", "bitcoin"). The Gamma listing endpoint does not
+                populate per-market category/tags reliably on closed
+                markets, so client-side category filtering does not work;
+                push the slug to the server instead.
 
         Returns:
             List of market dicts with core metadata and pricing.
@@ -86,6 +95,10 @@ class GammaClient:
             }
             if end_date_min:
                 params["end_date_min"] = end_date_min
+            if end_date_max:
+                params["end_date_max"] = end_date_max
+            if tag_slug:
+                params["tag_slug"] = tag_slug
 
             raw_markets = await self._get("/markets", params)
             if not isinstance(raw_markets, list) or len(raw_markets) == 0:
@@ -96,9 +109,23 @@ class GammaClient:
             if len(raw_markets) < page_size:
                 break
 
+        # Client-side date guard: server filter is authoritative, but the
+        # listing sometimes returns markets that drift past the bound (and
+        # the lexicographic compare needs both sides truncated to YYYY-MM-DD
+        # because market end_date arrives as "YYYY-MM-DDTHH:MM:SSZ").
         if end_date_min:
+            min_key = end_date_min[:10]
             all_markets = [
-                m for m in all_markets if not m.get("end_date") or m["end_date"] >= end_date_min
+                m
+                for m in all_markets
+                if not m.get("end_date") or str(m["end_date"])[:10] >= min_key
+            ]
+        if end_date_max:
+            max_key = end_date_max[:10]
+            all_markets = [
+                m
+                for m in all_markets
+                if not m.get("end_date") or str(m["end_date"])[:10] <= max_key
             ]
 
         return all_markets
