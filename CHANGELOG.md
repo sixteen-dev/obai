@@ -6,6 +6,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.1b1] - 2026-05-18 (beta)
+
+First beta of 1.4.1. Adds the prediction-markets historical analytics layer
+on top of 1.4.0, lands a wide cross-server audit pass, and tightens the
+prediction-markets agent's routing and tool-feedback discipline. Promote to
+1.4.1 final only after beta validation; do not move the beta tag.
+
+### Highlights
+
+- **Prediction-markets historical analytics layer.** New tool surface for
+  resolved-market analysis: `analyze_prediction_calibration` (per-bucket +
+  per-category reliability with `low_n` discipline and a `categories`
+  fan-out parameter), `analyze_longshot_bias`, `backtest_prediction_rule`
+  (structured rule schema with explicit `volume_filter_mode` contamination
+  contract), `monte_carlo_prediction_risk`, and `estimate_empirical_kelly`.
+  Server-side category + date filters; ISO date inputs fail loud;
+  coverage timestamps promoted to UTC-aware at the DB boundary.
+- **Cross-server audit pass (P0-P2, batches 1-8).** Multi-week sweep
+  across every specialist server fixing data-quality, error-handling,
+  and resource-management gaps. Highlights: web XSS, tool cache shape,
+  sell-side risk controls, options BSM dividend yield + IV bracketing,
+  research Exa client leak, jobs persistence, trade-log cache reuse,
+  backtest capital + benchmark alignment, options breakeven normalize,
+  market-data retry, BBANDS/BETA, portfolio NaN guards, MCP
+  timeout/retry, autotrader market hours + buying power + session days.
+- **Prediction-markets agent upgrade.** Default model pinned to
+  `gpt-5.1` (from `specialist_model` fallback = `gpt-5-mini`). Prompt
+  carries the `backtest_prediction_rule` filter schema so the LLM
+  stops sending unsupported date bounds and remembers
+  `volume_filter_mode='lifetime_static'` is required with
+  `min_lifetime_volume`. Tool-feedback rule broadened from "filter not
+  honored" to "errors, times out, or ignores a filter" and now
+  explicitly bans identical retries.
+- **MCP infra tightening.** MCP response cap raised to 40k tokens; web
+  message bubbles widened; MCP timeout + retry behavior unified;
+  `python-multipart` bumped to 0.0.27 (GHSA-pp6c-gr5w-3c5g).
+
+### Notes
+
+- A short-lived `feat(kb)` knowledge-base MCP server landed on 2026-05-15
+  and was reverted the next day. Not part of this beta.
+
 ## [1.4.0] - 2026-05-09
 
 Stable graduation of the 1.4 line. The 1.4 work is a near-total rewrite of
