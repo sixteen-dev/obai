@@ -2,23 +2,11 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
-[options]
-exclude-newer = "2026-05-11T15:42:28.396455432Z"
-exclude-newer-span = "P7D"
-
-[options.exclude-newer-package]
-pytest = { timestamp = "2026-05-18T15:42:28.396472685Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-18T15:42:28.396473226Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T15:42:28.396473566Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T15:42:28.396474257Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-18T15:42:28.396470891Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-18T15:42:28.396471683Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T15:42:28.396471222Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T15:42:28.396472013Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-18T15:42:28.396472324Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T15:42:28.396473907Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-18T15:42:28.39647052Z", span = "PT0S" }
-requests = { timestamp = "2026-05-18T15:42:28.396466222Z", span = "PT0S" }
+[manifest]
+constraints = [
+    { name = "authlib", specifier = ">=1.7.2" },
+    { name = "urllib3", specifier = ">=2.7.0" },
+]
 
 [[package]]
 name = "aiofile"

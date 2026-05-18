@@ -72,3 +72,6 @@ dev = [
     "types-cachetools>=6.2.0.20251022",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.7.2", "urllib3>=2.7.0"]

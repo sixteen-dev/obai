@@ -84,7 +84,7 @@ constraint-dependencies = [
     "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
     "aiohttp>=3.13.4",       # CVE-2026-34513 thru CVE-2026-34525: header injection, SSRF, DoS
     "litellm>=1.85.0",       # GHSA-r75f-5x8p-qvmc + GHSA-v4p8-mg3p-g94g + GHSA-xqmj-j6mv-4862 + GHSA-wxxx-gvqv-xp7p: SQLi, auth-RCE, SSTI, sandbox escape
-    "authlib>=1.7.1",        # GHSA-jj8c-mmj3-mmgv (CSRF), GHSA-r95x-qfjj-fjj2 (OIDC open redirect)
+    "authlib>=1.7.2",        # GHSA-jj8c-mmj3-mmgv (CSRF), GHSA-r95x-qfjj-fjj2 (OIDC open redirect)
     "urllib3>=2.7.0",        # GHSA-mf9v-mfxr-j63j + GHSA-qccp-gfcp-xxvc: decompression bomb + header forwarding
 ]
 

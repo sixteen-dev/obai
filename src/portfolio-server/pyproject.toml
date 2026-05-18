@@ -81,3 +81,6 @@ dev = [
     "mypy>=1.19.1",
     "ruff>=0.14.13",
 ]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.7.2", "urllib3>=2.7.0"]

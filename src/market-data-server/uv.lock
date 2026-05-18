@@ -3,21 +3,21 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-11T15:42:28.911745453Z"
+exclude-newer = "2026-05-11T15:51:05.88983292Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-fastmcp = { timestamp = "2026-05-18T15:42:28.911758528Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T15:42:28.911754911Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T15:42:28.911758768Z", span = "PT0S" }
-pytest = { timestamp = "2026-05-18T15:42:28.911758998Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T15:42:28.911759339Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T15:42:28.91175959Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T15:42:28.91175983Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-18T15:51:05.889860492Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-18T15:51:05.889850834Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-18T15:51:05.889861023Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-18T15:51:05.889861444Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-18T15:51:05.889862065Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-18T15:51:05.889862526Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-18T15:51:05.889862997Z", span = "PT0S" }
 
 [manifest]
 constraints = [
-    { name = "authlib", specifier = ">=1.7.1" },
+    { name = "authlib", specifier = ">=1.7.2" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "pygments", specifier = ">=2.20.0" },

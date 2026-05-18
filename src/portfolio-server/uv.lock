@@ -10,23 +10,11 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
-[options]
-exclude-newer = "2026-05-11T15:42:27.573288511Z"
-exclude-newer-span = "P7D"
-
-[options.exclude-newer-package]
-pytest = { timestamp = "2026-05-18T15:42:27.573311755Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-18T15:42:27.573312236Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T15:42:27.573312597Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T15:42:27.573313248Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-18T15:42:27.573309962Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-18T15:42:27.573310723Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T15:42:27.573310292Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T15:42:27.573311044Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-18T15:42:27.573311414Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T15:42:27.573312917Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-18T15:42:27.573309541Z", span = "PT0S" }
-requests = { timestamp = "2026-05-18T15:42:27.573301836Z", span = "PT0S" }
+[manifest]
+constraints = [
+    { name = "authlib", specifier = ">=1.7.2" },
+    { name = "urllib3", specifier = ">=2.7.0" },
+]
 
 [[package]]
 name = "aiofile"
