@@ -1,6 +1,6 @@
 [project]
 name = "portfolio-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for portfolio analysis - allocation, risk metrics, and Monte Carlo simulation"
 requires-python = ">=3.12"
 dependencies = [

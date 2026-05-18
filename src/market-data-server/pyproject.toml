@@ -1,6 +1,6 @@
 [project]
 name = "market-data-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for real-time and historical market data"
 requires-python = ">=3.12"
 dependencies = [

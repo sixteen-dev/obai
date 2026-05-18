@@ -1,6 +1,6 @@
 [project]
 name = "autotrader"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenClaw autonomous paper trading bot - scripts and shared libraries"
 requires-python = ">=3.12"
 dependencies = [

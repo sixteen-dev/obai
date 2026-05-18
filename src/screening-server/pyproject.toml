@@ -1,6 +1,6 @@
 [project]
 name = "screening-server"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for stock screening and ticker discovery via FMP API"
 requires-python = ">=3.12"
 dependencies = [

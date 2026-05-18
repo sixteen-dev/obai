@@ -3,17 +3,17 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-11T15:51:05.961325523Z"
+exclude-newer = "2026-05-11T16:29:10.767634526Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-fastmcp = { timestamp = "2026-05-18T15:51:05.961338147Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T15:51:05.961345862Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T15:51:05.961346222Z", span = "PT0S" }
-pytest = { timestamp = "2026-05-18T15:51:05.961346573Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T15:51:05.961347104Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T15:51:05.961347435Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T15:51:05.961347775Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-18T16:29:10.76764215Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-18T16:29:10.767646949Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-18T16:29:10.76764734Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-18T16:29:10.767647681Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-18T16:29:10.767648172Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-18T16:29:10.767648502Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-18T16:29:10.767648853Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -81,7 +81,7 @@ wheels = [
 
 [[package]]
 name = "backtest-server"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
