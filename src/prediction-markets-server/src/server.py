@@ -622,6 +622,7 @@ async def ensure_prediction_market_history_tool(
 async def analyze_prediction_calibration_tool(
     query: str = "",
     category: str = "",
+    categories: list[str] | None = None,
     start_date: str = "",
     end_date: str = "",
     price_bucket_size: float = DEFAULT_PRICE_BUCKET_SIZE,
@@ -634,7 +635,12 @@ async def analyze_prediction_calibration_tool(
 
     Args:
         query: Optional free-text topic (e.g. "election").
-        category: Optional category match (case-insensitive).
+        category: Optional single-category filter (case-insensitive).
+        categories: Optional list of categories to compare side-by-side.
+            Mutually exclusive with ``category``. When supplied, the tool
+            fans out one calibration per category and returns a
+            ``per_category`` block; use this for cross-category comparisons
+            rather than running the tool once and relabeling the result.
         start_date: Optional ISO-8601 lower bound on market end_date.
         end_date: Optional ISO-8601 upper bound on market end_date.
         price_bucket_size: Width of price buckets (default 0.05).
@@ -646,8 +652,8 @@ async def analyze_prediction_calibration_tool(
             or ``both``.
 
     Returns:
-        Dict matching the §15 response contract with per-bucket calibration
-        metrics, sample sizes, quality flags, and a reliability_label.
+        Dict matching the §15 response contract. When ``categories`` is
+        used, the response carries ``per_category`` keyed by category name.
 
     """
     settings = get_settings()
@@ -668,6 +674,7 @@ async def analyze_prediction_calibration_tool(
             store=store,
             query=query,
             category=category,
+            categories=categories,
             start_date=_parse_iso_or_none(start_date),
             end_date=_parse_iso_or_none(end_date),
             price_bucket_size=price_bucket_size,

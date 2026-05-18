@@ -25,6 +25,12 @@ from .observations import Observation, SamplingMode
 # deliberate, not silent.
 _LOG_EPS = 1e-15
 _WIN_THRESHOLD = 0.5
+# A bucket's realized_frequency is a noisy estimate below this many samples.
+# Buckets under the floor are tagged `low_n=True` and excluded from the
+# overall expected_calibration_error so a small bucket's lucky run cannot
+# bias the headline number, and downstream callers cannot mistake the
+# bucket's frequency for a usable base rate.
+_BUCKET_USABILITY_FLOOR = 10
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,7 @@ class CalibrationBucket:
     excess_return: float  # realized - implied
     brier_score: float
     log_loss: float
+    low_n: bool  # sample_size < _BUCKET_USABILITY_FLOOR; frequency is unreliable
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,7 @@ class CalibrationSummary:
     overall_log_loss: float
     expected_calibration_error: float
     buckets: list[CalibrationBucket]
+    low_n_bucket_count: int  # count of buckets excluded from expected_calibration_error
 
 
 def aggregate_calibration(
@@ -99,7 +107,9 @@ def aggregate_calibration(
 
     overall_brier = _mean(_brier_terms(observations))
     overall_log_loss = _mean(_log_loss_terms(observations))
-    ece = _expected_calibration_error(buckets, raw_count)
+    usable_buckets = [b for b in buckets if not b.low_n]
+    usable_n = sum(b.sample_size for b in usable_buckets)
+    ece = _expected_calibration_error(usable_buckets, usable_n)
     return CalibrationSummary(
         sampling_mode=sampling_mode,
         sample_size=sample_size,
@@ -110,6 +120,7 @@ def aggregate_calibration(
         overall_log_loss=overall_log_loss,
         expected_calibration_error=ece,
         buckets=buckets,
+        low_n_bucket_count=len(buckets) - len(usable_buckets),
     )
 
 
@@ -124,6 +135,7 @@ def summary_to_dict(summary: CalibrationSummary) -> dict[str, Any]:
         "overall_brier": round(summary.overall_brier, 6),
         "overall_log_loss": round(summary.overall_log_loss, 6),
         "expected_calibration_error": round(summary.expected_calibration_error, 6),
+        "low_n_bucket_count": summary.low_n_bucket_count,
         "buckets": [_bucket_to_dict(b) for b in summary.buckets],
     }
 
@@ -139,6 +151,7 @@ def _bucket_to_dict(b: CalibrationBucket) -> dict[str, Any]:
         "excess_return": round(b.excess_return, 6),
         "brier_score": round(b.brier_score, 6),
         "log_loss": round(b.log_loss, 6),
+        "low_n": b.low_n,
     }
 
 
@@ -160,6 +173,7 @@ def _summarize_bucket(
         excess_return=realized - implied,
         brier_score=_mean(_brier_terms(group)),
         log_loss=_mean(_log_loss_terms(group)),
+        low_n=len(group) < _BUCKET_USABILITY_FLOOR,
     )
 
 
@@ -212,4 +226,5 @@ def _empty_summary(sampling_mode: SamplingMode) -> CalibrationSummary:
         overall_log_loss=0.0,
         expected_calibration_error=0.0,
         buckets=[],
+        low_n_bucket_count=0,
     )

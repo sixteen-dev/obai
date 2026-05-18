@@ -305,3 +305,45 @@ async def test_backfill_uses_listing_payload_not_get_market() -> None:
     coverage = result["data_coverage"]
     assert coverage["markets_with_history"] == 3
     assert coverage["price_rows_loaded"] > 0
+
+
+@pytest.mark.asyncio
+async def test_categories_returns_per_category_block(downloader_and_store) -> None:
+    """`categories=[...]` fans out one calibration per category, no merging."""
+    dl, store = downloader_and_store
+    result = await analyze_prediction_calibration(
+        downloader=dl,
+        store=store,
+        categories=["sports", "politics"],
+        max_markets=3,
+        fidelity=60,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert result["tool"] == "analyze_prediction_calibration"
+    assert result["categories"] == ["sports", "politics"]
+    assert set(result["per_category"].keys()) == {"sports", "politics"}
+    # Each per-category entry must look like a normal calibration response,
+    # not the dispatch shape — otherwise the relay agent will not know
+    # what to do with it.
+    for cat_result in result["per_category"].values():
+        assert "metrics" in cat_result
+        assert "data_coverage" in cat_result
+
+
+@pytest.mark.asyncio
+async def test_category_and_categories_are_mutually_exclusive(
+    downloader_and_store,
+) -> None:
+    """Passing both `category` and `categories` is a caller mistake — fail loud."""
+    dl, store = downloader_and_store
+    with pytest.raises(ValueError, match="not both"):
+        await analyze_prediction_calibration(
+            downloader=dl,
+            store=store,
+            category="sports",
+            categories=["sports", "politics"],
+            max_markets=3,
+            max_history_points=1000,
+            now=_now(),
+        )

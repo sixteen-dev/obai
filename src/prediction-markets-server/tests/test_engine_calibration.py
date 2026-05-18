@@ -108,3 +108,36 @@ def test_summary_to_dict_returns_all_required_keys() -> None:
         "buckets",
     ):
         assert key in d
+
+
+def test_low_n_bucket_is_flagged_and_excluded_from_ece() -> None:
+    """Buckets below the usability floor must be tagged and skipped in ECE.
+
+    Builds two buckets in the same price band but different TTR strata: a
+    well-sampled one with a perfect calibration gap of 0, and a 3-sample
+    bucket with realized=1.0 vs implied=0.5 (gap of 0.5). Without the
+    low_n exclusion, the small bucket's gap would drag the overall ECE
+    upward; with it, the bucket is tagged and the ECE reflects only the
+    usable group.
+    """
+    big = [_make_obs(f"0xB{i}", 0.99, 1.0) for i in range(20)]
+    tiny = [_make_obs(f"0xT{i}", 0.10, 1.0) for i in range(3)]
+    summary = aggregate_calibration(big + tiny, sampling_mode="sample_weighted")
+    flagged = [b for b in summary.buckets if b.low_n]
+    big_bucket = next(b for b in summary.buckets if not b.low_n)
+    assert flagged, "expected at least one bucket tagged low_n"
+    assert summary.low_n_bucket_count == len(flagged)
+    assert summary.expected_calibration_error == pytest.approx(
+        abs(big_bucket.realized_frequency - big_bucket.implied_probability), abs=1e-9
+    )
+
+
+def test_summary_to_dict_includes_low_n_fields() -> None:
+    """Serialized response must surface the per-bucket flag and the count."""
+    summary = aggregate_calibration(
+        [_make_obs("0xA", 0.4, 1.0)], sampling_mode="market_bucket_once"
+    )
+    d = summary_to_dict(summary)
+    assert "low_n_bucket_count" in d
+    assert d["buckets"], "expected at least one bucket"
+    assert "low_n" in d["buckets"][0]

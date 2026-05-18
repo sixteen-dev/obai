@@ -63,6 +63,7 @@ async def analyze_prediction_calibration(
     store: PredictionStore,
     query: str = "",
     category: str = "",
+    categories: list[str] | None = None,
     start_date: datetime | None = None,
     end_date: datetime | None = None,
     price_bucket_size: float = DEFAULT_PRICE_BUCKET_SIZE,
@@ -79,7 +80,12 @@ async def analyze_prediction_calibration(
         downloader: Backfill orchestrator (constructed by the MCP wrapper).
         store: PredictionStore for read-back after backfill.
         query: Optional free-text topic (e.g. "election"); searches Gamma.
-        category: Optional category match (case-insensitive).
+        category: Optional single-category filter (case-insensitive).
+        categories: Optional list of categories to compare side-by-side.
+            Mutually exclusive with ``category``. The tool fans out one
+            calibration per category and returns a ``per_category`` block
+            instead of the single-category response shape, so cross-category
+            results cannot be silently merged into one.
         start_date: Optional inclusive lower bound on market end_date.
         end_date: Optional inclusive upper bound on market end_date.
         price_bucket_size: Price bucket width (default 0.05).
@@ -92,16 +98,37 @@ async def analyze_prediction_calibration(
         now: Optional override; defaults to current UTC.
 
     Returns:
-        Dict following the §15 response contract for calibration.
+        Dict following the §15 response contract for calibration. When
+        ``categories`` is supplied, returns the per-category dispatch
+        shape (``tool``, ``categories``, ``per_category``).
 
     Raises:
-        ValueError: If sampling_mode is invalid or thresholds are out of
-            range.
+        ValueError: If sampling_mode is invalid, thresholds are out of
+            range, or both ``category`` and ``categories`` are supplied.
 
     """
     if sampling_mode not in _SUPPORTED_MODES:
         msg = f"sampling_mode must be one of {_SUPPORTED_MODES}, got {sampling_mode!r}"
         raise ValueError(msg)
+    if categories is not None and category:
+        msg = "Pass either `category` or `categories`, not both."
+        raise ValueError(msg)
+    if categories is not None:
+        return await _run_per_category(
+            downloader=downloader,
+            store=store,
+            query=query,
+            categories=categories,
+            start_date=start_date,
+            end_date=end_date,
+            price_bucket_size=price_bucket_size,
+            min_lifetime_volume=min_lifetime_volume,
+            max_markets=max_markets,
+            fidelity=fidelity,
+            sampling_mode=sampling_mode,
+            max_history_points=max_history_points,
+            now=now,
+        )
 
     fetched_at = now or datetime.now(tz=timezone.utc)
     candidates = await _discover_candidates(
@@ -280,6 +307,60 @@ def _build_universe_composition(
         "ttr_bucket_distribution": ttr_totals,
         "ttr_strata_present": sum(1 for v in ttr_totals.values() if v > 0),
         "sampling_mode_observed": (seen_mode or {}).get("sampling_mode"),
+    }
+
+
+async def _run_per_category(
+    *,
+    downloader: HistoryDownloader,
+    store: PredictionStore,
+    query: str,
+    categories: list[str],
+    start_date: datetime | None,
+    end_date: datetime | None,
+    price_bucket_size: float,
+    min_lifetime_volume: float | None,
+    max_markets: int,
+    fidelity: int,
+    sampling_mode: SamplingMode,
+    max_history_points: int,
+    now: datetime | None,
+) -> dict[str, Any]:
+    """Fan out one calibration per category and return a per_category block.
+
+    Runs the per-category calibrations concurrently. The CLOB fetch
+    semaphore in ``_backfill_selected`` already bounds total network
+    concurrency, so adding outer parallelism here speeds up the wall time
+    without breaching Polymarket's effective rate budget.
+    """
+    cleaned = [c.strip() for c in categories if c and c.strip()]
+    if not cleaned:
+        msg = "`categories` must contain at least one non-empty value."
+        raise ValueError(msg)
+
+    async def _one(cat: str) -> dict[str, Any]:
+        return await analyze_prediction_calibration(
+            downloader=downloader,
+            store=store,
+            query=query,
+            category=cat,
+            start_date=start_date,
+            end_date=end_date,
+            price_bucket_size=price_bucket_size,
+            min_lifetime_volume=min_lifetime_volume,
+            max_markets=max_markets,
+            fidelity=fidelity,
+            sampling_mode=sampling_mode,
+            max_history_points=max_history_points,
+            now=now,
+        )
+
+    results = await asyncio.gather(*(_one(cat) for cat in cleaned))
+    return {
+        "tool": "analyze_prediction_calibration",
+        "universe": "gamma_closed_markets",
+        "categories": cleaned,
+        "per_category": dict(zip(cleaned, results, strict=True)),
     }
 
 
