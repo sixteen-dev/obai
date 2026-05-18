@@ -154,7 +154,7 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default=None,
+        default="gpt-5.1",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
     guardrail_model: str = Field(
