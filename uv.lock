@@ -19,22 +19,22 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-11T14:33:57.859007369Z"
+exclude-newer = "2026-05-11T15:41:06.86753688Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-05-18T14:33:57.859033348Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-18T14:33:57.859033879Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T14:33:57.859034179Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T14:33:57.859034961Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-18T14:33:57.859031384Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-18T14:33:57.859032266Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T14:33:57.859031765Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T14:33:57.859032636Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-18T14:33:57.859032987Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T14:33:57.85903457Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-18T14:33:57.859030953Z", span = "PT0S" }
-requests = { timestamp = "2026-05-18T14:33:57.859020133Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-18T15:41:06.867555085Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-18T15:41:06.867555555Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-18T15:41:06.867555936Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-18T15:41:06.867556617Z", span = "PT0S" }
+anthropic = { timestamp = "2026-05-18T15:41:06.867553041Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-18T15:41:06.867553932Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-18T15:41:06.867553411Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-18T15:41:06.867554313Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-18T15:41:06.867554684Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-18T15:41:06.867556267Z", span = "PT0S" }
+onnx = { timestamp = "2026-05-18T15:41:06.86755264Z", span = "PT0S" }
+requests = { timestamp = "2026-05-18T15:41:06.867547971Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -43,7 +43,7 @@ constraints = [
     { name = "authlib", specifier = ">=1.7.1" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastmcp", specifier = ">=3.2.0" },
-    { name = "litellm", specifier = ">=1.83.7" },
+    { name = "litellm", specifier = ">=1.85.0" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "python-multipart", specifier = ">=0.0.27" },

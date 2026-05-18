@@ -42,6 +42,13 @@ prediction-markets agent's routing and tool-feedback discipline. Promote to
 - **MCP infra tightening.** MCP response cap raised to 40k tokens; web
   message bubbles widened; MCP timeout + retry behavior unified;
   `python-multipart` bumped to 0.0.27 (GHSA-pp6c-gr5w-3c5g).
+- **Dependabot sweep.** `litellm` 1.83.7 → 1.85.0
+  (GHSA-wxxx-gvqv-xp7p, sandbox escape in custom-code guardrail);
+  `authlib` 1.7.0 → 1.7.2 across all per-server lockfiles
+  (GHSA-r95x-qfjj-fjj2, OIDC open redirect);
+  `urllib3` 2.6.x → 2.7.0 in events-news and fundamentals server
+  lockfiles (GHSA-mf9v-mfxr-j63j + GHSA-qccp-gfcp-xxvc, decompression
+  bomb + sensitive header forwarding).
 
 ### Notes
 

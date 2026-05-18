@@ -14,21 +14,22 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-09T22:13:44.402264467Z"
+exclude-newer = "2026-05-11T15:42:29.144741017Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-05-16T22:13:44.402278583Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-16T22:13:44.402278924Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-16T22:13:44.402279175Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-16T22:13:44.402277281Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-16T22:13:44.402277842Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-16T22:13:44.402277521Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-16T22:13:44.402278072Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-16T22:13:44.402278333Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-16T22:13:44.402279435Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-16T22:13:44.402277031Z", span = "PT0S" }
-requests = { timestamp = "2026-05-16T22:13:44.402273303Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-18T15:42:29.144756486Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-18T15:42:29.144757237Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-18T15:42:29.144757588Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-18T15:42:29.144758059Z", span = "PT0S" }
+anthropic = { timestamp = "2026-05-18T15:42:29.144755133Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-18T15:42:29.144755704Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-18T15:42:29.144755364Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-18T15:42:29.144755935Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-18T15:42:29.144756175Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-18T15:42:29.144757828Z", span = "PT0S" }
+onnx = { timestamp = "2026-05-18T15:42:29.144754863Z", span = "PT0S" }
+requests = { timestamp = "2026-05-18T15:42:29.144750084Z", span = "PT0S" }
 
 [[package]]
 name = "alpaca-py"
