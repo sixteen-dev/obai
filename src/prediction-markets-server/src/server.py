@@ -814,11 +814,34 @@ async def backtest_prediction_rule_tool(
     """Backtest a structured prediction-market rule (§10.4 V1 schema).
 
     Args:
-        rule_json: JSON-encoded rule payload. V1 supports {"side": "YES",
-            "entry": {"price_min": float, "price_max": float}, "exit":
-            {"type": "hold_to_resolution"}, "filters": {...}}. Unsupported
-            fields are rejected loudly. Passed as a string (not an object)
-            so the tool input schema stays strict-mode compatible.
+        rule_json: JSON-encoded rule payload. ``side`` must be ``"YES"``,
+            ``entry`` is an inclusive ``{price_min, price_max}`` band, and
+            ``exit`` is one of two variants discriminated on ``type``:
+
+            * ``{"type": "hold_to_resolution"}`` — original behavior. Exit
+              at the terminal sampled YES price; PnL from §10.4 payoff.
+
+            * ``{"type": "stop_take_profit", "stop_price"?: float,
+              "take_profit_price"?: float, "max_hold_days"?: int}`` — at
+              least one trigger required. ``stop_price`` must sit strictly
+              below ``entry.price_min`` and ``take_profit_price`` strictly
+              above ``entry.price_max``; otherwise the entry sample itself
+              could already satisfy a trigger and the rule is rejected.
+              Engine walks sampled rows after entry and exits on the first
+              stop / take-profit / max-hold crossing using the observed
+              sampled price (not the trigger level). When ``max_hold_days``
+              is set but no sampled row exists at-or-after
+              ``entry_ts + max_hold_days`` and resolution falls past the
+              boundary, the trade is skipped under
+              ``no_exit_price_for_max_hold`` rather than silently held to
+              resolution.
+
+            Optional ``filters`` accepts ``category``,
+            ``min_lifetime_volume``, ``volume_filter_mode``,
+            ``min_days_to_resolution``, ``max_days_to_resolution``.
+            Unsupported fields are rejected loudly. Passed as a string
+            (not an object) so the tool input schema stays strict-mode
+            compatible.
         query: Optional free-text discovery topic.
         max_markets: Hard cap on selected market universe (default 100).
         fidelity: Sampled-price resolution in minutes (default 60).
@@ -827,8 +850,13 @@ async def backtest_prediction_rule_tool(
 
     Returns:
         Dict matching the §15 response contract with sample_size,
-        win_rate, distribution stats, examples, monte_carlo_input,
-        limitations, quality_flags, and reliability_label.
+        win_rate, distribution stats, per-trade examples carrying
+        ``exit_reason`` + ``time_to_exit_days``, an ``exit_breakdown``
+        block (count / share / avg_return_on_cost /
+        median_time_to_exit_days per reason, plus
+        ``win_rate_at_resolution`` on the ``resolution`` slot),
+        ``monte_carlo_input``, limitations, quality_flags, and
+        reliability_label.
 
     """
     try:

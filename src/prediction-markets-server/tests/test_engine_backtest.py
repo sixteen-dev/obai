@@ -187,3 +187,221 @@ def test_simulate_rule_ttr_filter_drops_late_entries_and_counts_them() -> None:
     trades = simulate_rule(rule, [_winner_market("0xW")], out_skipped=skipped)
     assert trades == []
     assert skipped.get("ttr_min_unmet") == 1
+
+
+def test_summarize_trades_hold_to_resolution_exit_breakdown_only_resolution() -> None:
+    """For pure hold-to-resolution trades, all four reasons surface; only resolution has count."""
+    rule = _rule(0.05, 0.15)
+    trades = simulate_rule(rule, [_winner_market("0xW"), _loser_market("0xL")])
+    summary = summarize_trades(trades)
+    breakdown = summary["exit_breakdown"]
+    assert set(breakdown.keys()) == {"stop", "take_profit", "expiry", "resolution"}
+    assert breakdown["resolution"]["count"] == 2
+    assert breakdown["resolution"]["share"] == 1.0
+    assert breakdown["resolution"]["win_rate_at_resolution"] == 0.5
+    for reason in ("stop", "take_profit", "expiry"):
+        assert breakdown[reason]["count"] == 0
+        assert breakdown[reason]["share"] == 0.0
+
+
+def test_simulate_rule_trade_includes_resolution_exit_metadata() -> None:
+    """Each hold_to_resolution trade carries exit_reason='resolution' and time_to_exit_days."""
+    rule = _rule(0.05, 0.15)
+    trades = simulate_rule(rule, [_winner_market("0xW")])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "resolution"
+    assert trade.time_to_exit_days == pytest.approx(9.0, abs=1e-9)
+
+
+# ── stop_take_profit walk ──
+
+
+def _stp_rule(
+    *,
+    price_min: float = 0.05,
+    price_max: float = 0.15,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
+    max_hold_days: int | None = None,
+):
+    exit_rule: dict[str, object] = {"type": "stop_take_profit"}
+    if stop_price is not None:
+        exit_rule["stop_price"] = stop_price
+    if take_profit_price is not None:
+        exit_rule["take_profit_price"] = take_profit_price
+    if max_hold_days is not None:
+        exit_rule["max_hold_days"] = max_hold_days
+    return validate_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": price_min, "price_max": price_max},
+            "exit": exit_rule,
+        }
+    )
+
+
+def _market_from_prices(
+    condition: str,
+    prices: list[tuple[int, float]],  # (days_before_end, price)
+    *,
+    winning_outcome: str = "Yes",
+) -> BacktestMarket:
+    rows = [_row(f"{condition}-Y", condition, _now() - timedelta(days=d), p) for d, p in prices]
+    return BacktestMarket(
+        condition_id=condition,
+        event_slug=f"event-{condition}",
+        end_date=_now(),
+        winning_outcome_label=winning_outcome,
+        yes_token_rows=rows,
+    )
+
+
+def test_simulate_rule_stop_only_fires_on_first_row_below_stop() -> None:
+    """Earliest in-band sample is entry; first subsequent row at-or-below stop wins."""
+    market = _market_from_prices(
+        "0xS",
+        [(20, 0.10), (15, 0.08), (10, 0.03), (5, 0.50), (1, 1.00)],
+    )
+    rule = _stp_rule(stop_price=0.04)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == 0.03
+    assert trade.entry_price == 0.10
+    assert trade.return_on_cost == pytest.approx((0.03 - 0.10) / 0.10, abs=1e-9)
+    assert trade.realized_win is False
+    assert trade.time_to_exit_days == pytest.approx(10.0, abs=1e-9)
+
+
+def test_simulate_rule_take_profit_only_fires_on_first_row_above_target() -> None:
+    """Stop unset: a row meeting take-profit fires take_profit, not resolution."""
+    market = _market_from_prices(
+        "0xT",
+        [(20, 0.10), (15, 0.12), (10, 0.55), (1, 1.00)],
+    )
+    rule = _stp_rule(take_profit_price=0.50)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "take_profit"
+    assert trade.exit_price == 0.55
+    assert trade.realized_win is True
+
+
+def test_simulate_rule_expiry_fires_at_first_row_past_boundary() -> None:
+    """max_hold_days=7: first row past entry+7d triggers expiry, not resolution."""
+    market = _market_from_prices(
+        "0xE",
+        [(20, 0.10), (15, 0.12), (12, 0.14), (1, 1.00)],
+        winning_outcome="Yes",
+    )
+    # entry at day -20; max_hold_days=7 → boundary at day -13. First row at-or-past
+    # boundary is (15, 0.12) — exactly 5 days in, which is < 7. Next row (12, 0.14)
+    # is 8 days in; first to trigger expiry. (Stop/TP unset.)
+    rule = _stp_rule(max_hold_days=7)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "expiry"
+    assert trade.exit_price == 0.14
+    assert trade.time_to_exit_days == pytest.approx(8.0, abs=1e-9)
+
+
+def test_simulate_rule_stop_take_profit_max_hold_combined_first_match_wins() -> None:
+    """Stop fires before take-profit and before expiry — order is stop > tp > expiry."""
+    market = _market_from_prices(
+        "0xC",
+        [(30, 0.10), (25, 0.02), (10, 0.99), (1, 1.00)],
+    )
+    rule = _stp_rule(stop_price=0.04, take_profit_price=0.40, max_hold_days=14)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "stop"
+    assert trades[0].exit_price == 0.02
+
+
+def test_simulate_rule_falls_back_to_resolution_when_no_trigger_fires() -> None:
+    """Stop set low, no TP, no max-hold: nothing triggers → resolution payoff."""
+    market = _market_from_prices(
+        "0xR",
+        [(20, 0.10), (15, 0.11), (10, 0.12), (1, 0.04)],
+        winning_outcome="No",
+    )
+    # stop_price below every sampled price after entry → stop never fires.
+    rule = _stp_rule(stop_price=0.01)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "resolution"
+    # hold-to-resolution math: realized_win driven by winning_outcome_label, not last-sample sign
+    assert trade.realized_win is False
+    assert trade.return_on_cost == -1.0
+
+
+def test_simulate_rule_falls_back_to_resolution_when_max_hold_covers_full_lifetime() -> None:
+    """max_hold_days > market lifetime → boundary never hit; fall back to resolution."""
+    market = _market_from_prices("0xL", [(5, 0.10), (1, 1.0)])
+    rule = _stp_rule(max_hold_days=30)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "resolution"
+
+
+def test_simulate_rule_skips_when_max_hold_violated_and_no_row_past_boundary() -> None:
+    """Data gap: resolution falls past entry+max_hold but no sample straddles boundary."""
+    # Entry at day -30 (price 0.10). Last YES sample at day -25 (5 days into hold).
+    # max_hold_days = 7 → boundary at day -23. No row at-or-after day -23 exists.
+    # market.end_date is _now() (day 0), well past day -23 → skip.
+    market = BacktestMarket(
+        condition_id="0xG",
+        event_slug="event-gap",
+        end_date=_now(),
+        winning_outcome_label="Yes",
+        yes_token_rows=[
+            _row("0xG-Y", "0xG", _now() - timedelta(days=30), 0.10),
+            _row("0xG-Y", "0xG", _now() - timedelta(days=25), 0.11),
+        ],
+    )
+    rule = _stp_rule(max_hold_days=7)
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(rule, [market], out_skipped=skipped)
+    assert trades == []
+    assert skipped.get("no_exit_price_for_max_hold") == 1
+
+
+def test_simulate_rule_skips_entry_when_no_row_in_band() -> None:
+    """stop_take_profit must still record no_eligible_entry when entry band is empty."""
+    market = _market_from_prices("0xN", [(10, 0.50), (5, 0.55)])
+    rule = _stp_rule(stop_price=0.04)
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(rule, [market], out_skipped=skipped)
+    assert trades == []
+    assert skipped.get("no_eligible_entry") == 1
+
+
+def test_summarize_trades_exit_breakdown_share_sums_to_one() -> None:
+    """Mixed exit reasons across markets: share fractions sum to 1.0."""
+    # Stop fires on one market; another resolves (terminal sample < TP, no max-hold).
+    stop_market = _market_from_prices(
+        "0xS1", [(20, 0.10), (10, 0.02), (1, 0.0)], winning_outcome="No"
+    )
+    res_market = _market_from_prices(
+        "0xR1", [(20, 0.10), (10, 0.11), (1, 0.20)], winning_outcome="Yes"
+    )
+    # take_profit at 0.95 — neither market reaches it; stop at 0.04 fires on res_market's
+    # entry? No — entry validator rejects stop >= price_min. stop_market entry is 0.10,
+    # walk sees 0.02 → stop fires. res_market walks 0.11, 0.20 → no stop → resolution.
+    rule = _stp_rule(stop_price=0.04, take_profit_price=0.95)
+    trades = simulate_rule(rule, [stop_market, res_market])
+    assert len(trades) == 2
+    summary = summarize_trades(trades)
+    breakdown = summary["exit_breakdown"]
+    total_share = sum(
+        breakdown[reason]["share"] for reason in ("stop", "take_profit", "expiry", "resolution")
+    )
+    assert total_share == pytest.approx(1.0, abs=1e-9)
+    assert breakdown["stop"]["count"] == 1
+    assert breakdown["resolution"]["count"] == 1
+    assert breakdown["resolution"]["win_rate_at_resolution"] == 1.0

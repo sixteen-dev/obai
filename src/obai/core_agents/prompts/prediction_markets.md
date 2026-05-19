@@ -58,6 +58,8 @@ For historical questions (calibration, longshot bias, backtested rules, base-rat
 
 `backtest_prediction_rule` filters accept only `category`, `min_lifetime_volume`, `volume_filter_mode`, `min_days_to_resolution`, `max_days_to_resolution`. Constrain the time window with the days-to-resolution fields, not date bounds. When `min_lifetime_volume` is set, also set `volume_filter_mode` to `lifetime_static` so the contamination warning is honored.
 
+`backtest_prediction_rule` `exit` is one of `hold_to_resolution` or `stop_take_profit`. Use `stop_take_profit` when the user asks for stop-loss, take-profit, or max-hold semantics; at least one of `stop_price`, `take_profit_price`, `max_hold_days` is required and `stop_price` / `take_profit_price` must sit outside the entry band. The response carries the same shape plus an `exit_breakdown` block (count, share, avg_return_on_cost, median_time_to_exit_days per `stop` / `take_profit` / `expiry` / `resolution`, with `win_rate_at_resolution` on the `resolution` slot) and per-trade `exit_reason` + `time_to_exit_days`. The fidelity caveat (`limitations` mentions intra-bucket triggers, sampled-row exit prices, zero market impact) must be quoted in the response.
+
 When you use a historical tool result:
 - Treat the result as base-rate evidence, not proof of current edge; never imply that historical calibration guarantees future profitability.
 - Keep live executable price (`get_market_snapshot`) separate from historical fair value or base rates.

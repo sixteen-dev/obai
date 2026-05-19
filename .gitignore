@@ -84,6 +84,8 @@ docs/design/
 docs/website/
 docs/*.md
 docs/CLAUDE.md
+docs/audits/
+artifacts/ 
 
 # =============================================================================
 # Scripts

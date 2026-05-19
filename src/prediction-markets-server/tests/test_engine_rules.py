@@ -48,9 +48,97 @@ def test_validate_rule_rejects_unsupported_side() -> None:
 
 
 def test_validate_rule_rejects_unsupported_exit_type() -> None:
-    """Anything other than hold_to_resolution fails until V2 adds exits."""
+    """Exit type discriminator must be one of the supported variants."""
     payload = _minimal_rule()
-    payload["exit"] = {"type": "stop_loss"}
+    payload["exit"] = {"type": "trailing_stop"}
+    with pytest.raises(ValidationError):
+        validate_rule(payload)
+
+
+def test_validate_rule_accepts_stop_take_profit_stop_only() -> None:
+    """Stop-only stop_take_profit with disjoint entry band validates."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {"type": "stop_take_profit", "stop_price": 0.05}
+    rule = validate_rule(payload)
+    assert rule.exit.type == "stop_take_profit"
+    # narrow for type-checkers + assert payload fidelity
+    assert rule.exit.stop_price == 0.05  # type: ignore[union-attr]
+    assert rule.exit.take_profit_price is None  # type: ignore[union-attr]
+    assert rule.exit.max_hold_days is None  # type: ignore[union-attr]
+
+
+def test_validate_rule_accepts_stop_take_profit_all_triggers() -> None:
+    """Stop + take-profit + max-hold combined, with disjoint entry band, validates."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {
+        "type": "stop_take_profit",
+        "stop_price": 0.05,
+        "take_profit_price": 0.40,
+        "max_hold_days": 14,
+    }
+    rule = validate_rule(payload)
+    assert rule.exit.max_hold_days == 14  # type: ignore[union-attr]
+
+
+def test_validate_rule_rejects_stop_take_profit_with_no_triggers() -> None:
+    """stop_take_profit with all three triggers None has no semantics; must reject."""
+    payload = _minimal_rule()
+    payload["exit"] = {"type": "stop_take_profit"}
+    with pytest.raises(ValidationError, match="at least one"):
+        validate_rule(payload)
+
+
+def test_validate_rule_rejects_stop_above_take_profit() -> None:
+    """stop_price >= take_profit_price would make exit ordering undefined."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {
+        "type": "stop_take_profit",
+        "stop_price": 0.50,
+        "take_profit_price": 0.40,
+    }
+    with pytest.raises(ValidationError, match="take_profit_price"):
+        validate_rule(payload)
+
+
+def test_validate_rule_rejects_stop_overlapping_entry_band() -> None:
+    """stop_price within or above entry.price_min lets entry already satisfy stop."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {"type": "stop_take_profit", "stop_price": 0.10}
+    with pytest.raises(ValidationError, match="stop_price"):
+        validate_rule(payload)
+
+
+def test_validate_rule_rejects_take_profit_overlapping_entry_band() -> None:
+    """take_profit_price within or below entry.price_max lets entry already satisfy TP."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {"type": "stop_take_profit", "take_profit_price": 0.20}
+    with pytest.raises(ValidationError, match="take_profit_price"):
+        validate_rule(payload)
+
+
+def test_validate_rule_rejects_max_hold_days_zero() -> None:
+    """max_hold_days must be >= 1; 0 is meaningless."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {"type": "stop_take_profit", "max_hold_days": 0}
+    with pytest.raises(ValidationError):
+        validate_rule(payload)
+
+
+def test_validate_rule_rejects_extra_field_in_stop_take_profit() -> None:
+    """extra='forbid' on StopTakeProfitExit means unknown trigger fields fail loudly."""
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.10, "price_max": 0.20}
+    payload["exit"] = {
+        "type": "stop_take_profit",
+        "stop_price": 0.05,
+        "trailing_stop": 0.02,
+    }
     with pytest.raises(ValidationError):
         validate_rule(payload)
 
