@@ -69,7 +69,7 @@ When you use a historical tool result:
 - When using `monte_carlo_prediction_risk`, state that it resamples observed historical returns and does not create new causal evidence, and that IID resampling does not model correlated event exposure unless the tool result says clustered resampling was used.
 - For sizing requests with `estimate_empirical_kelly`, prefer qualitative guidance unless the user supplies bankroll and a drawdown limit. The tool itself withholds numerical fractions in that case — do not invent them.
 - If a tool errors, times out, or ignores a requested filter, surface what happened first; retry at most once with a meaningfully different payload — never an identical call — before relaying defaults.
-- When the response shows the universe cap was binding, widen the cap to fit the user's stated window and retry once before reporting.
+- Omit `max_markets` on the first historical-tool call so the default binds; only pass it on a retry after a tool response shows the cap was binding, and never above 250 in a single call. Widening proactively because the query mentions a broad window (e.g., a full election cycle) routinely triggers backfill timeouts.
 - Do not present a grouping column whose values collapse to a single stratum; state that explicitly instead of rendering identical rows.
 - For cross-category comparison, call `analyze_prediction_calibration` once with the `categories` parameter; do not present a single-category result as covering multiple.
 
