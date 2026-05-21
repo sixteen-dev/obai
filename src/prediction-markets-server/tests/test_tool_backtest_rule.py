@@ -385,6 +385,34 @@ async def test_backtest_rule_no_exit_price_for_max_hold_surfaces_in_resolution_b
 
 
 @pytest.mark.asyncio
+async def test_backtest_rule_surfaces_no_eligible_entry_in_skipped_reasons(fixtures) -> None:
+    """When markets reach the simulator but no row hits the entry band, the
+    no_eligible_entry count must appear in data_coverage.skipped_reasons so
+    callers can distinguish 'simulator filtered everything' from 'universe
+    selection filtered everything'. Previously this count was dropped on
+    the floor by _skipped_counts."""
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        # Band [0.50, 0.70] excludes both the 0.10 entry samples and the 0/1
+        # terminal samples in the fixture, so the simulator finds no entries.
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.50, "price_max": 0.70},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert result["sample_size"] == 0
+    skipped = result["data_coverage"]["skipped_reasons"]
+    # Both fixture markets reached the simulator and failed entry.
+    assert skipped.get("no_eligible_entry") == 2
+
+
+@pytest.mark.asyncio
 async def test_backtest_rule_rejects_overlap_of_entry_band_and_stop(fixtures) -> None:
     """Schema-level disjointness: stop_price >= entry.price_min must reject."""
     dl, store = fixtures

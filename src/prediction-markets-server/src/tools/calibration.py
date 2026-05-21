@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Final
 
 from ..data import (
     HistoryDownloader,
@@ -638,15 +638,39 @@ def _aggregate_modes(
 # -- helpers ------------------------------------------------------------------
 
 
+_SIMULATOR_SKIP_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "no_eligible_entry",
+        "ttr_min_unmet",
+        "ttr_max_exceeded",
+        "no_exit_price_for_max_hold",
+        "missing_price_history",
+    }
+)
+
+
 def _skipped_counts(
     selection_excluded: dict[str, int],
     resolution_summary: dict[str, int],
 ) -> dict[str, int]:
-    """Merge universe-selection exclusion counts with resolution skip counts."""
+    """Merge universe-selection exclusions with simulator skip counts.
+
+    ``ambiguous`` + ``unresolved`` collapse into a single
+    ``ambiguous_resolution`` total (callers + ``compute_quality_flags`` key
+    off that name). Simulator-side skip reasons pass through individually
+    so the response can explain why every selected market dropped out.
+    Resolution-method buckets that aren't real skips (e.g. ``resolved``,
+    ``oracle_decided``) are intentionally dropped — they are bookkeeping,
+    not exclusions.
+    """
     out: dict[str, int] = dict(selection_excluded)
     ambiguous = resolution_summary.get("ambiguous", 0) + resolution_summary.get("unresolved", 0)
     if ambiguous:
         out["ambiguous_resolution"] = out.get("ambiguous_resolution", 0) + ambiguous
+    for reason in _SIMULATOR_SKIP_REASONS:
+        count = resolution_summary.get(reason, 0)
+        if count:
+            out[reason] = out.get(reason, 0) + count
     return dict(sorted(out.items()))
 
 
