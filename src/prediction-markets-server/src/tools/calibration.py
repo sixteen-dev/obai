@@ -45,9 +45,11 @@ logger = get_logger(__name__)
 
 # CLOB fetches are network-bound; parallelize per-token with a small
 # semaphore so wide windows finish well under the MCP timeout. Five is a
-# conservative bound that fits Polymarket's observed concurrency budget
-# without tripping rate limits.
-_BACKFILL_CONCURRENCY = 5
+# Bound on per-token CLOB fetch concurrency. The endpoint is a public
+# read path with no observed per-IP rate limit at our volume; raising
+# from 5 → 20 cuts cold-cache backfill latency ~4x without tripping
+# throttling.
+_BACKFILL_CONCURRENCY = 20
 
 
 _SUPPORTED_MODES: tuple[SamplingMode, ...] = (
