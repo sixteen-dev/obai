@@ -144,6 +144,30 @@ def test_quality_flags_below_30_observations_flags_weak_sample() -> None:
     assert "distinct_markets_below_20" in flags
     assert "lifetime_volume_filter_uses_final_volume" in flags
     assert "no_historical_order_book_depth" in flags
+    assert "no_returns_to_simulate" not in flags
+
+
+def test_quality_flags_zero_observations_flags_empty_returns() -> None:
+    """observations_used == 0 → no_returns_to_simulate so callers know the
+    monte_carlo_input.returns array is empty by design, not by bug."""
+    coverage = build_data_coverage(
+        markets_requested=100,
+        markets_selected=100,
+        markets_with_history=10,
+        markets_excluded=0,
+        tokens_requested=200,
+        tokens_with_history=20,
+        price_rows_loaded=1000,
+        price_rows_used=0,
+        observations_used=0,
+        distinct_markets_used=0,
+        coverage_start=None,
+        coverage_end=None,
+        skipped_reasons={"below_lifetime_volume": 90},
+    )
+    flags = compute_quality_flags(coverage=coverage, lifetime_volume_filter_used=True)
+    assert "no_returns_to_simulate" in flags
+    assert "sample_size_below_30" in flags
 
 
 def test_quality_flags_high_skip_rate() -> None:

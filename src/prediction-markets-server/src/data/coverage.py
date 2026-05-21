@@ -165,7 +165,10 @@ def compute_quality_flags(
 
     Only flags whose triggering condition is met appear in the output —
     callers should not strip "uninteresting" flags after the fact, the
-    set is the message.
+    set is the message. ``no_returns_to_simulate`` fires whenever
+    ``observations_used == 0`` so downstream callers know an empty
+    ``monte_carlo_input.returns`` array is a designed terminal state,
+    not a transport-layer bug.
 
     Args:
         coverage: data_coverage dict built by build_data_coverage.
@@ -188,6 +191,8 @@ def compute_quality_flags(
     skipped = coverage.get("skipped_reasons", {})
     markets_selected = int(coverage.get("markets_selected", 0))
 
+    if observations_used == 0:
+        flags.append("no_returns_to_simulate")
     if observations_used < _SAMPLE_SIZE_BELOW_FLOOR:
         flags.append("sample_size_below_30")
     elif observations_used < _SAMPLE_SIZE_MODERATE_CEILING:
