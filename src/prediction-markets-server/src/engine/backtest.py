@@ -219,13 +219,20 @@ def _trigger_for_row(
     exit_rule: StopTakeProfitExit,
     boundary_ts: datetime | None,
 ) -> ExitReason | None:
-    """Return the exit reason fired by ``row`` (stop, take_profit, expiry), if any."""
+    """Return the exit reason fired by ``row`` (stop, take_profit, expiry), if any.
+
+    Boundary wins ties. When ``row.timestamp >= boundary_ts`` the trade has
+    logically expired under max_hold_days before this row is observed, so we
+    label the exit ``expiry`` even if the row's price also crosses stop or
+    take_profit. Otherwise ``exit_breakdown`` would attribute max-hold exits
+    to whatever price trigger happened to be in the same sampling bucket.
+    """
+    if boundary_ts is not None and row.timestamp >= boundary_ts:
+        return "expiry"
     if exit_rule.stop_price is not None and row.price <= exit_rule.stop_price:
         return "stop"
     if exit_rule.take_profit_price is not None and row.price >= exit_rule.take_profit_price:
         return "take_profit"
-    if boundary_ts is not None and row.timestamp >= boundary_ts:
-        return "expiry"
     return None
 
 

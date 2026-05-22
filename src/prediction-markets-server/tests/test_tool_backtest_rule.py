@@ -332,6 +332,11 @@ async def test_backtest_rule_emits_stop_take_profit_limitations() -> None:
     assert "Intra-bucket price paths are unobserved" in text
     assert "Exit price is the sampled row price at trigger" in text
     assert "spread, depth, and market impact" in text
+    # Exit line must describe the actual exit semantics for this rule, not
+    # the hold-to-resolution default. Otherwise the response says both
+    # "Exit = hold to resolution" and the stop/TP caveats — contradictory.
+    assert "first stop/take-profit/max-hold trigger" in text
+    assert "Exit = hold to resolution; no historical" not in text
 
 
 @pytest.mark.asyncio
@@ -353,6 +358,7 @@ async def test_backtest_rule_hold_to_resolution_limitations_unchanged(fixtures) 
     text = " ".join(result["limitations"])
     assert "Intra-bucket" not in text
     assert "trigger level" not in text
+    assert "Exit = hold to resolution" in text
 
 
 @pytest.mark.asyncio

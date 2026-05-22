@@ -322,6 +322,28 @@ def test_simulate_rule_stop_take_profit_max_hold_combined_first_match_wins() -> 
     assert trades[0].exit_price == 0.02
 
 
+def test_simulate_rule_expiry_wins_over_take_profit_when_row_is_past_boundary() -> None:
+    """When a single sampled row both crosses TP and sits past max_hold, label it expiry.
+
+    Without this rule, exit_breakdown would attribute max-hold exits to
+    whatever price trigger happened to be in the same sampling bucket and
+    over-count take_profit / stop on long-horizon rules.
+    """
+    market = _market_from_prices(
+        "0xMH",
+        # entry at day -20, max_hold_days=7 → boundary day -13
+        # row at day -10 is 10d past entry (past boundary) AND price 0.95 ≥ TP 0.90
+        [(20, 0.10), (15, 0.12), (10, 0.95), (1, 1.00)],
+    )
+    rule = _stp_rule(take_profit_price=0.90, max_hold_days=7)
+    trades = simulate_rule(rule, [market])
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_reason == "expiry"
+    assert trade.exit_price == 0.95
+    assert trade.time_to_exit_days == pytest.approx(10.0, abs=1e-9)
+
+
 def test_simulate_rule_falls_back_to_resolution_when_no_trigger_fires() -> None:
     """Stop set low, no TP, no max-hold: nothing triggers → resolution payoff."""
     market = _market_from_prices(
