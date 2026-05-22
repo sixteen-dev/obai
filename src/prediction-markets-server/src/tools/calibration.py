@@ -43,12 +43,10 @@ from ..storage import PredictionStore, PriceRow
 
 logger = get_logger(__name__)
 
-# CLOB fetches are network-bound; parallelize per-token with a small
-# semaphore so wide windows finish well under the MCP timeout. Five is a
 # Bound on per-token CLOB fetch concurrency. The endpoint is a public
-# read path with no observed per-IP rate limit at our volume; raising
-# from 5 → 20 cuts cold-cache backfill latency ~4x without tripping
-# throttling.
+# read path with no observed per-IP rate limit at our request volume;
+# 20 keeps cold-cache backfill latency comfortably under the MCP timeout
+# without tripping throttling.
 _BACKFILL_CONCURRENCY = 20
 
 
