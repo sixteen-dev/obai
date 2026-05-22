@@ -28,6 +28,11 @@ _DISTINCT_MARKETS_STRONGER_FLOOR = 50
 _HIGH_SKIP_RATE_PCT = 0.40
 _HIGH_AMBIG_RESOLUTION_RATE_PCT = 0.10
 
+# Marker written into _pm_meta.quality_flags when a CLOB price-history fetch
+# returned an empty `history` array. Read back by classify_cache_action to
+# short-circuit subsequent refreshes for the same (token, fidelity, source).
+NO_CLOB_HISTORY_FLAG = "no_clob_history"
+
 
 @dataclass(frozen=True)
 class CacheDecision:
@@ -79,12 +84,19 @@ def classify_cache_action(
             reason="cached fidelity does not match requested fidelity",
         )
 
-    last_refreshed = _ensure_aware(coverage.get("last_refreshed"))
-    if last_refreshed is None:
-        return CacheDecision(action="fetched", reason="cache missing last_refreshed")
+    freshness_decision = _freshness_decision(coverage, freshness_hours, now)
+    if freshness_decision is not None:
+        return freshness_decision
 
-    if (now - last_refreshed) > timedelta(hours=freshness_hours):
-        return CacheDecision(action="refreshed", reason="cached data older than freshness window")
+    # Sticky no-CLOB-history short-circuit. A prior fetch that hit CLOB and
+    # got an empty `history` array leaves the meta row with row_count=0,
+    # first/last_timestamp=NULL, and quality_flags="no_clob_history". Without
+    # this branch the next refresh re-asks CLOB for the same empty answer,
+    # paying network + DuckDB cost per request. Re-validate after the
+    # freshness window so late CLOB activity (post-settlement trades) is
+    # picked up eventually.
+    if coverage.get("quality_flags") == NO_CLOB_HISTORY_FLAG:
+        return CacheDecision(action="cached", reason="sticky_no_clob_history")
 
     if not _covers_range(coverage, requested_start, requested_end):
         return CacheDecision(
@@ -275,6 +287,20 @@ def _ensure_aware(value: Any) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def _freshness_decision(
+    coverage: dict[str, Any],
+    freshness_hours: int,
+    now: datetime,
+) -> CacheDecision | None:
+    """Reject the cache row when it is missing/stale; return None when fresh."""
+    last_refreshed = _ensure_aware(coverage.get("last_refreshed"))
+    if last_refreshed is None:
+        return CacheDecision(action="fetched", reason="cache missing last_refreshed")
+    if (now - last_refreshed) > timedelta(hours=freshness_hours):
+        return CacheDecision(action="refreshed", reason="cached data older than freshness window")
+    return None
 
 
 def _covers_range(

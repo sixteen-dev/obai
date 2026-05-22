@@ -28,7 +28,12 @@ from ..storage import (
     PredictionStore,
     TokenRow,
 )
-from .coverage import CacheAction, CacheDecision, classify_cache_action
+from .coverage import (
+    NO_CLOB_HISTORY_FLAG,
+    CacheAction,
+    CacheDecision,
+    classify_cache_action,
+)
 from .normalizers import (
     clob_history_to_price_rows,
     data_api_trades_to_rows,
@@ -315,6 +320,13 @@ class HistoryDownloader:
         else:
             first_ts = None
             last_ts = None
+        # Tag empty CLOB responses so classify_cache_action can short-circuit
+        # the next refresh and stop re-asking CLOB for the same empty answer
+        # within the freshness window. Polymarket genuinely has ~50% empty
+        # history for closed binary-market tokens (favorite side priced to
+        # 1.0 with no on-CLOB activity); without this every refresh paid
+        # full network + DuckDB cost for known-empty tokens.
+        quality_flags = NO_CLOB_HISTORY_FLAG if not history else None
         await self.store.update_meta(
             MetaRow(
                 entity_type="price_history",
@@ -325,6 +337,7 @@ class HistoryDownloader:
                 last_timestamp=last_ts,
                 row_count=len(rows),
                 fidelity_minutes=fidelity_minutes,
+                quality_flags=quality_flags,
             )
         )
         return len(rows)

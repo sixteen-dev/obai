@@ -386,11 +386,11 @@ async def test_backtest_rule_no_exit_price_for_max_hold_surfaces_in_resolution_b
 
 @pytest.mark.asyncio
 async def test_backtest_rule_surfaces_no_eligible_entry_in_skipped_reasons(fixtures) -> None:
-    """When markets reach the simulator but no row hits the entry band, the
-    no_eligible_entry count must appear in data_coverage.skipped_reasons so
-    callers can distinguish 'simulator filtered everything' from 'universe
-    selection filtered everything'. Previously this count was dropped on
-    the floor by _skipped_counts."""
+    """Simulator-side no_eligible_entry count must surface in skipped_reasons.
+
+    Lets callers distinguish 'simulator filtered everything' from 'universe
+    selection filtered everything'; previously _skipped_counts dropped it.
+    """
     dl, store = fixtures
     result = await backtest_prediction_rule(
         # Band [0.50, 0.70] excludes both the 0.10 entry samples and the 0/1
