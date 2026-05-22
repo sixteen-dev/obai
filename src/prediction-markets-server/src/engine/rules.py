@@ -41,8 +41,12 @@ class EntryRule(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    price_min: float = Field(ge=0.0, le=1.0)
-    price_max: float = Field(ge=0.0, le=1.0)
+    # Strictly inside (0, 1): real markets never trade at exactly 0 or 1
+    # (those are terminal payoffs, not tradeable prices), and exit math
+    # divides by entry_price so 0.0 would raise ZeroDivisionError. Mirrors
+    # the `gt=0.0, lt=1.0` constraint on StopTakeProfitExit trigger prices.
+    price_min: float = Field(gt=0.0, lt=1.0)
+    price_max: float = Field(gt=0.0, lt=1.0)
 
     @model_validator(mode="after")
     def _check_band_order(self) -> EntryRule:

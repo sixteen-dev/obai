@@ -40,6 +40,22 @@ def test_validate_rule_rejects_extra_filter_field() -> None:
         validate_rule(payload)
 
 
+def test_validate_rule_rejects_zero_entry_bound() -> None:
+    """Entry bounds must be strictly in (0, 1).
+
+    Exit math (return_on_cost = pnl / entry_price) divides by entry_price;
+    a sampled 0.0 YES price in a band like [0.0, 0.05] crashes the engine.
+    Matches the gt=0.0 / lt=1.0 constraint on StopTakeProfitExit triggers.
+    """
+    payload = _minimal_rule()
+    payload["entry"] = {"price_min": 0.0, "price_max": 0.05}
+    with pytest.raises(ValidationError):
+        validate_rule(payload)
+    payload["entry"] = {"price_min": 0.95, "price_max": 1.0}
+    with pytest.raises(ValidationError):
+        validate_rule(payload)
+
+
 def test_validate_rule_rejects_unsupported_side() -> None:
     """NO/BOTH/etc. should fail until V2 widens SUPPORTED_SIDES."""
     payload = _minimal_rule() | {"side": "NO"}
