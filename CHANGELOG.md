@@ -133,9 +133,18 @@ line.
 
 ### Security
 
-- **`idna` 3.11 → 3.15** (GHSA-65pc-fj4g-8rjx). DoS via crafted inputs
-  that bypassed the CVE-2024-3651 fix; 3.15 carries the correct early
-  rejection of long inputs.
+- **`idna` 3.11 → 3.16** (GHSA-65pc-fj4g-8rjx). DoS via crafted inputs
+  that bypassed the CVE-2024-3651 fix. Constraint added to every
+  per-server pyproject so all 11 lockfiles refresh in lockstep.
+- **`starlette` → 1.0.1** (GHSA-86qp-5c8j-p5mr / PYSEC-2026-161).
+  Missing Host header validation poisoned `request.url.path` and
+  bypassed path-based security checks; fix added to the same
+  constraint block as `idna`.
+- **Removed unused `asyncio-mqtt`.** The package was archived upstream
+  and never imported anywhere in the codebase; dropped from the root
+  `pyproject.toml` `all` dependency group (`paho-mqtt` followed it
+  out of the lockfile as a transitive). Clears the only remaining
+  `uv audit` adverse-status warning.
 
 ### Infra
 
