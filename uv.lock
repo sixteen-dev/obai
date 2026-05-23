@@ -19,22 +19,22 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-15T01:12:40.71719038Z"
+exclude-newer = "2026-05-16T13:52:17.9899104Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-05-22T01:12:40.717202373Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-22T01:12:40.717202693Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-22T01:12:40.717202944Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-22T01:12:40.717203375Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-22T01:12:40.71720116Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-22T01:12:40.717201701Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-22T01:12:40.717201411Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-22T01:12:40.717201922Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-22T01:12:40.717202142Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-22T01:12:40.717203154Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-22T01:12:40.71720091Z", span = "PT0S" }
-requests = { timestamp = "2026-05-22T01:12:40.717196973Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-23T13:52:17.989924887Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-23T13:52:17.989925248Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-23T13:52:17.989925488Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-23T13:52:17.989925949Z", span = "PT0S" }
+anthropic = { timestamp = "2026-05-23T13:52:17.989923625Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-23T13:52:17.989924206Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-23T13:52:17.989923835Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-23T13:52:17.989924436Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-23T13:52:17.989924677Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-23T13:52:17.989925719Z", span = "PT0S" }
+onnx = { timestamp = "2026-05-23T13:52:17.989923344Z", span = "PT0S" }
+requests = { timestamp = "2026-05-23T13:52:17.989919177Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1309,7 +1309,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.4.1b1"
+version = "1.4.1"
 source = { virtual = "." }
 dependencies = [
     { name = "qdrant-client" },

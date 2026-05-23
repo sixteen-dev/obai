@@ -3,23 +3,23 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-11T15:51:04.993960559Z"
+exclude-newer = "2026-05-16T13:52:34.006334513Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-requests = { timestamp = "2026-05-18T15:51:04.994004993Z", span = "PT0S" }
-pytest = { timestamp = "2026-05-18T15:51:04.994005334Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-18T15:51:04.994005674Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-18T15:51:04.994006185Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-18T15:51:04.994007588Z", span = "PT0S" }
-opik = { timestamp = "2026-05-18T15:51:04.994007197Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-18T15:51:04.994003741Z", span = "PT0S" }
-litellm = { timestamp = "2026-05-18T15:51:04.993986999Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-18T15:51:04.9940032Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-18T15:51:04.994004102Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-18T15:51:04.994004663Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-18T15:51:04.994006516Z", span = "PT0S" }
-openai-agents = { timestamp = "2026-05-18T15:51:04.994006887Z", span = "PT0S" }
+requests = { timestamp = "2026-05-23T13:52:34.00635423Z", span = "PT0S" }
+pytest = { timestamp = "2026-05-23T13:52:34.00635444Z", span = "PT0S" }
+pillow = { timestamp = "2026-05-23T13:52:34.006354691Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-05-23T13:52:34.006355072Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-05-23T13:52:34.006356003Z", span = "PT0S" }
+opik = { timestamp = "2026-05-23T13:52:34.006355763Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-05-23T13:52:34.006353449Z", span = "PT0S" }
+litellm = { timestamp = "2026-05-23T13:52:34.006344151Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-05-23T13:52:34.006353058Z", span = "PT0S" }
+pygments = { timestamp = "2026-05-23T13:52:34.006353699Z", span = "PT0S" }
+cryptography = { timestamp = "2026-05-23T13:52:34.00635402Z", span = "PT0S" }
+authlib = { timestamp = "2026-05-23T13:52:34.006355292Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-05-23T13:52:34.006355553Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1715,7 +1715,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.4.1b1"
+version = "1.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

@@ -6,15 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [1.4.1b1] - 2026-05-21 (beta)
+## [1.4.1] - 2026-05-23
 
-First beta of 1.4.1. Adds the prediction-markets historical analytics layer
-on top of 1.4.0, lands a wide cross-server audit pass, and tightens the
-prediction-markets agent's routing and tool-feedback discipline. Followed
-by a second wave (2026-05-18 → 2026-05-21) that ships intermediate exits
-on the structured backtester, fixes correctness gaps surfaced by the
-regression suite, and removes the cold-cache timeout cliff. Promote to
-1.4.1 final only after beta validation; do not move the beta tag.
+Stable graduation of the 1.4.1 line. Adds the prediction-markets historical
+analytics layer on top of 1.4.0, lands a wide cross-server audit pass, and
+tightens the prediction-markets agent's routing and tool-feedback discipline.
+A second wave (2026-05-18 → 2026-05-23) ships intermediate exits on the
+structured backtester, fixes correctness gaps surfaced by the regression
+suite, and removes the cold-cache timeout cliff. The `1.4.1b1` beta carried
+the same commits; this entry is the single read-this-first summary for the
+line.
 
 ### Highlights
 
