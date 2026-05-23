@@ -294,9 +294,15 @@ class MCPToolConverter:
         tool_description: str = tool_def.get("description", "")
         input_schema: dict[str, Any] = tool_def.get("inputSchema", {})
 
-        # Check if tool is cacheable (read-only or idempotent)
+        # A tool is cacheable only when its server promises BOTH read-only
+        # *and* idempotent behavior. `readOnlyHint` alone is not enough:
+        # current quotes, movers, and live odds are read-only but their
+        # output changes between calls, so their authors set
+        # `idempotentHint=False` to opt out of caching. Treating either hint
+        # as sufficient (OR) would serve stale "current data" for up to the
+        # cache TTL.
         annotations = tool_def.get("annotations", {})
-        is_cacheable = annotations.get("readOnlyHint", False) or annotations.get(
+        is_cacheable = annotations.get("readOnlyHint", False) and annotations.get(
             "idempotentHint", False
         )
 

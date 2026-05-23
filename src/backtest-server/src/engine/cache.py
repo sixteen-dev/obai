@@ -82,21 +82,97 @@ class BacktestCache:
         path.write_text(json.dumps(data, indent=2))
         logger.info("cache_stored", key=cache_key)
 
+    def get_trades(self, cache_key: str) -> list[dict[str, object]] | None:
+        """Retrieve cached trade-level details if present and not expired.
+
+        Trades are stored in a sidecar file (``{key}.trades.json``) so the
+        main BacktestResult JSON stays small and LLM-friendly. The trade
+        log tool reads this sidecar to avoid re-running the whole strategy
+        just to repaginate trades.
+        """
+        path = self._trades_path(cache_key)
+        if not path.exists() or self._is_expired(path):
+            return None
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, list):
+                return None
+            return data
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("trade_cache_read_failed", key=cache_key, error=str(exc))
+            return None
+
+    def put_trades(self, cache_key: str, trades: list[dict[str, object]]) -> None:
+        """Write trades sidecar for later trade-log pagination."""
+        path = self._trades_path(cache_key)
+        path.write_text(json.dumps(trades))
+        logger.info("trades_stored", key=cache_key, count=len(trades))
+
+    def _trades_path(self, cache_key: str) -> Path:
+        return self.cache_dir / f"{cache_key}.trades.json"
+
+    def get_extras(self, cache_key: str) -> dict[str, object] | None:
+        """Retrieve cached train/test + portfolio_metrics blocks if present.
+
+        Kept in a sidecar (``{key}.extras.json``) for the same reason as
+        ``get_trades``: the main BacktestResult is the LLM-facing payload
+        and shouldn't carry blocks that only the finalization layer adds
+        on the miss path.
+        """
+        path = self._extras_path(cache_key)
+        if not path.exists() or self._is_expired(path):
+            return None
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, dict):
+                return None
+            return data
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("extras_cache_read_failed", key=cache_key, error=str(exc))
+            return None
+
+    def put_extras(self, cache_key: str, extras: dict[str, object]) -> None:
+        """Persist the train/test + portfolio_metrics finalization blocks."""
+        path = self._extras_path(cache_key)
+        path.write_text(json.dumps(extras, default=str))
+        logger.info("extras_stored", key=cache_key, keys=sorted(extras.keys()))
+
+    def _extras_path(self, cache_key: str) -> Path:
+        return self.cache_dir / f"{cache_key}.extras.json"
+
     def clear(self, cache_key: str | None = None) -> int:
-        """Clear cached results.
+        """Clear cached results plus their trades/extras sidecars.
+
+        A cache entry actually spans three files — the main BacktestResult
+        JSON, the trades sidecar, and the extras sidecar. Clearing only
+        the main file left ``get_trades`` / ``get_extras`` returning stale
+        data for the same key. Unlink all three together.
 
         Args:
             cache_key: If provided, clear only that specific entry.
                        If None, clear all cached results.
 
         Returns:
-            Number of cache entries cleared.
+            Number of cache entries cleared (counts the main file; the
+            sidecars are companions to that entry).
 
         """
         if cache_key is not None:
-            path = self._key_path(cache_key)
-            if path.exists():
-                path.unlink()
+            removed_main = False
+            for path in (
+                self._key_path(cache_key),
+                self._trades_path(cache_key),
+                self._extras_path(cache_key),
+            ):
+                if path.exists():
+                    path.unlink()
+                    if (
+                        path.suffix == ".json"
+                        and ".trades." not in path.name
+                        and ".extras." not in path.name
+                    ):
+                        removed_main = True
+            if removed_main:
                 logger.info("cache_cleared", key=cache_key)
                 return 1
             return 0
@@ -104,7 +180,11 @@ class BacktestCache:
         count = 0
         for path in self.cache_dir.glob("*.json"):
             path.unlink()
-            count += 1
+            # Only count main entries (not trades/extras sidecars) so the
+            # returned tally matches the number of distinct strategies
+            # cleared, not the total file count.
+            if ".trades." not in path.name and ".extras." not in path.name:
+                count += 1
 
         logger.info("cache_cleared_all", count=count)
         return count

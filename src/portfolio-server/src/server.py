@@ -142,8 +142,10 @@ async def portfolio_expand_etf_holdings_tool(
                 ),
             }
 
-        # Apply limit
-        limited_holdings = holdings[:limit]
+        # Clamp display limit so negative slices don't return surprising
+        # holdings and very large requests don't blow up response size.
+        effective_limit = max(1, min(int(limit), 500))
+        limited_holdings = holdings[:effective_limit]
 
         # Format response
         result = {
@@ -204,13 +206,18 @@ async def _fetch_etf_holdings(
         if isinstance(result, Exception):
             logger.warning("etf_expansion_failed", symbol=pos["symbol"], error=str(result))
         elif isinstance(result, list) and result:
+            # Capture every holding for math. Broad-market ETFs like VTI/VT
+            # have thousands of constituents and truncating to 100 would
+            # treat them as partial portfolios when computing concentration
+            # and sector exposure. Response-side truncation lives in the
+            # tool that renders ETF holdings to the user.
             etf_holdings_map[pos["symbol"]] = [
                 {
                     "symbol": h.asset_symbol,
                     "name": h.name,
                     "weight_percent": float(h.weight_percentage),
                 }
-                for h in result[:100]
+                for h in result
             ]
 
     return etf_holdings_map

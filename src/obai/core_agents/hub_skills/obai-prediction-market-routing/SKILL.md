@@ -20,6 +20,12 @@ Use this skill when the primary user intent depends on prediction-market data, m
 - wallet, trader, holder, or leaderboard analysis
 - market backtesting or setup analysis
 - follow-ups on prior prediction-market output
+- historical prediction-market analytics (calibration, longshot bias, base rates by category or time-to-resolution)
+- resolved-market calibration ("are 30¢ markets really 30% probability?")
+- longshot vs favorite bias analysis
+- structured prediction-market rule backtests
+- Monte Carlo risk or drawdown analysis over prediction-market returns
+- empirical Kelly or drawdown-constrained sizing for prediction markets
 
 Do not use this skill for:
 

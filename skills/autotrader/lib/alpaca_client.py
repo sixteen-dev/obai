@@ -10,6 +10,7 @@ Environment variables:
 
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
@@ -25,6 +26,11 @@ from alpaca.trading.requests import (
 from .logging_config import get_logger
 from .models import AccountInfo, OrderInfo, PositionInfo
 
+# US equity exchanges run on US/Eastern. Day-counting (daily trade limits,
+# "today's filled orders") must reference that calendar, not UTC, so 4–8pm ET
+# trades aren't accidentally counted against the next exchange day.
+_US_EXCHANGE_TZ = ZoneInfo("America/New_York")
+
 
 class AlpacaClientError(Exception):
     """Error from Alpaca API operations."""
@@ -35,6 +41,25 @@ def _safe_float(value: object) -> float:
     if value is None:
         return 0.0
     return float(str(value))
+
+
+def _status_value(status: object) -> str:
+    """Return the canonical lowercase Alpaca order status.
+
+    The Alpaca SDK is inconsistent: some response paths give back an
+    ``OrderStatus`` enum, others give back the raw string value
+    ("filled", "new", ...). ``str(enum)`` is ``"OrderStatus.FILLED"``,
+    which compares equal to neither the string ``"filled"`` nor
+    ``OrderStatus.FILLED.value``. Use ``.value`` when available and fall
+    back to lowercasing the string form so both shapes produce the same
+    key for set/dict lookups.
+    """
+    if status is None:
+        return ""
+    value = getattr(status, "value", None)
+    if isinstance(value, str):
+        return value.lower()
+    return str(status).lower()
 
 
 _SIDE_MAP = {"buy": OrderSide.BUY, "sell": OrderSide.SELL}
@@ -204,25 +229,57 @@ class AlpacaClient:
 
         return [self._map_order(o) for o in orders]
 
-    def get_todays_filled_orders(self) -> list[OrderInfo]:
-        """Get today's filled orders for risk tracking."""
-        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    def get_todays_orders_for_limit(self) -> list[OrderInfo]:
+        """Get today's submitted+filled orders for daily-trade-limit accounting.
+
+        Day boundary is US Eastern (the exchange day), not UTC, so trades
+        between 8pm-midnight ET don't roll into the next exchange day. Both
+        filled and still-open submissions count against the limit so a queue
+        of unfilled orders can't exceed the configured submission cap.
+        """
+        midnight_et = datetime.now(tz=_US_EXCHANGE_TZ).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        after_utc = midnight_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             orders = self._client.get_orders(
                 filter=GetOrdersRequest(
-                    status=QueryOrderStatus.CLOSED,
-                    after=today,
-                    limit=100,
+                    status=QueryOrderStatus.ALL,
+                    after=after_utc,
+                    limit=200,
                 ),
             )
         except APIError as exc:
             raise AlpacaClientError(str(exc)) from exc
 
+        # Compare against `.value` (e.g. "filled"), not `str(enum)` which
+        # is "OrderStatus.FILLED". The Alpaca SDK returns OrderStatus
+        # enums when fully typed but raw strings on some response paths
+        # (paginated lists, websocket-derived models). Normalize both
+        # sides through `_status_value` so the same set of canonical
+        # lowercase strings matches either shape.
+        counted = {
+            OrderStatus.FILLED.value,
+            OrderStatus.PARTIALLY_FILLED.value,
+            OrderStatus.NEW.value,
+            OrderStatus.ACCEPTED.value,
+            OrderStatus.PENDING_NEW.value,
+            OrderStatus.ACCEPTED_FOR_BIDDING.value,
+        }
         return [
             self._map_order(o)
             for o in orders
-            if str(getattr(o, "status", "")) == OrderStatus.FILLED
+            if _status_value(getattr(o, "status", None)) in counted
         ]
+
+    def get_todays_filled_orders(self) -> list[OrderInfo]:
+        """Compatibility alias — same semantics as ``get_todays_orders_for_limit``.
+
+        Older callers asked specifically for filled orders, but day-trade
+        limits should count submissions too. Keep the old name working so
+        tests and scripts don't break, with the corrected behavior.
+        """
+        return self.get_todays_orders_for_limit()
 
     def cancel_order(self, order_id: str) -> None:
         """Cancel a specific order."""
@@ -358,7 +415,7 @@ class AlpacaClient:
             qty=_safe_float(getattr(order, "qty", 0)),
             filled_qty=_safe_float(getattr(order, "filled_qty", 0)),
             order_type=str(getattr(order, "type", "")),
-            status=str(getattr(order, "status", "")),
+            status=_status_value(getattr(order, "status", None)),
             limit_price=_safe_float(lp) if lp is not None else None,
             stop_price=_safe_float(sp) if sp is not None else None,
             filled_avg_price=_safe_float(fap) if fap is not None else None,

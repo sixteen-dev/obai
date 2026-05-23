@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import httpx
 
-MAX_RESPONSE_CHARS = 25000
+MAX_RESPONSE_CHARS = 40000
 
 HTTP_ERROR_MESSAGES: dict[int, str] = {
     400: "Bad request - check the input parameters",

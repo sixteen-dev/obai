@@ -25,7 +25,12 @@ SearchDepth = Literal["basic", "advanced"]
 Topic = Literal["general", "news", "finance"]
 TimeRange = Literal["day", "week", "month", "year", "d", "w", "m", "y"]
 
-# Reputable financial news sources for prioritized search results
+# Curated finance-news allowlist. Kept available for callers that
+# explicitly want to restrict results to mainstream financial press,
+# but no longer applied by default — the previous behavior silently
+# filtered out primary sources (sec.gov, fda.gov, company IR pages),
+# regional outlets, and any non-listed venue. Default is now "search
+# the whole web and let Tavily rank by relevance".
 DEFAULT_FINANCE_DOMAINS: list[str] = [
     "reuters.com",
     "bloomberg.com",
@@ -135,9 +140,13 @@ class TavilyClient:
                 if time_range:
                     search_params["days"] = self._time_range_to_days(time_range)
 
-                # Use provided domains or default to reputable financial sources
-                domains = include_domains if include_domains else DEFAULT_FINANCE_DOMAINS
-                search_params["include_domains"] = domains
+                # Only restrict domains when the caller passed an explicit
+                # non-empty list. The old behavior always applied a curated
+                # finance-press allowlist, which silently filtered out SEC
+                # filings, regulator pages, company IR releases, and any
+                # non-mainstream venue. Now: empty/None means no filter.
+                if include_domains:
+                    search_params["include_domains"] = include_domains
 
                 response = await self.client.search(**search_params)
 

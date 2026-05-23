@@ -18,7 +18,7 @@
 #   - obai-stock-synthesis           : T2-T4, K1-K4, C1    (multi-specialist synthesis)
 #   - obai-research-routing          : T1                  (deep dive)
 #                                        banned on: B1, S1, S2
-#   - obai-prediction-market-routing : P1, P2, G2
+#   - obai-prediction-market-routing : P1-P12, G2
 #   - obai-strategy-routing          : S1-S5
 #
 # Field reference (preserved from v1):
@@ -272,3 +272,145 @@ test_cases:
     expected_tools: [market_data_analysis]
     allowed_extras: [screener_lookup]
     description: Common-name typo — should disambiguate to GOOGL/GOOG.
+
+  # ── 10. Prediction markets — historical analytics (Phase 3-5 tools) ──
+  #
+  # Live trading flow is covered by P1/P2 above. The cases below exercise the
+  # historical analytics layer: calibration on resolved markets, longshot
+  # bias, structured rule backtests, Monte Carlo risk, and empirical Kelly.
+  # Also includes regression coverage for the four bugs from the May 2026
+  # code review:
+  #   - post-resolution rows leaking into observations
+  #   - 0.90/0.05 bucket float fuzz
+  #   - TTR filter evaluated at wall-clock time on closed markets
+  #   - resolution fingerprint missing from data_fingerprint chain
+  #
+  # Topics are framed around mid-2026 prediction markets (June 2026 FOMC,
+  # 2026 US midterms, 2026 NBA Finals, 2026 World Cup, BTC year-end targets).
+
+  - id: P3
+    feature: pm_calibration_politics
+    query: "Polymarket politics markets that resolved since the 2024 cycle — were the YES prices actually calibrated? Use the historical analytics tool, group by price bucket and time-to-resolution, and tell me the sample size, distinct market count, and reliability label."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    smoke: true
+    description: Historical calibration on resolved politics markets — analyze_prediction_calibration.
+
+  - id: P4
+    feature: pm_longshot_nba
+    query: "Has the longshot bias actually shown up in Polymarket 2026 NBA Finals championship markets? Compare sub-10¢ longshots against 90¢+ favorites. Show realized win rate, implied probability, and per-contract YES return for each tail."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: analyze_longshot_bias on NBA Finals championship markets; response should report tail counts, distinct markets, and excess return.
+
+  - id: P5
+    feature: pm_backtest_rule_politics
+    query: "Backtest this Polymarket rule for the 2026 cycle: buy YES on politics markets when YES was priced between 5¢ and 15¢, hold to resolution, only markets with at least $25K lifetime volume. I want sample size, win rate, return distribution, monte_carlo_input, and the lifetime-volume contamination warning. Use the structured rule backtester, not the legacy setup test."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    smoke: true
+    description: backtest_prediction_rule on a structured YES longshot rule with min_lifetime_volume + volume_filter_mode=lifetime_static.
+
+  - id: P6
+    feature: pm_backtest_ttr_regression
+    query: "Same 5¢-15¢ politics longshot Polymarket backtest, but only count entries where there were at least 30 days remaining to resolution at the entry timestamp. Tell me the surviving sample size and the per-entry skip reasons."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for TTR-at-entry-time fix. Before the fix, min_days_to_resolution>0 would silently skip every closed market because end_date < now. The simulator now checks (end_date - entry_ts) and surfaces ttr_min_unmet skip counts."
+
+  - id: P7
+    feature: pm_monte_carlo_chained
+    query: "Take the monte_carlo_input from that 5¢-15¢ politics longshot backtest and stress it. $25,000 bankroll, 5% position fraction, 30% max drawdown limit, 2,000 paths, seed 12345. Give me median terminal wealth, p5/p95 wealth, p95 and p99 max drawdown, drawdown-breach probability, and ruin probability. State the IID caveat."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: monte_carlo_prediction_risk consuming the upstream backtest's compact monte_carlo_input. Response must include the §13.2 IID limitation language and sampling_method=iid_bootstrap.
+
+  - id: P8
+    feature: pm_kelly_qualitative_refusal
+    query: "How much should I size a Polymarket longshot trade given the kind of edge that 5-15¢ politics markets show historically? I'm not telling you my bankroll or my drawdown limit yet — what's the qualitative read?"
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Sizing without bankroll/drawdown — estimate_empirical_kelly must return qualitative guidance only per §13.3. Agent must NOT invent numerical fractions."
+
+  - id: P9
+    feature: pm_kelly_numerical
+    query: "Now size that 5¢-15¢ politics longshot Polymarket strategy properly. Bankroll $25,000, max drawdown 20%, confidence haircut 0.5. Give me naive Kelly, half Kelly, capped Kelly, the drawdown-constrained fraction, and the conservative recommendation. Mention the IID caveat."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: estimate_empirical_kelly with full risk constraints — numerical fractions, kelly_method, IID caveat. Conservative fraction must be min(haircut * half_kelly, drawdown_constrained).
+
+  - id: P10
+    feature: pm_historical_pipeline_e2e
+    query: "Run the full historical workflow on Polymarket June 2026 FOMC markets that have resolved. First calibrate by price bucket and time-to-resolution. Then longshot bias with thresholds 0.15 and 0.85. Then backtest YES buys in the 5¢-15¢ band hold-to-resolution with $25K min lifetime volume. Then Monte Carlo with $50K bankroll, 10% position size, 25% drawdown cap. Then size with confidence haircut 0.4."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: Single-turn end-to-end pipeline across all five Phase 3-5 tools. Tests that the agent chains calibration → longshot → backtest → Monte Carlo → Kelly while preserving monte_carlo_input between tools.
+
+  - id: P11
+    feature: pm_calibration_boundary_bucket_regression
+    query: "Calibrate Polymarket markets for the heavy-favorite range. Specifically tell me realized win rate for the 0.90-0.95 price bucket. Use 0.05 buckets, sampling_mode 'both', and report both effective_n and raw_observation_count."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for the 0.90/0.05 bucket float-fuzz bug. Prices like 0.90 must land in 0.90-0.95, not 0.85-0.90. Also exercises sampling_mode='both' so the response carries the effective_n vs raw_observation_count distinction."
+
+  - id: P12
+    feature: pm_calibration_post_resolution_guard
+    query: "Calibrate Polymarket Fed-decision markets since the start of the rate-cut cycle. Use 0.05 price buckets. If you see any 0_3h-bucket entries that look degenerate (implied probability 0.0 or 1.0), flag them — I don't want terminal prints contaminating the short-horizon evidence."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for the post-resolution filter (P1). _load_price_rows now filters timestamp > end_date at the DB layer, so terminal 1.0/0.0 samples cannot become 0_3h observations."
+
+  # ── 11. May 2026 follow-on regressions ──
+  #
+  # Two prediction-market regressions for the calibration fixes shipped in
+  # commit 92e9cd8 (per-bucket low_n tagging + categories list fan-out), plus
+  # one fundamentals-primary case and one multi-day execution plan to widen
+  # specialist coverage beyond the existing suite.
+
+  - id: P13
+    feature: pm_categories_fanout
+    query: "Compare YES-price calibration on resolved Polymarket markets across sports, politics, and crypto. Use the categories parameter so each category comes back with its own sample size, reliability label, and bucket breakdown — don't run one calibration and relabel it across categories."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for the categories list fan-out. analyze_prediction_calibration must be called once with categories=[sports, politics, crypto] and return a per_category map rather than a single calibration relabeled."
+
+  - id: P14
+    feature: pm_low_n_bucket_discipline
+    query: "Calibrate resolved Polymarket sports markets in the heavy-favorite tail (0.85 and above) by price bucket and time-to-resolution. For any bucket with fewer than 10 samples, flag it explicitly — I do not want a 3-sample bucket quoted to me as a base rate."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for per-bucket low_n tagging. Response must carry low_n on each bucket and low_n_bucket_count on the summary; ECE excludes flagged buckets. Agent must not present low_n bucket values as base rates."
+
+  # ── 12. backtest_prediction_rule intermediate exits (stop_take_profit) ──
+  #
+  # Coverage for the May 2026 stop-loss / take-profit / max-hold extension to
+  # the structured prediction-market backtester. Each case asserts the
+  # exit_breakdown block is present, per-trade exit_reason / time_to_exit_days
+  # surface in examples, and the three fidelity caveats land in limitations.
+
+  - id: P15
+    feature: pm_backtest_rule_stop_only
+    query: "Backtest the same 5¢-15¢ YES politics longshot on resolved Polymarket markets, but exit at the first sample at-or-below 2¢ instead of holding to resolution. I want the exit breakdown across stop / take_profit / expiry / resolution, the per-trade exit_reason on examples, and the fidelity caveats the tool reports."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "backtest_prediction_rule with exit.type=stop_take_profit and stop_price only. Response must include exit_breakdown (four reasons summing to share=1.0), per-trade exit_reason on examples, and the intra-bucket / sampled-row / market-impact caveats in limitations."
+
+  - id: P16
+    feature: pm_backtest_rule_stop_tp_maxhold
+    query: "Backtest 5¢-15¢ YES politics longshots on resolved Polymarket with a 2¢ stop, 50¢ take-profit, and 90-day max-hold. Tell me the exit breakdown by reason, how many trades got skipped for max-hold data gaps, and the fidelity limitations the tool quotes."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Combined stop_take_profit triggers. Response must surface counts under stop, take_profit, expiry, and resolution; any no_exit_price_for_max_hold skip count must appear in resolution_breakdown; the agent must NOT silently treat sampled trigger prices as guaranteed fills (must quote the limitations)."
+
+  - id: U4
+    feature: fundamentals_deep_dive
+    query: "Pull Costco's last 5 fiscal years of revenue, gross margin, operating margin, free cash flow, and net debt. Give me the 5-year revenue and FCF CAGR and the trend in operating margin."
+    expected_tools: [fundamentals_analysis]
+    allowed_extras: [market_data_analysis]
+    description: Pure fundamentals deep-dive — fundamentals_analysis as the primary specialist (currently only covered as allowed_extras in T2/T3).
+
+  - id: X4
+    feature: vwap_execution_plan
+    query: "I need to accumulate $2M of CRWD over the next 3 trading days. Given current ADV and intraday volume profile, lay out a VWAP-style execution plan — per-day allocation and the times of day to lean into the order."
+    expected_tools: [market_data_analysis]
+    description: Multi-day execution plan extending the X-series beyond X3's single-day liquidity check.

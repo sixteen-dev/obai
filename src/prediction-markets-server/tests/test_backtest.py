@@ -264,7 +264,7 @@ def _mock_gamma_market(**overrides: object):
         "volume": 50000,
         "liquidity": 10000,
         "category": "crypto",
-        "clob_token_ids": ["token_yes"],
+        "clob_token_ids": ["token_yes", "token_no"],
         "active": False,
         "closed": True,
     }

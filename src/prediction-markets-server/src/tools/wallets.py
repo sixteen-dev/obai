@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..clients.data_client import DataClient
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# EVM-style wallet addresses are exactly 40 hex characters prefixed with `0x`.
+# Validating at the tool boundary keeps typos from turning into ambiguous
+# "no results" responses from the upstream provider.
+_EVM_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def _validate_wallet_address(address: str) -> None:
+    if not isinstance(address, str) or not _EVM_ADDRESS_RE.fullmatch(address.strip()):
+        msg = (
+            "Invalid wallet address. Expected a 42-character EVM address "
+            "(0x followed by 40 hex characters)."
+        )
+        raise ValueError(msg)
 
 
 async def get_trader_leaderboard(
@@ -58,6 +73,7 @@ async def get_wallet_activity(
         and directional behavior summary.
 
     """
+    _validate_wallet_address(wallet_address)
     client = DataClient()
     try:
         activity = await client.get_wallet_activity(wallet_address, limit=min(limit, 100))
@@ -111,6 +127,7 @@ async def get_wallet_profile(
         Dict with descriptive wallet summary.
 
     """
+    _validate_wallet_address(wallet_address)
     client = DataClient()
     try:
         profile = await client.get_wallet_profile(wallet_address)

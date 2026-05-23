@@ -102,10 +102,14 @@ class AgentConfig(BaseSettings):
         extra="ignore",
     )
 
-    # OpenAI
+    # OpenAI. Default to empty so config-only commands (e.g. `obai status`,
+    # which just probes MCP server connectivity) can construct the config
+    # without an OpenAI key configured. Agent creation paths still depend
+    # on the OpenAI SDK reading ``OPENAI_API_KEY`` from the environment, so
+    # missing keys still fail loudly when the hub actually tries to run.
     openai_api_key: str = Field(
-        ...,
-        description="OpenAI API key",
+        default="",
+        description="OpenAI API key (required for agent runs, not for `obai status`).",
     )
 
     # Agent Models
@@ -150,8 +154,15 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default=None,
+        default="gpt-5.1",
         description="Override model for prediction markets agent (uses specialist_model if None)",
+    )
+    guardrail_model: str = Field(
+        default="gpt-5-mini",
+        description=(
+            "Model for input guardrail validation. Pick a small, cheap model — "
+            "guardrails run on every query."
+        ),
     )
 
     # Reasoning effort and output verbosity. Two tiers, same shape as the
@@ -230,10 +241,15 @@ class AgentConfig(BaseSettings):
 
     # MCP Client Settings
     mcp_timeout: float = Field(
-        default=30.0,
+        default=180.0,
         ge=1.0,
         le=300.0,
-        description="MCP request timeout in seconds",
+        description=(
+            "MCP request timeout in seconds. Historical-analytics tools "
+            "(calibration, longshot, backtest) need to backfill price "
+            "history across hundreds of tokens before returning, so 30s "
+            "is far too tight; 180s leaves headroom even for wide windows."
+        ),
     )
     mcp_max_retries: int = Field(
         default=2,
@@ -359,7 +375,7 @@ def get_config() -> AgentConfig:
     """
     global _config
     if _config is None:
-        _config = AgentConfig()  # type: ignore[call-arg]
+        _config = AgentConfig()
         _config.configure_logging()
         logger.debug("Agent configuration loaded")
     return _config

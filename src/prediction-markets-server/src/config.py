@@ -46,10 +46,21 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=2)
 
     # Response Limits
-    max_response_chars: int = Field(default=25000)
+    max_response_chars: int = Field(default=40000)
 
     # Logging
     log_level: str = Field(default="INFO")
+
+    # Historical Analytics Storage (see docs/prediction-markets-historical-analytics-upgrade.md §7)
+    prediction_duckdb_path: str = Field(default="./data/prediction_markets.duckdb")
+    prediction_duckdb_memory_limit: str = Field(default="4GB")
+    prediction_data_freshness_hours: int = Field(default=24)
+    prediction_max_markets_per_analysis: int = Field(default=500)
+    prediction_max_history_points: int = Field(default=1_000_000)
+    prediction_cache_ttl_hours: int = Field(default=24)
+    prediction_max_db_size_gb: float = Field(default=5.0)
+    prediction_enable_historical_tools: bool = Field(default=True)
+    prediction_enable_admin_tools: bool = Field(default=False)
 
 
 # Global settings instance

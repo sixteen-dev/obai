@@ -53,6 +53,8 @@ class GammaClient:
         order: str = "volume24hr",
         ascending: bool = False,
         end_date_min: str = "",
+        end_date_max: str = "",
+        tag_slug: str = "",
     ) -> list[dict[str, Any]]:
         """List markets with filters.
 
@@ -66,6 +68,13 @@ class GammaClient:
             ascending: Sort direction.
             end_date_min: ISO date string (YYYY-MM-DD). Exclude markets
                 ending before this date.
+            end_date_max: ISO date string (YYYY-MM-DD). Exclude markets
+                ending after this date.
+            tag_slug: Gamma tag slug filter (e.g. "politics", "crypto",
+                "sports", "bitcoin"). The Gamma listing endpoint does not
+                populate per-market category/tags reliably on closed
+                markets, so client-side category filtering does not work;
+                push the slug to the server instead.
 
         Returns:
             List of market dicts with core metadata and pricing.
@@ -86,6 +95,10 @@ class GammaClient:
             }
             if end_date_min:
                 params["end_date_min"] = end_date_min
+            if end_date_max:
+                params["end_date_max"] = end_date_max
+            if tag_slug:
+                params["tag_slug"] = tag_slug
 
             raw_markets = await self._get("/markets", params)
             if not isinstance(raw_markets, list) or len(raw_markets) == 0:
@@ -96,9 +109,23 @@ class GammaClient:
             if len(raw_markets) < page_size:
                 break
 
+        # Client-side date guard: server filter is authoritative, but the
+        # listing sometimes returns markets that drift past the bound (and
+        # the lexicographic compare needs both sides truncated to YYYY-MM-DD
+        # because market end_date arrives as "YYYY-MM-DDTHH:MM:SSZ").
         if end_date_min:
+            min_key = end_date_min[:10]
             all_markets = [
-                m for m in all_markets if not m.get("end_date") or m["end_date"] >= end_date_min
+                m
+                for m in all_markets
+                if not m.get("end_date") or str(m["end_date"])[:10] >= min_key
+            ]
+        if end_date_max:
+            max_key = end_date_max[:10]
+            all_markets = [
+                m
+                for m in all_markets
+                if not m.get("end_date") or str(m["end_date"])[:10] <= max_key
             ]
 
         return all_markets
@@ -287,13 +314,17 @@ class GammaClient:
         outcomes = self._parse_json_field(raw.get("outcomes", []))
         outcome_prices = self._parse_json_field(raw.get("outcomePrices", []))
 
-        # Parse outcome prices from strings to floats
-        parsed_prices: list[float] = []
+        # Preserve parse failures as ``None`` instead of collapsing them to
+        # ``0.0``. A genuine 0¢ Polymarket price and a malformed price both
+        # land in the same downstream calculations otherwise, and consumers
+        # cannot distinguish "true zero-probability outcome" from "we don't
+        # know".
+        parsed_prices: list[float | None] = []
         for p in outcome_prices:
             try:
                 parsed_prices.append(float(p))
             except (ValueError, TypeError):
-                parsed_prices.append(0.0)
+                parsed_prices.append(None)
 
         # Parse clobTokenIds which may also be a JSON string
         clob_token_ids = self._parse_json_field(raw.get("clobTokenIds", []))
@@ -316,7 +347,15 @@ class GammaClient:
                             if label:
                                 event_tags.append(str(label))
                     break
-        market_url = f"https://polymarket.com/event/{event_slug}" if event_slug else ""
+        # Prefer the parent event slug because that's what Polymarket actually
+        # hosts; fall back to the market slug when no event was returned so
+        # the user still gets a clickable link instead of an empty string.
+        if event_slug:
+            market_url = f"https://polymarket.com/event/{event_slug}"
+        elif slug:
+            market_url = f"https://polymarket.com/market/{slug}"
+        else:
+            market_url = ""
 
         return {
             "condition_id": raw.get("conditionId", ""),
@@ -356,6 +395,12 @@ class GammaClient:
             "order_min_size": raw.get("orderMinSize"),
             "tick_size": raw.get("orderPriceMinTickSize"),
             "one_week_price_change": raw.get("oneWeekPriceChange"),
+            # Resolution fields — feed storage/resolution.py. Surfaced even when
+            # absent on the payload so downstream code can rely on the keys
+            # existing rather than guarding every access.
+            "uma_resolution_status": raw.get("umaResolutionStatus"),
+            "resolved_by": raw.get("resolvedBy"),
+            "winning_outcome": raw.get("winningOutcome"),
         }
 
     @staticmethod

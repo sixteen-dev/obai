@@ -1,12 +1,14 @@
-"""In-memory async job store for background backtest execution."""
+"""Async job store with optional JSON-sidecar persistence."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Coroutine
 
 from .logging_config import get_logger
@@ -49,14 +51,40 @@ class JobResult:
             "expires_at": self.expires_at,
         }
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> JobResult:
+        """Inverse of ``to_dict`` — used when loading persisted jobs on startup."""
+        return cls(
+            job_id=str(raw["job_id"]),
+            status=JobStatus(raw["status"]),
+            result=raw.get("result"),
+            error=raw.get("error"),
+            created_at=str(raw.get("created_at") or datetime.now(UTC).isoformat()),
+            completed_at=raw.get("completed_at"),
+            estimated_seconds=raw.get("estimated_seconds"),
+            expires_at=raw.get("expires_at"),
+        )
+
 
 class JobStore:
-    """In-memory store for async backtest jobs."""
+    """Async job store with optional disk persistence.
 
-    def __init__(self) -> None:
-        """Initialize empty job store."""
+    When ``persist_dir`` is provided, every terminal status change
+    (COMPLETED / FAILED) is written to ``{persist_dir}/{job_id}.json``.
+    On startup the directory is scanned and prior jobs are restored,
+    so clients polling for a job_id after a server restart get either
+    the persisted result or a clean ``orphaned`` failure marker for
+    jobs that were RUNNING when the process exited.
+    """
+
+    def __init__(self, persist_dir: Path | str | None = None) -> None:
+        """Initialize store, loading any persisted jobs from ``persist_dir``."""
         self._jobs: dict[str, JobResult] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._persist_dir: Path | None = Path(persist_dir) if persist_dir else None
+        if self._persist_dir is not None:
+            self._persist_dir.mkdir(parents=True, exist_ok=True)
+            self._load_persisted_jobs()
 
     def submit_job(
         self,
@@ -142,3 +170,44 @@ class JobStore:
             logger.exception("job_failed", job_id=job_id, error=str(exc))
         finally:
             self._tasks.pop(job_id, None)
+            self._persist(job)
+
+    def _persist(self, job: JobResult) -> None:
+        """Write the job's terminal state to ``persist_dir`` (best effort).
+
+        Persistence errors are logged but don't fail the job — the
+        in-memory copy is still authoritative for the running process.
+        """
+        if self._persist_dir is None:
+            return
+        target = self._persist_dir / f"{job.job_id}.json"
+        try:
+            target.write_text(json.dumps(job.to_dict(), default=str))
+        except OSError as exc:
+            logger.warning("job_persist_failed", job_id=job.job_id, error=str(exc))
+
+    def _load_persisted_jobs(self) -> None:
+        """Restore jobs from ``persist_dir``; orphan any RUNNING/QUEUED ones.
+
+        A job whose status is RUNNING when the process restarts cannot
+        actually be running — its coroutine is gone with the old process.
+        We mark it FAILED with an explicit ``orphaned`` marker so polling
+        clients see a definitive failure instead of waiting forever.
+        """
+        persist_dir = self._persist_dir
+        if persist_dir is None:
+            return
+        for path in persist_dir.glob("*.json"):
+            try:
+                raw = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("job_load_failed", path=str(path), error=str(exc))
+                continue
+            job = JobResult.from_dict(raw)
+            if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+                job.status = JobStatus.FAILED
+                job.error = "orphaned: job did not survive server restart"
+                job.completed_at = datetime.now(UTC).isoformat()
+                self._persist(job)
+            self._jobs[job.job_id] = job
+        logger.info("jobs_restored", count=len(self._jobs))

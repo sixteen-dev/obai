@@ -9,6 +9,7 @@ import asyncio
 import time
 from typing import Any
 
+import httpx
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -32,6 +33,10 @@ logger = get_logger(__name__)
 mcp = FastMCP("research-server", version=__version__)
 
 _server_start_time = time.time()
+
+# Status codes < 500 are taken as "Exa is reachable"; 5xx means upstream is
+# degraded and we should not declare readiness.
+HTTP_5XX_BOUNDARY = 500
 
 
 # -- Tool 1: Company Profile ---------------------------------------------------
@@ -254,7 +259,13 @@ async def health_check(_request: Request) -> JSONResponse:
 
 @mcp.custom_route("/health/ready", methods=["GET"])
 async def health_check_ready(_request: Request) -> JSONResponse:
-    """Readiness probe — can the server handle requests."""
+    """Readiness probe — Exa API key set AND upstream reachable.
+
+    Sends a 3-second HTTP probe to ``api.exa.ai`` so we detect (a) DNS
+    failures and (b) widespread Exa outages before traffic is routed
+    here. We only check TCP/HTTP reachability — not a real search —
+    to avoid burning Exa credits on every probe.
+    """
     try:
         s = get_settings()
     except RuntimeError:
@@ -268,6 +279,32 @@ async def health_check_ready(_request: Request) -> JSONResponse:
             {
                 "status": "not_ready",
                 "reason": "EXA_API_KEY not configured",
+                "service": s.server_name,
+            },
+            status_code=503,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as probe:
+            resp = await probe.get("https://api.exa.ai/")
+        # Any HTTP response (even 404) means we reached Exa. A network
+        # error throws, which the except below catches.
+        upstream_ok = resp.status_code < HTTP_5XX_BOUNDARY
+    except httpx.HTTPError as exc:
+        return JSONResponse(
+            {
+                "status": "not_ready",
+                "reason": f"Exa upstream unreachable: {exc!s}",
+                "service": s.server_name,
+            },
+            status_code=503,
+        )
+
+    if not upstream_ok:
+        return JSONResponse(
+            {
+                "status": "not_ready",
+                "reason": f"Exa upstream returned {resp.status_code}",
                 "service": s.server_name,
             },
             status_code=503,

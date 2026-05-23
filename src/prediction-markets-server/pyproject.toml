@@ -1,6 +1,6 @@
 [project]
 name = "prediction-markets-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for Polymarket prediction market analysis"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.1",
     "structlog>=25.1.0",
+    "duckdb>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -61,8 +62,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S105", "D101", "D102", "D103", "ANN001", "ANN201", "ANN202", "PLR2004", "PLC0415"]
+"tests/*" = ["S101", "S105", "S106", "D101", "D102", "D103", "ANN001", "ANN201", "ANN202", "PLR2004", "PLC0415"]
 "src/clients/*" = ["PLR0913", "PLR2004"]
+"src/data/*" = ["PLR0913", "PLR2004"]
+"src/storage/*" = ["PLR0913"]
+"src/engine/*" = ["PLR0913", "S311"]
 "src/server.py" = ["PLR0913"]
 "src/tools/*" = ["PLR0913", "PLR2004", "PLR0912", "PLR0915"]
 
@@ -80,3 +84,6 @@ dev = [
     "mypy>=1.19.1",
     "ruff>=0.14.13",
 ]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.7.2", "urllib3>=2.7.0", "starlette>=1.0.1", "idna>=3.15"]

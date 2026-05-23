@@ -61,20 +61,20 @@ class DataStore:
             DataFrame with OHLCV data sorted by date, or None if not found.
 
         """
-        try:
-            result = self.db.conn.execute(
-                """
-                SELECT timestamp, open, high, low, close, volume
-                FROM ohlcv
-                WHERE symbol = $1 AND timeframe = $2
-                ORDER BY timestamp
-                """,
-                [symbol.upper(), timeframe],
-            )
-            df = result.pl()
-        except Exception as exc:
-            logger.warning("duckdb_read_failed", symbol=symbol, error=str(exc))
-            return None
+        # No try/except wrapper: a DuckDB query failure is a real error,
+        # not "no data for this symbol". Returning None on a broken query
+        # makes the caller silently re-download, masking the underlying
+        # problem. Let DB exceptions propagate.
+        result = self.db.conn.execute(
+            """
+            SELECT timestamp, open, high, low, close, volume
+            FROM ohlcv
+            WHERE symbol = $1 AND timeframe = $2
+            ORDER BY timestamp
+            """,
+            [symbol.upper(), timeframe],
+        )
+        df = result.pl()
 
         if df.is_empty():
             return None

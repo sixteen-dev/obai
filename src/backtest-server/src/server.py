@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -131,9 +132,17 @@ async def backtest_run_strategy_tool(
     cache_key = _build_cache_key(strategy)
     cached = cache.get(cache_key)
     if cached is not None:
-        result: dict[str, Any] = cached.to_dict()
-        result["cache_hit"] = True
-        return result
+        # Cache stores the bare BacktestResult; rebuild the same shape the
+        # miss path produces (train/test split, portfolio metrics, warning
+        # surfacing) so cache hits and misses are indistinguishable to the
+        # strategy agent.
+        return _finalize_backtest_response(
+            cached,
+            strategy=strategy,
+            cache_hit=True,
+            portfolio_result=None,
+            cache_key=cache_key,
+        )
 
     logger.info(
         "async_mode_decision",
@@ -369,15 +378,24 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
     action: str,
     timeframe: str | None = None,
     older_than_days: int | None = None,
+    confirm_token: str | None = None,
 ) -> dict[str, Any]:
     """Manage DuckDB data storage — check status or prune old data.
 
     Design doc: Phase 2.4.
 
+    The ``prune`` action is destructive (deletes cached OHLCV rows). Any
+    client connected to this MCP server could trigger it, so we require an
+    out-of-band confirmation token before performing the delete. The token
+    is sourced from the ``BACKTEST_STORAGE_ADMIN_TOKEN`` setting and is
+    never logged. Status reads are always allowed.
+
     Args:
         action: "status" to report DB stats, "prune" to delete old data.
         timeframe: Timeframe to prune (required for prune action).
         older_than_days: Delete data older than this many days (required for prune).
+        confirm_token: Operator-supplied token matching
+            ``BACKTEST_STORAGE_ADMIN_TOKEN``. Required for ``prune``.
 
     Returns:
         Storage status or prune results.
@@ -408,6 +426,26 @@ async def backtest_manage_storage_tool(  # noqa: PLR0911
         }
 
     if action == "prune":
+        settings = _state.settings
+        expected_token = (
+            getattr(settings, "storage_admin_token", "") if settings is not None else ""
+        )
+        if not expected_token:
+            return {
+                "isError": True,
+                "error": (
+                    "Prune is disabled because BACKTEST_STORAGE_ADMIN_TOKEN is "
+                    "not configured on the server."
+                ),
+            }
+        if not confirm_token or confirm_token != expected_token:
+            return {
+                "isError": True,
+                "error": (
+                    "Prune requires a valid confirm_token matching BACKTEST_STORAGE_ADMIN_TOKEN."
+                ),
+            }
+
         if not timeframe:
             return {"isError": True, "error": "timeframe required for prune action"}
         if timeframe not in SUPPORTED_TIMEFRAMES:
@@ -509,20 +547,36 @@ async def backtest_get_trade_log_tool(
     except (json.JSONDecodeError, ValueError, KeyError) as exc:
         return {"isError": True, "error": f"Invalid strategy: {exc}"}
 
-    # Run the strategy (uses cache internally for metrics, but we need trades)
+    # Trade-list pagination must not re-run the strategy when the
+    # backtest's trades sidecar is already cached. Falls back to a full
+    # run only when there is no sidecar yet (e.g. cache evicted, or this
+    # strategy was never backtested in the current process).
+    cache: BacktestCache = _state.require("cache")
+    cache_key = _build_cache_key(strategy)
+    cached_trades = cache.get_trades(cache_key)
+    if cached_trades is not None:
+        total = len(cached_trades)
+        return {
+            "trades": cached_trades[offset : offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + limit < total,
+            "from_cache": True,
+        }
+
     exec_result = await _execute_strategy(strategy)
-    trades = exec_result.trades
+    trade_dicts_all = [t.to_dict() for t in exec_result.trades]
+    cache.put_trades(cache_key, trade_dicts_all)
 
-    total = len(trades)
-    page = trades[offset : offset + limit]
-    trade_dicts = [t.to_dict() for t in page]
-
+    total = len(trade_dicts_all)
     return {
-        "trades": trade_dicts,
+        "trades": trade_dicts_all[offset : offset + limit],
         "total": total,
         "offset": offset,
         "limit": limit,
         "has_more": offset + limit < total,
+        "from_cache": False,
     }
 
 
@@ -827,25 +881,95 @@ async def _run_sync_backtest(
         indicator_count=len(strategy.indicators),
     )
 
-    _state.require("cache").put(cache_key, result)
+    cache_obj = _state.require("cache")
+    cache_obj.put(cache_key, result)
+    cache_obj.put_trades(cache_key, [t.to_dict() for t in exec_result.trades])
 
-    output = result.to_dict()
-    output["cache_hit"] = False
+    # Persist the miss-path finalization blocks so cache hits don't lose
+    # the train/test split or portfolio_metrics that the strategy agent
+    # relies on for robustness comparisons.
+    extras: dict[str, Any] = {}
+    if train_test is not None:
+        extras["train_test_split"] = train_test
+    if exec_result.portfolio_result is not None:
+        extras["portfolio_metrics"] = _compute_portfolio_specific(
+            exec_result.portfolio_result, strategy.execution_config.initial_capital
+        )
+    if extras:
+        cache_obj.put_extras(cache_key, extras)
+
+    return _finalize_backtest_response(
+        result,
+        strategy=strategy,
+        cache_hit=False,
+        portfolio_result=exec_result.portfolio_result,
+        train_test=train_test,
+    )
+
+
+def _finalize_backtest_response(  # noqa: PLR0913
+    result: Any,
+    *,
+    strategy: StrategyDefinition,
+    cache_hit: bool,
+    portfolio_result: PortfolioBacktestResult | None,
+    train_test: dict[str, Any] | None = None,
+    cache_key: str | None = None,
+) -> dict[str, Any]:
+    """Build the tool response from a BacktestResult.
+
+    Centralized so cache hits and misses produce the same shape — the
+    miss path supplies ``train_test`` and ``portfolio_result`` directly;
+    the cache-hit path passes ``cache_key`` so we can rehydrate both
+    blocks from the extras sidecar persisted by the miss path.
+    """
+    output: dict[str, Any] = dict(result.to_dict())
+    output["cache_hit"] = cache_hit
+
+    extras: dict[str, object] | None = None
+    if cache_hit and cache_key is not None:
+        cache_obj: BacktestCache | None = _state.cache
+        if cache_obj is not None:
+            extras = cache_obj.get_extras(cache_key)
+
+    if train_test is None and extras is not None:
+        cached_split = extras.get("train_test_split")
+        if isinstance(cached_split, dict):
+            train_test = cached_split
     if train_test is not None:
         output["train_test_split"] = train_test
 
-    # Add portfolio-specific metrics when in portfolio mode
-    if exec_result.portfolio_result is not None:
+    if portfolio_result is not None:
         output["portfolio_metrics"] = _compute_portfolio_specific(
-            exec_result.portfolio_result, strategy.execution_config.initial_capital
+            portfolio_result, strategy.execution_config.initial_capital
         )
+    elif extras is not None:
+        cached_portfolio = extras.get("portfolio_metrics")
+        if isinstance(cached_portfolio, dict):
+            output["portfolio_metrics"] = cached_portfolio
 
-    # Surface critical warnings at top level so the agent can't miss them
     critical = [w for w in result.warnings if w.startswith(("CRITICAL", "DATA GAP"))]
     if critical:
         output["⚠️ DATA_WARNING"] = critical[0]
 
     return output
+
+
+def _compute_train_test_split_from_result(
+    result: Any,
+    strategy: StrategyDefinition,
+) -> dict[str, Any] | None:
+    """Reconstruct train/test metrics from a cached BacktestResult.
+
+    The cache only stores aggregate metrics, not the equity curve. When the
+    cached result was produced by a strategy whose date range supports a
+    split, the original `_compute_train_test_split` call needs the equity
+    DataFrame and trade list — neither of which are on `BacktestResult`.
+    Return ``None`` here so cache hits don't synthesise misleading splits;
+    callers can re-run with `force=True` if they need the breakdown.
+    """
+    _ = (result, strategy)
+    return None
 
 
 def _compute_train_test_split(
@@ -992,6 +1116,33 @@ def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
             last_valid = float(arr[i])
 
 
+async def _resolve_benchmark_df(  # noqa: PLR0913
+    downloader: Any,
+    benchmark_sym: str | None,
+    start_date: str,
+    end_date: str,
+    timeframe: str,
+    symbol_dfs: dict[str, Any],
+) -> Any | None:
+    """Return the benchmark equity DataFrame, reusing universe data if possible.
+
+    Strategies that trade SPY/QQQ alongside other names should still see
+    benchmark-relative metrics; pulling the benchmark from the universe
+    download avoids an extra provider call.
+    """
+    if not benchmark_sym:
+        return None
+    if benchmark_sym in symbol_dfs:
+        return symbol_dfs[benchmark_sym]
+    bench_dfs = await downloader.ensure_data(
+        symbols=[benchmark_sym],
+        start_date=start_date,
+        end_date=end_date,
+        timeframe=timeframe,
+    )
+    return bench_dfs.get(benchmark_sym)
+
+
 async def _execute_strategy(  # noqa: PLR0915
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
@@ -1017,18 +1168,14 @@ async def _execute_strategy(  # noqa: PLR0915
         timeframe,
     )
 
-    # Load benchmark data if configured
-    benchmark_df = None
-    benchmark_sym = strategy.universe.benchmark
-    if benchmark_sym and benchmark_sym not in symbol_dfs:
-        bench_dfs = await downloader.ensure_data(
-            symbols=[benchmark_sym],
-            start_date=strategy.data_config.start_date,
-            end_date=strategy.data_config.end_date,
-            timeframe=timeframe,
-        )
-        if benchmark_sym in bench_dfs:
-            benchmark_df = bench_dfs[benchmark_sym]
+    benchmark_df = await _resolve_benchmark_df(
+        downloader,
+        strategy.universe.benchmark,
+        strategy.data_config.start_date,
+        strategy.data_config.end_date,
+        timeframe,
+        symbol_dfs,
+    )
 
     exec_cfg = strategy.execution_config
     config = BacktestConfig(
@@ -1036,6 +1183,7 @@ async def _execute_strategy(  # noqa: PLR0915
         commission_pct=exec_cfg.commission_pct,
         timeframe=timeframe,
         volume_scaled_slippage=exec_cfg.volume_scaled_slippage,
+        initial_capital=exec_cfg.initial_capital,
     )
 
     all_warnings: list[str] = list(data_warnings)
@@ -1110,6 +1258,7 @@ async def _execute_strategy(  # noqa: PLR0915
                 timeframe=config.timeframe,
                 volume_scaled_slippage=config.volume_scaled_slippage,
                 spread_estimates=spread_arr,
+                initial_capital=config.initial_capital,
             )
             eq_curve, sym_trades = run_backtest(
                 sym_df,
@@ -1394,7 +1543,7 @@ def bootstrap() -> Settings:
         cache_dir=settings.backtest_cache_dir,
         ttl_hours=settings.backtest_cache_ttl_hours,
     )
-    _state.job_store = JobStore()
+    _state.job_store = JobStore(persist_dir=Path(settings.backtest_cache_dir) / "jobs")
 
     logger.info(
         "bootstrap_complete",

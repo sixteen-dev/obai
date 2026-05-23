@@ -10,51 +10,61 @@ from ..models import Portfolio, Position, WeightType, detect_asset_type
 logger = get_logger(__name__)
 
 # Regex patterns for parsing positions
+# A ticker is one to five letters with an optional `.X` share-class suffix
+# (e.g. `BRK.B`). This keeps the parser permissive enough for common
+# preferred/share-class tickers while still rejecting prose words.
+_TICKER = r"[A-Z]{1,5}(?:\.[A-Z]{1,2})?"
+# Scale suffix that multiplies the captured amount. Allows `k`/`m`/`b` (case
+# insensitive) on both `$50k AAPL` and `AAPL $1.2M`.
+_AMOUNT = r"\d+(?:,\d{3})*(?:\.\d+)?(?:[kKmMbB])?"
+
 PATTERNS = {
     # "AAPL 40%" or "AAPL: 40%" or "40% AAPL"
     "percentage": re.compile(
-        r"(?P<symbol>[A-Z]{1,5})\s*[:\s]+\s*(?P<weight>\d+(?:\.\d+)?)\s*%"
+        rf"(?P<symbol>{_TICKER})\s*[:\s]+\s*(?P<weight>\d+(?:\.\d+)?)\s*%"
         r"|"
-        r"(?P<weight2>\d+(?:\.\d+)?)\s*%\s*(?P<symbol2>[A-Z]{1,5})",
+        rf"(?P<weight2>\d+(?:\.\d+)?)\s*%\s*(?P<symbol2>{_TICKER})",
         re.IGNORECASE,
     ),
     # "AAPL 0.40" or "AAPL: 0.4" (decimal format, must be < 1)
     "decimal": re.compile(
-        r"(?P<symbol>[A-Z]{1,5})\s*[:\s]+\s*(?P<weight>0\.\d+)",
+        rf"(?P<symbol>{_TICKER})\s*[:\s]+\s*(?P<weight>0\.\d+)",
         re.IGNORECASE,
     ),
     # "100 shares AAPL" or "AAPL 100 shares"
     "shares": re.compile(
-        r"(?P<shares>\d+(?:,\d{3})*)\s*shares?\s+(?P<symbol>[A-Z]{1,5})"
+        rf"(?P<shares>\d+(?:,\d{{3}})*)\s*shares?\s+(?P<symbol>{_TICKER})"
         r"|"
-        r"(?P<symbol2>[A-Z]{1,5})\s+(?P<shares2>\d+(?:,\d{3})*)\s*shares?",
+        rf"(?P<symbol2>{_TICKER})\s+(?P<shares2>\d+(?:,\d{{3}})*)\s*shares?",
         re.IGNORECASE,
     ),
-    # "$50,000 AAPL" or "AAPL $50k" or "$50000 in AAPL"
+    # "$50,000 AAPL" or "AAPL $50k" or "$1.2M in BRK.B"
     "dollars": re.compile(
-        r"\$(?P<amount>\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:k|K)?\s*(?:in\s+)?(?P<symbol>[A-Z]{1,5})"
+        rf"\$(?P<amount>{_AMOUNT})\s*(?:in\s+)?(?P<symbol>{_TICKER})"
         r"|"
-        r"(?P<symbol2>[A-Z]{1,5})\s+\$(?P<amount2>\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:k|K)?",
+        rf"(?P<symbol2>{_TICKER})\s+\$(?P<amount2>{_AMOUNT})",
         re.IGNORECASE,
     ),
 }
 
 
+_SCALE_SUFFIXES = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
+
+
 def _parse_amount(amount_str: str) -> Decimal:
     """Parse dollar amount string to Decimal.
 
-    Args:
-        amount_str: Amount string (e.g., "50,000" or "50k").
-
-    Returns:
-        Decimal amount.
-
+    Accepts comma-grouped numbers and the standard scale suffixes
+    ``k``/``m``/``b`` (case insensitive). The suffix multiplier is applied
+    after stripping group separators so ``$1.2M`` resolves to ``1_200_000``.
     """
-    # Remove commas
     cleaned = amount_str.replace(",", "")
-    # Handle 'k' suffix
-    if cleaned.lower().endswith("k"):
-        return Decimal(cleaned[:-1]) * 1000
+    if not cleaned:
+        return Decimal(0)
+    suffix = cleaned[-1].lower()
+    multiplier = _SCALE_SUFFIXES.get(suffix)
+    if multiplier is not None:
+        return Decimal(cleaned[:-1]) * multiplier
     return Decimal(cleaned)
 
 

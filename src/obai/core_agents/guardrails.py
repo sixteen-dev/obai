@@ -12,6 +12,7 @@ from agents import Agent, Runner
 from agents.guardrail import GuardrailFunctionOutput, input_guardrail
 from pydantic import BaseModel, Field
 
+from .config import get_config
 from .prompt_loader import load_prompt
 
 logger = logging.getLogger(__name__)
@@ -34,13 +35,14 @@ class FinancialQueryValidation(BaseModel):
 async def create_guardrail_agent() -> Agent[None]:
     """Create a guardrail agent for validating financial queries.
 
-    This agent uses gpt-4o-mini for fast, cost-effective validation.
+    Model is sourced from ``AgentConfig.guardrail_model`` so deployments that
+    retire a model family can switch via environment variables instead of a
+    code change.
 
     Returns:
         OpenAI Agent SDK agent instance configured for guardrail validation.
     """
-    # Use fast model for guardrails (cost optimization)
-    model = "gpt-4o-mini"
+    model = get_config().guardrail_model
 
     # Load guardrail instructions
     instructions = load_prompt("guardrail")

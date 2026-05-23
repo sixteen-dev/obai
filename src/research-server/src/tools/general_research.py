@@ -29,15 +29,18 @@ async def research_general(
 
     """
     settings = get_settings()
+    # When the caller scopes by ticker, fold it into the search query so the
+    # symbol actually narrows results instead of just appearing in metadata.
+    effective_query = f"{query} ({symbol.upper()})" if symbol else query
     try:
-        client = ExaClient()
-        results = await client.search(
-            query=query,
-            search_type="auto",
-            num_results=min(10, settings.default_num_results + 2),
-            highlight_query=query,
-            start_published_date=_days_ago(days_back),
-        )
+        async with ExaClient() as client:
+            results = await client.search(
+                query=effective_query,
+                search_type="auto",
+                num_results=min(10, settings.default_num_results + 2),
+                highlight_query=effective_query,
+                start_published_date=_days_ago(days_back),
+            )
         return {
             "query": query,
             "symbol": symbol.upper() if symbol else None,

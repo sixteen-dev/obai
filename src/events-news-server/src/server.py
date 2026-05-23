@@ -118,11 +118,21 @@ async def health_check_ready(_request: Request) -> JSONResponse:
             status_code=503,
         )
 
+    # The news-search tool runs against Tavily. Without a Tavily key the
+    # service can answer earnings/dividend queries but news-search will fail
+    # immediately. Report partial readiness so operators can fix the gap.
+    tavily_configured = bool(s.tavily_api_key)
+
     return JSONResponse(
         {
             "status": "ready",
             "service": s.server_name,
             "version": s.server_version,
+            "providers": {
+                "fmp": "ok",
+                "tavily": "ok" if tavily_configured else "missing_key",
+            },
+            "degraded": [] if tavily_configured else ["news_search"],
         }
     )
 
@@ -192,7 +202,9 @@ async def events_news_search_market_news_tool(
                 "time_range": time_range,
             },
         )
-        return format_api_error(e, "FMP")
+        # News search runs against Tavily, not FMP. Label the error with the
+        # correct provider so operators chase the right outage.
+        return format_api_error(e, "Tavily")
 
 
 @mcp.tool(

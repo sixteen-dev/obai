@@ -129,16 +129,19 @@ class FMPClient:
             except httpx.HTTPStatusError as e:
                 last_error = e
 
-                # Try to extract error message from response body
-                try:
-                    error_body = e.response.json()
-                    if isinstance(error_body, dict) and "Error Message" in error_body:
-                        error_msg = error_body.get("Error Message", str(e))
-                        raise FMPAPIError(str(error_msg), e.response.status_code) from e
-                except (ValueError, KeyError):
-                    pass
-
-                if attempt == MAX_RETRIES or not self._should_retry(e):
+                # Decide whether to retry *before* wrapping the response body
+                # in `FMPAPIError`. 429s and 5xxs often carry an "Error
+                # Message" body too; wrapping first would short-circuit the
+                # backoff path tests explicitly exercise.
+                should_retry = self._should_retry(e) and attempt < MAX_RETRIES
+                if not should_retry:
+                    try:
+                        error_body = e.response.json()
+                        if isinstance(error_body, dict) and "Error Message" in error_body:
+                            error_msg = error_body.get("Error Message", str(e))
+                            raise FMPAPIError(str(error_msg), e.response.status_code) from e
+                    except (ValueError, KeyError):
+                        pass
                     break
 
                 delay = RETRY_DELAYS[attempt]

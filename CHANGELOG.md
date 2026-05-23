@@ -6,6 +6,165 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-05-23
+
+Stable graduation of the 1.4.1 line. Adds the prediction-markets historical
+analytics layer on top of 1.4.0, lands a wide cross-server audit pass, and
+tightens the prediction-markets agent's routing and tool-feedback discipline.
+A second wave (2026-05-18 → 2026-05-23) ships intermediate exits on the
+structured backtester, fixes correctness gaps surfaced by the regression
+suite, and removes the cold-cache timeout cliff. The `1.4.1b1` beta carried
+the same commits; this entry is the single read-this-first summary for the
+line.
+
+### Highlights
+
+- **Prediction-markets historical analytics layer.** New tool surface for
+  resolved-market analysis: `analyze_prediction_calibration` (per-bucket +
+  per-category reliability with `low_n` discipline and a `categories`
+  fan-out parameter), `analyze_longshot_bias`, `backtest_prediction_rule`
+  (structured rule schema with explicit `volume_filter_mode` contamination
+  contract), `monte_carlo_prediction_risk`, and `estimate_empirical_kelly`.
+  Server-side category + date filters; ISO date inputs fail loud;
+  coverage timestamps promoted to UTC-aware at the DB boundary.
+- **Cross-server audit pass (P0-P2, batches 1-8).** Multi-week sweep
+  across every specialist server fixing data-quality, error-handling,
+  and resource-management gaps. Highlights: web XSS, tool cache shape,
+  sell-side risk controls, options BSM dividend yield + IV bracketing,
+  research Exa client leak, jobs persistence, trade-log cache reuse,
+  backtest capital + benchmark alignment, options breakeven normalize,
+  market-data retry, BBANDS/BETA, portfolio NaN guards, MCP
+  timeout/retry, autotrader market hours + buying power + session days.
+- **Prediction-markets agent upgrade.** Default model pinned to
+  `gpt-5.1` (from `specialist_model` fallback = `gpt-5-mini`). Prompt
+  carries the `backtest_prediction_rule` filter schema so the LLM
+  stops sending unsupported date bounds and remembers
+  `volume_filter_mode='lifetime_static'` is required with
+  `min_lifetime_volume`. Tool-feedback rule broadened from "filter not
+  honored" to "errors, times out, or ignores a filter" and now
+  explicitly bans identical retries.
+- **MCP infra tightening.** MCP response cap raised to 40k tokens; web
+  message bubbles widened; MCP timeout + retry behavior unified;
+  `python-multipart` bumped to 0.0.27 (GHSA-pp6c-gr5w-3c5g).
+- **Dependabot sweep.** `litellm` 1.83.7 → 1.85.0
+  (GHSA-wxxx-gvqv-xp7p, sandbox escape in custom-code guardrail);
+  `authlib` 1.7.0 → 1.7.2 across all per-server lockfiles
+  (GHSA-r95x-qfjj-fjj2, OIDC open redirect);
+  `urllib3` 2.6.x → 2.7.0 in events-news and fundamentals server
+  lockfiles (GHSA-mf9v-mfxr-j63j + GHSA-qccp-gfcp-xxvc, decompression
+  bomb + sensitive header forwarding).
+
+### Added (post-2026-05-18 refinements)
+
+- **Stop / take-profit / max-hold intermediate exits on `backtest_prediction_rule`.**
+  `ExitRule` widened into a discriminated union of `HoldToResolutionExit`
+  and the new `StopTakeProfitExit`. The engine walks sampled rows after
+  entry; the first crossing of stop, take-profit, or max-hold wins,
+  booking PnL at the observed sample price. Cross-field validator
+  rejects rules whose entry band could itself satisfy a trigger. Trades
+  carry `exit_reason` + `time_to_exit_days`; the response gains an
+  `exit_breakdown` block (count / share / avg_return_on_cost /
+  median_time_to_exit_days per `stop` / `take_profit` / `expiry` /
+  `resolution`, plus `win_rate_at_resolution` on the `resolution` slot)
+  and surfaces the three fidelity caveats (intra-bucket triggers,
+  sampled-row exit prices, zero market impact) in `limitations`.
+- **`no_returns_to_simulate` quality flag.** Fires whenever
+  `observations_used == 0` so callers know the empty
+  `monte_carlo_input.returns` array is a designed terminal state, not a
+  transport bug. The prediction-markets prompt short-circuits on it,
+  responding in ≤10 lines with the dominant skip reason + one
+  next-step suggestion instead of dumping placeholder zero metrics.
+- **Simulator-side skip reasons now surface in responses.**
+  `_skipped_counts` was only forwarding `ambiguous`/`unresolved` and
+  silently dropping `no_eligible_entry`, `ttr_min_unmet`,
+  `ttr_max_exceeded`, `no_exit_price_for_max_hold`, and
+  `missing_price_history`. Each now passes through so the response
+  explains where every selected market dropped out.
+
+### Changed
+
+- **Prediction-markets agent leads with the answer.** Response-modes
+  preamble + reworked Backtest summary tell the agent to put the
+  metric, decision, or outcome in the first one-or-two sentences;
+  setup, filters, and limitations follow as supporting context, not
+  preamble.
+- **Agent prompt now restrains `max_markets`.** First historical-tool
+  call omits `max_markets` so the default (100) binds; only pass it
+  on a retry after a tool response shows the cap was binding, and
+  never above 250 in a single call. Previously the agent was
+  proactively bumping to 500 on broad-window queries and triggering
+  MCP timeouts.
+
+### Performance
+
+- **CLOB backfill concurrency 5 → 20.** The fetch endpoint is a public
+  read path with no observed per-IP throttle at our request volume;
+  widening the semaphore cuts cold-cache backfill latency ~4x without
+  tripping rate limits.
+- **Sticky `no_clob_history` cache flag.** Polymarket CLOB returns an
+  empty `history` array for ~50% of closed binary-market tokens
+  (favorite sides priced to 1.0 with no on-CLOB activity). The
+  downloader tags those meta rows with
+  `quality_flags="no_clob_history"`; `classify_cache_action`
+  short-circuits to `cached` / reason `sticky_no_clob_history` within
+  the freshness window. Cuts repeat-fetch cost roughly in half once
+  the cache has been seeded. Late CLOB activity is still picked up
+  after `prediction_data_freshness_hours`.
+
+### Fixed
+
+- **Zero or one as entry price bounds.** `EntryRule.price_min/max` used
+  `ge=0.0/le=1.0`; combined with the stop_take_profit exit math
+  (`return_on_cost = pnl / entry_price`), a band like `[0.0, 0.05]`
+  plus a sampled 0.0 YES price crashed the engine with
+  `ZeroDivisionError`. Tightened to `gt=0.0/lt=1.0` to match the
+  existing constraints on `StopTakeProfitExit` trigger prices.
+- **`max_hold_days` lost precedence to later stop/TP triggers.**
+  `_trigger_for_row` checked stop, then take-profit, then expiry. A
+  row that both crossed take-profit and sat past the max-hold boundary
+  got labeled `take_profit`, even though the trade had logically
+  expired first. Reorder so boundary wins when the row is at or past
+  it; `exit_breakdown` now attributes max-hold exits to `expiry`.
+- **Stop_take_profit limitation string contradicted itself.**
+  `_limitations` always emitted "Exit = hold to resolution; no
+  historical order-book depth or fees modeled.", then appended the
+  stop/take-profit caveats — contradictory user-facing text. The exit
+  line is now conditional on the rule's exit variant.
+
+### Security
+
+- **`idna` 3.11 → 3.16** (GHSA-65pc-fj4g-8rjx). DoS via crafted inputs
+  that bypassed the CVE-2024-3651 fix. Constraint added to every
+  per-server pyproject so all 11 lockfiles refresh in lockstep.
+- **`starlette` → 1.0.1** (GHSA-86qp-5c8j-p5mr / PYSEC-2026-161).
+  Missing Host header validation poisoned `request.url.path` and
+  bypassed path-based security checks; fix added to the same
+  constraint block as `idna`.
+- **Removed unused `asyncio-mqtt`.** The package was archived upstream
+  and never imported anywhere in the codebase; dropped from the root
+  `pyproject.toml` `all` dependency group (`paho-mqtt` followed it
+  out of the lockfile as a transitive). Clears the only remaining
+  `uv audit` adverse-status warning.
+
+### Infra
+
+- **PM server DuckDB persists across container restarts.** The
+  prediction-markets-server's `/app/data/` directory now mounts a
+  `prediction-data` named volume (same pattern as `backtest-server`).
+  Without this, every restart wiped the cache and the next
+  historical-analytics call paid full cold-cache cost. Existing
+  containers need `docker compose up -d` to pick up the mount.
+- **Local pre-commit `uv audit` demoted to advisory.** CI's
+  `dependency-audit` job (`.github/workflows/security.yml`) remains
+  the authoritative gate; the local hook was treating every
+  non-zero exit as a vulnerability, including upstream OSV parser
+  flakes on malformed advisory records.
+
+### Notes
+
+- A short-lived `feat(kb)` knowledge-base MCP server landed on 2026-05-15
+  and was reverted the next day. Not part of this beta.
+
 ## [1.4.0] - 2026-05-09
 
 Stable graduation of the 1.4 line. The 1.4 work is a near-total rewrite of

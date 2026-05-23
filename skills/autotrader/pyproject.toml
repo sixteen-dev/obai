@@ -1,6 +1,6 @@
 [project]
 name = "autotrader"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenClaw autonomous paper trading bot - scripts and shared libraries"
 requires-python = ">=3.12"
 dependencies = [
@@ -43,3 +43,6 @@ ignore = ["S101", "PLR2004"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
+
+[tool.uv]
+constraint-dependencies = ["urllib3>=2.7.0"]

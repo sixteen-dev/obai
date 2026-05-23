@@ -28,6 +28,12 @@ def calculate_effective_exposure(
             _add_etf_exposure(exposure, weight, etf_holdings_map[symbol])
         elif asset_type in ("stock", "unknown"):
             _add_direct_exposure(exposure, symbol, weight)
+        elif asset_type in ("cash", "bond_etf"):
+            # Cash and bond ETFs still occupy portfolio weight. Tracking
+            # them as their own buckets keeps "total exposure" reflective
+            # of the full economic portfolio so concentration flags aren't
+            # computed against an incomplete denominator.
+            _add_direct_exposure(exposure, symbol, weight)
 
     return _build_exposure_list(exposure)
 

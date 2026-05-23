@@ -6,6 +6,7 @@ import httpx
 
 from ..config import Settings
 from ..logging_config import get_logger, log_api_call, log_error
+from ..utils import is_retryable_httpx_exc, retry_async
 
 logger = get_logger(__name__)
 
@@ -44,6 +45,14 @@ class FMPClient:
         """Close the HTTP client."""
         await self.client.aclose()
 
+    @retry_async(
+        max_attempts=3,
+        initial_delay=0.5,
+        backoff=2.0,
+        jitter=0.25,
+        retry_on=(httpx.HTTPStatusError, httpx.TimeoutException, httpx.NetworkError),
+        retry_if=is_retryable_httpx_exc,
+    )
     async def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         """Make GET request to FMP API.
 

@@ -86,8 +86,10 @@ def _assess_freshness(published_date: str | None) -> str:
     """Assess freshness of a result based on published date.
 
     Returns:
-        "recent" (< 3 months), "older" (3-12 months), "stale" (> 12 months),
-        or "unknown" if no date.
+        "future" (date is after today — likely a misdated republish or
+        templated article), "recent" (< 3 months), "older" (3-12 months),
+        "stale" (> 12 months), or "unknown" if the date is missing or
+        unparseable.
 
     """
     if not published_date:
@@ -96,6 +98,8 @@ def _assess_freshness(published_date: str | None) -> str:
         date_str = published_date[:10]
         pub = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)  # noqa: DTZ007
         age_days = (datetime.now(UTC) - pub).days
+        if age_days < 0:
+            return "future"
         if age_days < 90:
             return "recent"
         if age_days < 365:
@@ -136,6 +140,14 @@ class ExaClient:
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()
+
+    async def __aenter__(self) -> ExaClient:
+        """Enter async context — caller gets the live client."""
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        """Exit async context — always close the underlying HTTP client."""
+        await self.close()
 
     async def search(
         self,
