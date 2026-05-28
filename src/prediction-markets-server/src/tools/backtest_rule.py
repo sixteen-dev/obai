@@ -22,6 +22,7 @@ from ..data import (
 )
 from ..engine import (
     BacktestMarket,
+    StopTakeProfitExit,
     build_monte_carlo_input,
     simulate_rule,
     summarize_trades,
@@ -244,9 +245,18 @@ def _load_yes_rows(
 
 
 def _limitations(rule: object) -> list[str]:
+    exit_rule = getattr(rule, "exit", None) if isinstance(rule, pydantic.BaseModel) else None
+    if isinstance(exit_rule, StopTakeProfitExit):
+        exit_line = (
+            "Exit = first stop/take-profit/max-hold trigger on the sampled "
+            "price track, else hold to resolution; no historical order-book "
+            "depth or fees modeled."
+        )
+    else:
+        exit_line = "Exit = hold to resolution; no historical order-book depth or fees modeled."
     out = [
         "V1 backtest: single entry per market at the earliest eligible YES price.",
-        "Exit = hold to resolution; no historical order-book depth or fees modeled.",
+        exit_line,
         "Sampled price history (CLOB), not tick-level fills.",
         "Resolved markets only; ambiguous resolutions are skipped and reported.",
         "Results are descriptive base-rate evidence, not proof of causal edge.",
@@ -262,7 +272,32 @@ def _limitations(rule: object) -> list[str]:
                 "Volume filter used final/lifetime volume, not volume known at "
                 "simulated entry time."
             )
+        if isinstance(exit_rule, StopTakeProfitExit):
+            out.extend(_stop_take_profit_limitations())
     return out
+
+
+def _stop_take_profit_limitations() -> list[str]:
+    """Caveats specific to the stop_take_profit exit path.
+
+    Surfaces the three semantic concessions the engine made: intra-bucket
+    blindness, exit-at-observed-sample (not trigger level), and zero
+    market-impact. The agent prompt requires quoting ``limitations``
+    verbatim, so these strings propagate directly to user-facing output.
+    """
+    return [
+        (
+            "Intra-bucket price paths are unobserved; stops or take-profits that "
+            "fire and revert inside a single sampling interval are missed, so "
+            "trigger counts under-state real triggers."
+        ),
+        (
+            "Exit price is the sampled row price at trigger, not the trigger "
+            "level — approximates a market-order fill at the sample, not a clean "
+            "limit fill at the trigger price."
+        ),
+        ("Results ignore spread, depth, and market impact regardless of position size."),
+    ]
 
 
 def _drop_iso(value: datetime | None) -> str | None:

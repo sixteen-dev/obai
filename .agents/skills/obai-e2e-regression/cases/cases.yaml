@@ -359,3 +359,58 @@ test_cases:
     expected_tools: [prediction_market_analysis]
     expected_skills: [obai-prediction-market-routing]
     description: "Regression for the post-resolution filter (P1). _load_price_rows now filters timestamp > end_date at the DB layer, so terminal 1.0/0.0 samples cannot become 0_3h observations."
+
+  # ── 11. May 2026 follow-on regressions ──
+  #
+  # Two prediction-market regressions for the calibration fixes shipped in
+  # commit 92e9cd8 (per-bucket low_n tagging + categories list fan-out), plus
+  # one fundamentals-primary case and one multi-day execution plan to widen
+  # specialist coverage beyond the existing suite.
+
+  - id: P13
+    feature: pm_categories_fanout
+    query: "Compare YES-price calibration on resolved Polymarket markets across sports, politics, and crypto. Use the categories parameter so each category comes back with its own sample size, reliability label, and bucket breakdown — don't run one calibration and relabel it across categories."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for the categories list fan-out. analyze_prediction_calibration must be called once with categories=[sports, politics, crypto] and return a per_category map rather than a single calibration relabeled."
+
+  - id: P14
+    feature: pm_low_n_bucket_discipline
+    query: "Calibrate resolved Polymarket sports markets in the heavy-favorite tail (0.85 and above) by price bucket and time-to-resolution. For any bucket with fewer than 10 samples, flag it explicitly — I do not want a 3-sample bucket quoted to me as a base rate."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Regression for per-bucket low_n tagging. Response must carry low_n on each bucket and low_n_bucket_count on the summary; ECE excludes flagged buckets. Agent must not present low_n bucket values as base rates."
+
+  # ── 12. backtest_prediction_rule intermediate exits (stop_take_profit) ──
+  #
+  # Coverage for the May 2026 stop-loss / take-profit / max-hold extension to
+  # the structured prediction-market backtester. Each case asserts the
+  # exit_breakdown block is present, per-trade exit_reason / time_to_exit_days
+  # surface in examples, and the three fidelity caveats land in limitations.
+
+  - id: P15
+    feature: pm_backtest_rule_stop_only
+    query: "Backtest the same 5¢-15¢ YES politics longshot on resolved Polymarket markets, but exit at the first sample at-or-below 2¢ instead of holding to resolution. I want the exit breakdown across stop / take_profit / expiry / resolution, the per-trade exit_reason on examples, and the fidelity caveats the tool reports."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "backtest_prediction_rule with exit.type=stop_take_profit and stop_price only. Response must include exit_breakdown (four reasons summing to share=1.0), per-trade exit_reason on examples, and the intra-bucket / sampled-row / market-impact caveats in limitations."
+
+  - id: P16
+    feature: pm_backtest_rule_stop_tp_maxhold
+    query: "Backtest 5¢-15¢ YES politics longshots on resolved Polymarket with a 2¢ stop, 50¢ take-profit, and 90-day max-hold. Tell me the exit breakdown by reason, how many trades got skipped for max-hold data gaps, and the fidelity limitations the tool quotes."
+    expected_tools: [prediction_market_analysis]
+    expected_skills: [obai-prediction-market-routing]
+    description: "Combined stop_take_profit triggers. Response must surface counts under stop, take_profit, expiry, and resolution; any no_exit_price_for_max_hold skip count must appear in resolution_breakdown; the agent must NOT silently treat sampled trigger prices as guaranteed fills (must quote the limitations)."
+
+  - id: U4
+    feature: fundamentals_deep_dive
+    query: "Pull Costco's last 5 fiscal years of revenue, gross margin, operating margin, free cash flow, and net debt. Give me the 5-year revenue and FCF CAGR and the trend in operating margin."
+    expected_tools: [fundamentals_analysis]
+    allowed_extras: [market_data_analysis]
+    description: Pure fundamentals deep-dive — fundamentals_analysis as the primary specialist (currently only covered as allowed_extras in T2/T3).
+
+  - id: X4
+    feature: vwap_execution_plan
+    query: "I need to accumulate $2M of CRWD over the next 3 trading days. Given current ADV and intraday volume profile, lay out a VWAP-style execution plan — per-day allocation and the times of day to lean into the order."
+    expected_tools: [market_data_analysis]
+    description: Multi-day execution plan extending the X-series beyond X3's single-day liquidity check.

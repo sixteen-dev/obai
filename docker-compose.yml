@@ -266,6 +266,11 @@ services:
       - TRANSPORT=streamable-http
       - HOST=0.0.0.0
       - PORT=8009
+    volumes:
+      # Persist DuckDB cache (market metadata + CLOB price history) across restarts.
+      # Without this, every container restart wipes the cache and cold-cache backfill
+      # of historical-analytics tools (backtest_prediction_rule, etc.) hangs the MCP call.
+      - prediction-data:/app/data
     networks:
       - obai-mcp-network
     restart: unless-stopped
@@ -279,6 +284,7 @@ services:
 volumes:
   # qdrant-data:  # disabled with the qdrant service above
   backtest-data:
+  prediction-data:
 
 networks:
   obai-mcp-network:

@@ -42,8 +42,10 @@ from .rules import (
     SUPPORTED_VOLUME_FILTER_MODES,
     EntryRule,
     ExitRule,
+    HoldToResolutionExit,
     PredictionRule,
     RuleFilters,
+    StopTakeProfitExit,
     validate_rule,
 )
 from .sizing import (
@@ -66,6 +68,7 @@ __all__ = [
     "CalibrationSummary",
     "EntryRule",
     "ExitRule",
+    "HoldToResolutionExit",
     "LongshotResult",
     "MarketContext",
     "Observation",
@@ -74,6 +77,7 @@ __all__ = [
     "RuleFilters",
     "SamplingMode",
     "Side",
+    "StopTakeProfitExit",
     "TailStats",
     "Trade",
     "aggregate_calibration",

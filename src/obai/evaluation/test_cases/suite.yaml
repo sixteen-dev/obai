@@ -1,6 +1,6 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 187 test cases across 7 active categories (A-E, G, H; F pending).
+# 190 test cases across 7 active categories (A-E, G, H; F pending).
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 #   prediction markets,
@@ -1294,6 +1294,38 @@ test_cases:
     query_type: prediction_market_historical_workflow_end_to_end
     expected_tools: [prediction_market_analysis]
     description: End-to-end pipeline across all five new historical tools in a single user turn. Tests that the agent chains calibration → longshot → backtest_prediction_rule → monte_carlo_prediction_risk → estimate_empirical_kelly while preserving the monte_carlo_input fingerprint between tools.
+
+  # G.8a — backtest_prediction_rule intermediate exits (stop_take_profit)
+  #
+  # Coverage for the May 2026 stop / take-profit / max-hold extension to the
+  # structured backtester. Each case exercises a different surface:
+  #   G53 — stop-only path; verifies exit_breakdown and the new caveats land
+  #   G54 — combined triggers; verifies all four exit reasons and the
+  #         no_exit_price_for_max_hold skip route surface honestly
+  #   G55 — schema disjointness; agent must surface the validation error,
+  #         not silently fall back to hold_to_resolution
+
+  - id: G53
+    query: "Same 5¢-15¢ YES politics longshot Polymarket backtest, but exit at the first sample at-or-below 2¢ instead of holding to resolution. I want sample size, win rate, the exit_breakdown across stop / take_profit / expiry / resolution, per-trade exit_reason on examples, and the fidelity caveats the tool reports."
+    category: G
+    query_type: prediction_market_backtest_stop_only
+    expected_tools: [prediction_market_analysis]
+    description: "backtest_prediction_rule with exit.type=stop_take_profit and stop_price only. Response must include exit_breakdown (four reasons with share summing to 1.0), per-trade exit_reason and time_to_exit_days on examples, and the three stop_take_profit limitations: intra-bucket triggers undercounted, exit price = sampled row price (not trigger level), zero market impact / slippage."
+    smoke: true
+
+  - id: G54
+    query: "Backtest 5¢-15¢ YES politics longshots on resolved Polymarket again, but this time with a 2¢ stop, a 50¢ take-profit, and a 90-day max-hold. Show me the exit breakdown by reason, the median time-to-exit per reason, the win_rate_at_resolution on the resolution slot, how many trades got skipped because no sample straddled the max-hold boundary, and the fidelity limitations."
+    category: G
+    query_type: prediction_market_backtest_stop_tp_maxhold
+    expected_tools: [prediction_market_analysis]
+    description: "Combined stop + take_profit + max_hold_days triggers. Response must surface counts for every exit reason that applies, win_rate_at_resolution on the resolution slot, any no_exit_price_for_max_hold count in resolution_breakdown / skipped_reasons, and the three fidelity caveats. Tests that the agent does not present sampled trigger prices as guaranteed limit-fills."
+
+  - id: G55
+    query: "Backtest a Polymarket politics longshot: YES priced between 5¢ and 15¢, with a 7¢ stop-loss, otherwise hold to resolution. Use the structured rule backtester."
+    category: G
+    query_type: prediction_market_backtest_stop_overlap_rejection
+    expected_tools: [prediction_market_analysis]
+    description: "Schema disjointness regression: stop_price (0.07) sits inside the entry band (0.05-0.15), so validate_rule must reject with a pydantic ValidationError naming stop_price. Agent must surface the validation error to the user, not silently retry with a different stop_price or relabel the request as hold_to_resolution."
 
 
   # ─────────────────────────────────────────────

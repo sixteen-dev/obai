@@ -129,6 +129,54 @@ async def test_ensure_repeated_call_is_idempotent(downloader: HistoryDownloader)
     assert actions == {"cached"}
 
 
+class _CountingEmptyClob:
+    """CLOB stub that records hit counts and always returns empty history."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def get_price_history(
+        self, token_id: str, *, interval: str = "1d", fidelity: int = 60
+    ) -> dict[str, Any]:
+        self.calls.append(token_id)
+        return {"token_id": token_id, "interval": interval, "fidelity": fidelity, "history": []}
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_ensure_sticky_no_clob_history_skips_refetch() -> None:
+    """Empty-CLOB tokens must not be re-fetched on the next refresh.
+
+    Polymarket returns empty history for ~50% of closed binary-market
+    tokens; sticky flag avoids paying full network + DuckDB cost twice.
+    """
+    store = PredictionStore(manager=PredictionDuckDBManager(db_path=":memory:"))
+    store.ensure_connected()
+    clob = _CountingEmptyClob()
+    dl = HistoryDownloader(
+        gamma=_FakeGamma({"0xA": _payload("0xA")}),
+        clob=clob,
+        data_client=_FakeData(),
+        store=store,
+    )
+    first = await ensure_prediction_market_history(
+        ["0xA"], downloader=dl, max_history_points=1000, now=_now()
+    )
+    assert first["sample_size"] == 1
+    first_hits = len(clob.calls)
+    assert first_hits == 2, "expected one CLOB call per token (YES + NO)"
+
+    second = await ensure_prediction_market_history(
+        ["0xA"], downloader=dl, max_history_points=1000, now=_now()
+    )
+    # No new CLOB hits — sticky flag short-circuited both tokens.
+    assert len(clob.calls) == first_hits
+    actions = {entry["action"] for entry in second["cache_actions"]["price_history"].values()}
+    assert actions == {"cached"}
+
+
 @pytest.mark.asyncio
 async def test_ensure_records_skipped_when_market_lookup_fails(
     downloader: HistoryDownloader,

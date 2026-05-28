@@ -1,6 +1,6 @@
 [project]
 name = "fundamentals-server"
-version = "0.1.0"
+version = "0.1.9"
 description = "MCP server for company fundamentals with AI-enhanced educational context"
 requires-python = ">=3.12"
 dependencies = [
@@ -74,3 +74,6 @@ dev = [
     "types-cachetools>=6.2.0.20251022",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.7.2", "urllib3>=2.7.0", "starlette>=1.0.1", "idna>=3.15"]

@@ -226,6 +226,217 @@ async def test_backtest_rule_propagates_validation_errors(fixtures) -> None:
         )
 
 
+class _FakeClobTracked:
+    """Fake CLOB returning per-token configured price tracks for stop_take_profit tests."""
+
+    def __init__(self, tracks: dict[str, list[tuple[int, float]]]) -> None:
+        # tracks: token_id -> list of (unix_timestamp, price) tuples.
+        self._tracks = tracks
+
+    async def get_price_history(
+        self, token_id: str, *, interval: str = "1d", fidelity: int = 60
+    ) -> dict[str, Any]:
+        history = [{"timestamp": ts, "price": p} for ts, p in self._tracks[token_id]]
+        return {
+            "token_id": token_id,
+            "interval": interval,
+            "fidelity": fidelity,
+            "count": len(history),
+            "history": history,
+        }
+
+    async def close(self) -> None:
+        pass
+
+
+def _stp_fixture(yes_track: list[tuple[int, float]]) -> tuple[HistoryDownloader, PredictionStore]:
+    """Build downloader + store with one YES-winner market driving `yes_track`."""
+    payload = _payload("0xA", terminal_yes=True)
+    # End date must land after the latest yes_track sample so resolution is in
+    # the past relative to the walk.
+    last_ts = yes_track[-1][0]
+    payload["end_date"] = datetime.fromtimestamp(last_ts + 60 * 60, tz=timezone.utc).isoformat()
+    payloads = {"0xA": payload}
+    store = PredictionStore(manager=PredictionDuckDBManager(db_path=":memory:"))
+    store.ensure_connected()
+    tracks = {
+        "0xA-Y": yes_track,
+        # NO leg only needs presence for the downloader, not a realistic track.
+        "0xA-N": [(yes_track[0][0], 1.0 - yes_track[0][1])],
+    }
+    dl = HistoryDownloader(
+        gamma=_FakeGamma(payloads),
+        clob=_FakeClobTracked(tracks),
+        data_client=_FakeData(),
+        store=store,
+    )
+    return dl, store
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_emits_exit_breakdown_and_per_trade_fields() -> None:
+    """stop_take_profit must surface exit_breakdown + per-trade exit_reason/time_to_exit_days."""
+    base_ts = 1_700_000_000
+    # Track: entry at 0.10, then crosses TP at 0.55, ending high.
+    yes_track = [(base_ts, 0.10), (base_ts + 86_400 * 5, 0.55), (base_ts + 86_400 * 10, 1.0)]
+    dl, store = _stp_fixture(yes_track)
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {
+                "type": "stop_take_profit",
+                "stop_price": 0.04,
+                "take_profit_price": 0.50,
+            },
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    metrics = result["metrics"]
+    assert "exit_breakdown" in metrics
+    breakdown = metrics["exit_breakdown"]
+    assert set(breakdown.keys()) == {"stop", "take_profit", "expiry", "resolution"}
+    # One market, walk crosses 0.55 first → take_profit fires.
+    assert breakdown["take_profit"]["count"] == 1
+    assert breakdown["stop"]["count"] == 0
+    assert breakdown["resolution"]["count"] == 0
+    # Per-trade examples must carry the new fields.
+    for example in result["examples"]:
+        assert example["exit_reason"] in {"stop", "take_profit", "expiry", "resolution"}
+        assert isinstance(example["time_to_exit_days"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_emits_stop_take_profit_limitations() -> None:
+    """stop_take_profit must append the three fidelity caveats to limitations."""
+    base_ts = 1_700_000_000
+    yes_track = [(base_ts, 0.10), (base_ts + 86_400 * 3, 0.02), (base_ts + 86_400 * 7, 0.0)]
+    dl, store = _stp_fixture(yes_track)
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "stop_take_profit", "stop_price": 0.04},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    text = " ".join(result["limitations"])
+    assert "Intra-bucket price paths are unobserved" in text
+    assert "Exit price is the sampled row price at trigger" in text
+    assert "spread, depth, and market impact" in text
+    # Exit line must describe the actual exit semantics for this rule, not
+    # the hold-to-resolution default. Otherwise the response says both
+    # "Exit = hold to resolution" and the stop/TP caveats — contradictory.
+    assert "first stop/take-profit/max-hold trigger" in text
+    assert "Exit = hold to resolution; no historical" not in text
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_hold_to_resolution_limitations_unchanged(fixtures) -> None:
+    """hold_to_resolution path must NOT carry the stop_take_profit caveats."""
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    text = " ".join(result["limitations"])
+    assert "Intra-bucket" not in text
+    assert "trigger level" not in text
+    assert "Exit = hold to resolution" in text
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_no_exit_price_for_max_hold_surfaces_in_resolution_breakdown() -> None:
+    """Data gap straddling the max-hold boundary → skip counted under no_exit_price_for_max_hold."""
+    # Entry sample at t0; only one more sample at t0+1day. max_hold_days=30 → boundary is
+    # ~29 days past the last sample, and end_date sits a year later → skip the trade.
+    base_ts = 1_700_000_000
+    yes_track = [(base_ts, 0.10), (base_ts + 86_400, 0.11)]
+    dl, store = _stp_fixture(yes_track)
+    # Push end_date well past the boundary.
+    dl.gamma._payloads["0xA"]["end_date"] = (  # noqa: SLF001
+        datetime.fromtimestamp(base_ts + 86_400 * 365, tz=timezone.utc).isoformat()
+    )
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "stop_take_profit", "max_hold_days": 30},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert result["sample_size"] == 0
+    breakdown_reasons = result["resolution_breakdown"]
+    assert breakdown_reasons.get("no_exit_price_for_max_hold") == 1
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_surfaces_no_eligible_entry_in_skipped_reasons(fixtures) -> None:
+    """Simulator-side no_eligible_entry count must surface in skipped_reasons.
+
+    Lets callers distinguish 'simulator filtered everything' from 'universe
+    selection filtered everything'; previously _skipped_counts dropped it.
+    """
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        # Band [0.50, 0.70] excludes both the 0.10 entry samples and the 0/1
+        # terminal samples in the fixture, so the simulator finds no entries.
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.50, "price_max": 0.70},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert result["sample_size"] == 0
+    skipped = result["data_coverage"]["skipped_reasons"]
+    # Both fixture markets reached the simulator and failed entry.
+    assert skipped.get("no_eligible_entry") == 2
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_rejects_overlap_of_entry_band_and_stop(fixtures) -> None:
+    """Schema-level disjointness: stop_price >= entry.price_min must reject."""
+    dl, store = fixtures
+    with pytest.raises(ValidationError, match="stop_price"):
+        await backtest_prediction_rule(
+            {
+                "side": "YES",
+                "entry": {"price_min": 0.05, "price_max": 0.15},
+                "exit": {"type": "stop_take_profit", "stop_price": 0.05},
+            },
+            downloader=dl,
+            store=store,
+            max_markets=5,
+            max_history_points=1000,
+            now=_now(),
+        )
+
+
 @pytest.mark.asyncio
 async def test_backtest_data_fingerprint_changes_when_winner_flips(fixtures) -> None:
     """Regression: data_fingerprint must change when a market's winning_outcome flips.

@@ -26,7 +26,6 @@ from alpaca.trading.requests import (
 from .logging_config import get_logger
 from .models import AccountInfo, OrderInfo, PositionInfo
 
-
 # US equity exchanges run on US/Eastern. Day-counting (daily trade limits,
 # "today's filled orders") must reference that calendar, not UTC, so 4–8pm ET
 # trades aren't accidentally counted against the next exchange day.

@@ -13,22 +13,8 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
-[options]
-exclude-newer = "2026-05-09T22:13:44.402264467Z"
-exclude-newer-span = "P7D"
-
-[options.exclude-newer-package]
-pytest = { timestamp = "2026-05-16T22:13:44.402278583Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-16T22:13:44.402278924Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-16T22:13:44.402279175Z", span = "PT0S" }
-anthropic = { timestamp = "2026-05-16T22:13:44.402277281Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-16T22:13:44.402277842Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-16T22:13:44.402277521Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-16T22:13:44.402278072Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-16T22:13:44.402278333Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-16T22:13:44.402279435Z", span = "PT0S" }
-onnx = { timestamp = "2026-05-16T22:13:44.402277031Z", span = "PT0S" }
-requests = { timestamp = "2026-05-16T22:13:44.402273303Z", span = "PT0S" }
+[manifest]
+constraints = [{ name = "urllib3", specifier = ">=2.7.0" }]
 
 [[package]]
 name = "alpaca-py"
@@ -97,7 +83,7 @@ wheels = [
 
 [[package]]
 name = "autotrader"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },

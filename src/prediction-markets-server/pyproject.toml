@@ -1,6 +1,6 @@
 [project]
 name = "prediction-markets-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for Polymarket prediction market analysis"
 requires-python = ">=3.12"
 dependencies = [
@@ -84,3 +84,6 @@ dev = [
     "mypy>=1.19.1",
     "ruff>=0.14.13",
 ]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.7.2", "urllib3>=2.7.0", "starlette>=1.0.1", "idna>=3.15"]
