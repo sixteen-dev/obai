@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypeVar
 
 from ..storage import PriceRow
 from .buckets import (
@@ -27,6 +27,8 @@ from .buckets import (
 )
 
 SamplingMode = Literal["market_bucket_once", "sample_weighted", "both"]
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,53 @@ def select_earliest_eligible_observation(
         if best is None or row.timestamp < best.timestamp:
             best = row
     return best
+
+
+def split_by_entry(
+    items: list[_T],
+    *,
+    key: Callable[[_T], datetime],
+    fraction: float | None = None,
+    cutoff: datetime | None = None,
+) -> tuple[list[_T], list[_T]]:
+    """Chronological train/holdout split by entry timestamp (§11.5).
+
+    Exactly one of ``fraction`` / ``cutoff`` must be supplied — both or
+    neither is an assumption violation and raises. Empty or one-sided
+    splits are returned as-is: a no-data condition is the caller's to
+    surface (with a low-n limitation), not a tool error.
+
+    Args:
+        items: Observations or Trades to split (any order).
+        key: Accessor returning each item's entry/observation timestamp.
+        fraction: Holdout share in (0, 1); the latest ``fraction`` of items
+            by timestamp become holdout, the earliest ``1 - fraction`` train.
+        cutoff: Explicit boundary; items strictly before are train, items
+            on/after are holdout.
+
+    Returns:
+        ``(train, holdout)`` lists, each timestamp-sorted ascending.
+
+    Raises:
+        ValueError: If both/neither of ``fraction``/``cutoff`` are given,
+            or ``fraction`` is outside (0, 1).
+
+    """
+    if (fraction is None) == (cutoff is None):
+        msg = "split_by_entry needs exactly one of fraction / cutoff"
+        raise ValueError(msg)
+    if fraction is not None and not 0.0 < fraction < 1.0:
+        msg = f"fraction must be in (0, 1); got {fraction}"
+        raise ValueError(msg)
+    ordered = sorted(items, key=key)
+    if cutoff is not None:
+        train = [item for item in ordered if key(item) < cutoff]
+        return train, ordered[len(train) :]
+    # cutoff is None here, so fraction is not None (exactly-one check above).
+    assert fraction is not None  # noqa: S101 — invariant narrowing for the type checker
+    holdout_count = int(len(ordered) * fraction)
+    split_at = len(ordered) - holdout_count
+    return ordered[:split_at], ordered[split_at:]
 
 
 def bucket_observations(

@@ -21,4 +21,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 # Run the MCP server
-CMD ["uv", "run", "python", "-m", "src.server"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "src.server"]

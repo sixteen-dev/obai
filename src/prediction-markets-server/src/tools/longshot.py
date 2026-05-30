@@ -25,10 +25,12 @@ from ..data import (
 )
 from ..engine import (
     DEFAULT_PRICE_BUCKET_SIZE,
+    HoldoutSpec,
     MarketContext,
     Observation,
     Side,
     bucket_observations,
+    build_out_of_sample,
     evaluate_longshot_bias,
     result_to_dict,
 )
@@ -63,6 +65,8 @@ async def analyze_longshot_bias(
     max_markets: int = 100,
     fidelity: int = 60,
     price_bucket_size: float = DEFAULT_PRICE_BUCKET_SIZE,
+    holdout_fraction: float | None = None,
+    holdout_split_at: datetime | None = None,
     max_history_points: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -83,6 +87,10 @@ async def analyze_longshot_bias(
         max_markets: Hard cap on selected universe.
         fidelity: Price-history fidelity in minutes.
         price_bucket_size: Width for the per-bucket detail breakdown.
+        holdout_fraction: Optional out-of-sample split (§11.5); latest
+            ``fraction`` of observations become holdout. Mutually exclusive
+            with ``holdout_split_at``. Unset → no split.
+        holdout_split_at: Optional explicit out-of-sample cutoff timestamp.
         max_history_points: Per-token CLOB cap from settings.
         now: Optional override.
 
@@ -181,6 +189,13 @@ async def analyze_longshot_bias(
         favorite_min_price=favorite_min_price,
         side=side,
     )
+    out_of_sample = _longshot_out_of_sample(
+        observations,
+        longshot_max_price=longshot_max_price,
+        favorite_min_price=favorite_min_price,
+        side=side,
+        spec=HoldoutSpec(fraction=holdout_fraction, cutoff=holdout_split_at),
+    )
     distinct_markets_used = len({o.condition_id for o in observations})
     coverage = build_data_coverage(
         markets_requested=len(candidates),
@@ -201,7 +216,7 @@ async def analyze_longshot_bias(
         coverage=coverage,
         lifetime_volume_filter_used=min_lifetime_volume is not None,
     )
-    return {
+    response: dict[str, Any] = {
         "tool": "analyze_longshot_bias",
         "universe": "gamma_closed_markets",
         "selected_condition_ids": selection.condition_ids,
@@ -230,4 +245,49 @@ async def analyze_longshot_bias(
         "limitations": _limitations(min_lifetime_volume),
         "quality_flags": flags,
         "reliability_label": reliability_label(coverage, flags),
+    }
+    if out_of_sample is not None:
+        response["out_of_sample"] = out_of_sample
+    return response
+
+
+def _longshot_out_of_sample(
+    observations: list[Observation],
+    *,
+    longshot_max_price: float,
+    favorite_min_price: float,
+    side: Side,
+    spec: HoldoutSpec,
+) -> dict[str, Any] | None:
+    """Build the §11.5 out_of_sample block for longshot, or None when off.
+
+    Observations are already ``market_bucket_once`` (one per market), so the
+    split units are independent. Deltas the per-tail ``excess_return``.
+    """
+    if not spec.engaged:
+        return None
+    return build_out_of_sample(
+        observations,
+        key=lambda obs: obs.observation_ts,
+        market_key=lambda obs: obs.condition_id,
+        spec=spec,
+        aggregate=lambda group: result_to_dict(
+            evaluate_longshot_bias(
+                group,
+                longshot_max_price=longshot_max_price,
+                favorite_min_price=favorite_min_price,
+                side=side,
+            )
+        ),
+        delta=_longshot_oos_delta,
+    )
+
+
+def _longshot_oos_delta(holdout: dict[str, Any], train: dict[str, Any]) -> dict[str, Any]:
+    """Signed holdout − train delta on the longshot/favorite tail excess_return."""
+    return {
+        tail: {
+            "excess_return": round(holdout[tail]["excess_return"] - train[tail]["excess_return"], 6)
+        }
+        for tail in ("longshot", "favorite")
     }

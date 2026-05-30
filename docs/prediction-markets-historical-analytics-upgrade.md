@@ -6,6 +6,7 @@
 - [Prediction Markets Agent (Polymarket V1)](/home/sujshe/src/obai/docs/design/POLYMARKET_ANALYSIS_SYSTEM.md)
 - [Prediction Markets Implementation Checklist](/home/sujshe/src/obai/docs/prediction-markets-implementation-checklist.md)
 - [Prediction Markets Multi-Venue Architecture](/home/sujshe/src/obai/docs/prediction-markets-multi-venue-architecture.md)
+- [Prediction Markets Analytics — Validation, Edge, and Cost Delta](/home/sujshe/src/obai/docs/prediction-markets-validation-edge-cost-plan.md) (reserves §10.7, §11.5, §11.6, §12.5)
 
 This file lives in the tracked `docs/` root because `docs/design/` is ignored in this repository.
 

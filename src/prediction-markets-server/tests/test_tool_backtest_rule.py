@@ -161,6 +161,132 @@ async def test_backtest_rule_response_contract_shape(fixtures) -> None:
 
 
 @pytest.mark.asyncio
+async def test_backtest_rule_omits_out_of_sample_by_default(fixtures) -> None:
+    """No holdout params → no out_of_sample block (backward-compatible §11.5)."""
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        now=_now(),
+    )
+    assert "out_of_sample" not in result
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_out_of_sample_block_when_holdout_requested(fixtures) -> None:
+    """holdout_fraction splits the trades and reports both halves + delta (§11.5)."""
+    dl, store = fixtures
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        holdout_fraction=0.5,
+        now=_now(),
+    )
+    assert result["sample_size"] == 2  # 0xA (YES win) + 0xB (YES loss)
+    oos = result["out_of_sample"]
+    assert oos["split_key"] == "entry_timestamp"
+    assert oos["method"] == "fraction"
+    assert isinstance(oos["cutoff_ts"], str)
+    # 2 trades, fraction 0.5 → 1 train (0xA, win) / 1 holdout (0xB, loss).
+    assert oos["train"]["win_rate"] == 1.0
+    assert oos["holdout"]["win_rate"] == 0.0
+    assert oos["delta"]["win_rate"] == -1.0
+    assert "avg_return_on_cost" in oos["delta"]
+    assert oos["low_n"] is True  # one distinct market per half, below the floor
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_zero_cost_preserves_fingerprint_and_omits_cost_block(fixtures) -> None:
+    """entry_cost=exit_cost=0 must not change data_fingerprint or add the cost echo (§6.2/§6.3)."""
+    dl, store = fixtures
+    rule = {
+        "side": "YES",
+        "entry": {"price_min": 0.05, "price_max": 0.15},
+        "exit": {"type": "hold_to_resolution"},
+    }
+    base = await backtest_prediction_rule(
+        rule, downloader=dl, store=store, max_markets=5, max_history_points=1000, now=_now()
+    )
+    zeroed = await backtest_prediction_rule(
+        rule,
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        entry_cost=0.0,
+        exit_cost=0.0,
+        now=_now(),
+    )
+    assert "assumed_execution_cost" not in base
+    assert "assumed_execution_cost" not in zeroed
+    assert zeroed["data_fingerprint"] == base["data_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_nonzero_cost_echoes_block_limitation_and_new_fingerprint(
+    fixtures,
+) -> None:
+    """A nonzero cost lowers returns, echoes the assumption, and shifts the fingerprint."""
+    dl, store = fixtures
+    rule = {
+        "side": "YES",
+        "entry": {"price_min": 0.05, "price_max": 0.15},
+        "exit": {"type": "hold_to_resolution"},
+    }
+    base = await backtest_prediction_rule(
+        rule, downloader=dl, store=store, max_markets=5, max_history_points=1000, now=_now()
+    )
+    costed = await backtest_prediction_rule(
+        rule,
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        entry_cost=0.05,
+        now=_now(),
+    )
+    assert costed["assumed_execution_cost"] == {"entry_cost": 0.05, "exit_cost": 0.0}
+    assert costed["data_fingerprint"] != base["data_fingerprint"]
+    assert any("ASSUMED round-trip cost" in lim for lim in costed["limitations"])
+    # Cost lifts the winner's cost basis, so mean return falls.
+    assert costed["metrics"]["avg_return_on_cost"] < base["metrics"]["avg_return_on_cost"]
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_rejects_out_of_range_cost(fixtures) -> None:
+    """Cost outside [0, 0.5] is an assumption violation → ValueError."""
+    dl, store = fixtures
+    with pytest.raises(ValueError, match="must be in"):
+        await backtest_prediction_rule(
+            {
+                "side": "YES",
+                "entry": {"price_min": 0.05, "price_max": 0.15},
+                "exit": {"type": "hold_to_resolution"},
+            },
+            downloader=dl,
+            store=store,
+            max_markets=5,
+            max_history_points=1000,
+            entry_cost=0.9,
+            now=_now(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_backtest_rule_lifetime_volume_limitation_present(fixtures) -> None:
     """When volume_filter_mode='lifetime_static', the limitation must surface."""
     dl, store = fixtures
@@ -416,6 +542,38 @@ async def test_backtest_rule_surfaces_no_eligible_entry_in_skipped_reasons(fixtu
     skipped = result["data_coverage"]["skipped_reasons"]
     # Both fixture markets reached the simulator and failed entry.
     assert skipped.get("no_eligible_entry") == 2
+
+
+@pytest.mark.asyncio
+async def test_backtest_rule_surfaces_cost_makes_entry_invalid_in_skipped_reasons() -> None:
+    """Surface cost_makes_entry_invalid in skipped_reasons.
+
+    An assumed entry cost that lifts the effective fill above 1.0 makes the
+    trade impossible. Previously the _skipped_counts whitelist dropped this
+    reason, hiding cost-driven dropouts from coverage and keeping
+    high_skip_rate blind to cost-heavy runs.
+    """
+    base_ts = 1_700_000_000
+    # Entry sample sits high in the band; entry_cost pushes the effective fill
+    # over 1.0, so the trade is impossible and must be skipped AND counted.
+    yes_track = [(base_ts, 0.95), (base_ts + 86_400 * 5, 1.0)]
+    dl, store = _stp_fixture(yes_track)
+    result = await backtest_prediction_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.90, "price_max": 0.99},
+            "exit": {"type": "hold_to_resolution"},
+        },
+        downloader=dl,
+        store=store,
+        max_markets=5,
+        max_history_points=1000,
+        entry_cost=0.10,
+        now=_now(),
+    )
+    assert result["sample_size"] == 0
+    skipped = result["data_coverage"]["skipped_reasons"]
+    assert skipped.get("cost_makes_entry_invalid") == 1
 
 
 @pytest.mark.asyncio

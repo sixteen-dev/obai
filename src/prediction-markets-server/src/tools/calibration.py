@@ -31,11 +31,13 @@ from ..data import (
 )
 from ..engine import (
     DEFAULT_PRICE_BUCKET_SIZE,
+    HoldoutSpec,
     MarketContext,
     Observation,
     SamplingMode,
     aggregate_calibration,
     bucket_observations,
+    build_out_of_sample,
     summary_to_dict,
 )
 from ..logging_config import get_logger
@@ -71,6 +73,8 @@ async def analyze_prediction_calibration(
     max_markets: int = 100,
     fidelity: int = 60,
     sampling_mode: SamplingMode = "market_bucket_once",
+    holdout_fraction: float | None = None,
+    holdout_split_at: datetime | None = None,
     max_history_points: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -94,6 +98,11 @@ async def analyze_prediction_calibration(
         max_markets: Hard cap on selected universe size.
         fidelity: Price-history fidelity in minutes.
         sampling_mode: market_bucket_once (default), sample_weighted, or both.
+        holdout_fraction: Optional out-of-sample split (§11.5). Latest
+            ``fraction`` of observations by timestamp become the holdout;
+            mutually exclusive with ``holdout_split_at``. Unset → no split.
+        holdout_split_at: Optional explicit out-of-sample cutoff timestamp;
+            observations before it are train, on/after are holdout.
         max_history_points: Per-token CLOB cap from settings.
         now: Optional override; defaults to current UTC.
 
@@ -126,6 +135,8 @@ async def analyze_prediction_calibration(
             max_markets=max_markets,
             fidelity=fidelity,
             sampling_mode=sampling_mode,
+            holdout_fraction=holdout_fraction,
+            holdout_split_at=holdout_split_at,
             max_history_points=max_history_points,
             now=now,
         )
@@ -212,6 +223,11 @@ async def analyze_prediction_calibration(
         (summary["market_count"] for summary in metrics.values()), default=0
     )
     observations_used = max((summary["sample_size"] for summary in metrics.values()), default=0)
+    out_of_sample = _calibration_out_of_sample(
+        observations_by_mode,
+        sampling_mode,
+        HoldoutSpec(fraction=holdout_fraction, cutoff=holdout_split_at),
+    )
 
     coverage = build_data_coverage(
         markets_requested=len(candidates),
@@ -238,7 +254,7 @@ async def analyze_prediction_calibration(
         selected_condition_ids=selection.condition_ids,
         metrics=metrics,
     )
-    return {
+    response: dict[str, Any] = {
         "tool": "analyze_prediction_calibration",
         "universe": "gamma_closed_markets",
         "universe_composition": universe_composition,
@@ -267,6 +283,9 @@ async def analyze_prediction_calibration(
         "quality_flags": flags,
         "reliability_label": reliability_label(coverage, flags),
     }
+    if out_of_sample is not None:
+        response["out_of_sample"] = out_of_sample
+    return response
 
 
 def _build_universe_composition(
@@ -323,6 +342,8 @@ async def _run_per_category(
     max_markets: int,
     fidelity: int,
     sampling_mode: SamplingMode,
+    holdout_fraction: float | None,
+    holdout_split_at: datetime | None,
     max_history_points: int,
     now: datetime | None,
 ) -> dict[str, Any]:
@@ -351,6 +372,8 @@ async def _run_per_category(
             max_markets=max_markets,
             fidelity=fidelity,
             sampling_mode=sampling_mode,
+            holdout_fraction=holdout_fraction,
+            holdout_split_at=holdout_split_at,
             max_history_points=max_history_points,
             now=now,
         )
@@ -437,23 +460,50 @@ async def _backfill_selected(
     markets_with_history = 0
     price_rows_loaded = 0
 
-    # Phase 1: persist market metadata sequentially (DuckDB-bound, fast).
-    market_jobs: list[tuple[str, Any]] = []  # (condition_id, TokenRow)
-    for condition_id in selection_ids:
-        payload = payloads_by_cid.get(condition_id)
-        if payload is None:
-            continue
-        try:
-            market_result = await downloader.ensure_market_from_payload(payload, now=now)
-        except (ValueError, KeyError):
-            continue
-        cache_actions["markets"]["count"] += 1
-        for token in market_result.tokens:
-            market_jobs.append((condition_id, token))
-
-    # Phase 2: fan out per-token CLOB fetches under a bounded semaphore.
     sem = asyncio.Semaphore(_BACKFILL_CONCURRENCY)
 
+    # Phase 1: persist market metadata + tokens. Fanned out under the
+    # semaphore because ensure_market_from_payload may do a slug-based Gamma
+    # refetch when the bulk payload lacks tokens (public_search nests markets
+    # under events and omits clob_token_ids/outcomes), so this is no longer a
+    # pure DuckDB-bound loop. A None result means the persist raised and the
+    # market is skipped; an empty token list still counts as a persisted market.
+    async def _ensure_one(cid: str, payload: dict[str, Any]) -> tuple[str, list[Any] | None]:
+        async with sem:
+            try:
+                market_result = await downloader.ensure_market_from_payload(payload, now=now)
+            except (ValueError, KeyError):
+                return cid, None
+            return cid, list(market_result.tokens)
+
+    ensure_inputs = [
+        (cid, payloads_by_cid[cid]) for cid in selection_ids if payloads_by_cid.get(cid) is not None
+    ]
+    # return_exceptions=True so all in-flight tasks drain before we inspect
+    # results. Without it, an unexpected exception in one task causes gather
+    # to raise immediately while sibling tasks keep running unobserved.
+    ensure_raw = await asyncio.gather(
+        *(_ensure_one(cid, payload) for cid, payload in ensure_inputs),
+        return_exceptions=True,
+    )
+
+    market_jobs: list[tuple[str, Any]] = []  # (condition_id, TokenRow)
+    first_ensure_exc: BaseException | None = None
+    for item in ensure_raw:
+        if isinstance(item, BaseException):
+            if first_ensure_exc is None:
+                first_ensure_exc = item
+            continue
+        condition_id, tokens = item
+        if tokens is None:
+            continue
+        cache_actions["markets"]["count"] += 1
+        for token in tokens:
+            market_jobs.append((condition_id, token))
+    if first_ensure_exc is not None:
+        raise first_ensure_exc
+
+    # Phase 2: fan out per-token CLOB fetches under the same bounded semaphore.
     async def _fetch_one(cid: str, token: Any) -> tuple[str, str, Any]:
         async with sem:
             result = await downloader.ensure_price_history(
@@ -466,7 +516,21 @@ async def _backfill_selected(
             )
             return cid, token.token_id, result
 
-    price_results = await asyncio.gather(*(_fetch_one(cid, tok) for cid, tok in market_jobs))
+    # Same return_exceptions pattern: drain all CLOB fetches before raising.
+    price_raw: list[tuple[str, str, Any] | BaseException] = await asyncio.gather(
+        *(_fetch_one(cid, tok) for cid, tok in market_jobs),
+        return_exceptions=True,
+    )
+    first_price_exc: BaseException | None = None
+    price_results: list[tuple[str, str, Any]] = []
+    for price_item in price_raw:
+        if isinstance(price_item, BaseException):
+            if first_price_exc is None:
+                first_price_exc = price_item
+        else:
+            price_results.append(price_item)
+    if first_price_exc is not None:
+        raise first_price_exc
 
     # Phase 3: aggregate stats and per-market history bookkeeping serially.
     tokens_seen = len(market_jobs)
@@ -633,6 +697,48 @@ def _aggregate_modes(
     }
 
 
+# -- out-of-sample ------------------------------------------------------------
+
+
+_CALIBRATION_OOS_KEYS: Final[tuple[str, ...]] = (
+    "overall_brier",
+    "overall_log_loss",
+    "expected_calibration_error",
+)
+
+
+def _calibration_out_of_sample(
+    observations_by_mode: dict[str, list[Observation]],
+    sampling_mode: SamplingMode,
+    spec: HoldoutSpec,
+) -> dict[str, Any] | None:
+    """Build the §11.5 out_of_sample block for calibration, or None when off.
+
+    Splits on the ``market_bucket_once`` view when available (independent
+    units per §5.2 reasoning), else the requested mode, and deltas the
+    top-level calibration metrics. ``excess_return`` is per-bucket only, so
+    it is intentionally not deltaed here.
+    """
+    if not spec.engaged:
+        return None
+    mode: SamplingMode = (
+        "market_bucket_once" if "market_bucket_once" in observations_by_mode else sampling_mode
+    )
+    return build_out_of_sample(
+        observations_by_mode.get(mode, []),
+        key=lambda obs: obs.observation_ts,
+        market_key=lambda obs: obs.condition_id,
+        spec=spec,
+        aggregate=lambda group: summary_to_dict(aggregate_calibration(group, sampling_mode=mode)),
+        delta=_calibration_oos_delta,
+    )
+
+
+def _calibration_oos_delta(holdout: dict[str, Any], train: dict[str, Any]) -> dict[str, Any]:
+    """Signed holdout − train delta on the top-level calibration metrics."""
+    return {key: round(holdout[key] - train[key], 6) for key in _CALIBRATION_OOS_KEYS}
+
+
 # -- helpers ------------------------------------------------------------------
 
 
@@ -643,6 +749,7 @@ _SIMULATOR_SKIP_REASONS: Final[frozenset[str]] = frozenset(
         "ttr_max_exceeded",
         "no_exit_price_for_max_hold",
         "missing_price_history",
+        "cost_makes_entry_invalid",
     }
 )
 

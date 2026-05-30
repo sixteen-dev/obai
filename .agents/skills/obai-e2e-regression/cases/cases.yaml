@@ -1,27 +1,21 @@
-# OBaI E2E Regression — advisor/quant case set v2
-# DRAFT — replaces v1, which is preserved at cases.yaml.bak.
+# OBaI E2E Regression — prediction-market focused case set v6
+# DRAFT — replaces v5 (which is preserved at cases.yaml.bak4).
+# v4 is at cases.yaml.bak3. v2 is at cases.yaml.bak2. v1 is at cases.yaml.bak.
 #
-# Modeled on the workflow a real quant researcher or financial advisor follows
-# before placing a trade:
-#   1. Discovery       — what's interesting today?
-#   2. Universe        — define a candidate set with constraints
-#   3. Thesis          — research the name(s)
-#   4. Risk            — portfolio context, concentration, drawdown
-#   5. Strategy        — backtest the rule, validate with walk-forward
-#   6. Execution       — entry levels, liquidity, hedges
-#   7. Coordination    — multi-step queries that need several specialists in order
-#   8. Prediction mkts — event-driven trades
-#   9. Guardrail/bnd   — refusal, boundary, error handling
+# Purpose: a tight regression set for prediction-market routing and historical
+# analytics. One group:
 #
-# OBaI skill coverage (every hub skill is exercised at least once):
-#   - obai-grounding-and-cache       : D1, D3              (live numeric/freshness)
-#   - obai-stock-synthesis           : T2-T4, K1-K4, C1    (multi-specialist synthesis)
-#   - obai-research-routing          : T1                  (deep dive)
-#                                        banned on: B1, S1, S2
-#   - obai-prediction-market-routing : P1-P12, G2
-#   - obai-strategy-routing          : S1-S5
+#   P  — Prediction markets. Live market routing plus historical calibration,
+#        longshot bias, rule backtests, Monte Carlo risk, Kelly sizing,
+#        out-of-sample (train/holdout) validation, live-market edge vs
+#        resolved base rates, and assumed-execution-cost backtests.
 #
-# Field reference (preserved from v1):
+# History: v4 (cases.yaml.bak3) was a strategy_analysis + knowledge_base_lookup
+# set (groups B/BK/K). knowledge_base_lookup was reverted out of the tree, so
+# those groups were retired in v5 — this set is prediction-market only now.
+# Restore B/BK/K from bak3 only if the knowledge-base server is reintroduced.
+#
+# Field reference:
 #   id, feature              — used in report
 #   query                    — verbatim user query
 #   expected_tools           — specialist tool spans that MUST appear
@@ -29,279 +23,12 @@
 #   expected_skills          — load_skill spans that MUST appear
 #   expected_skills_absent   — load_skill spans that MUST NOT appear
 #   allowed_extras           — additional specialists tolerated without flagging
-#   expect_rejection         — guardrail must reject (CLI exit 1)
-#   expect_options_shape     — options math sanity (e.g. iron_condor, protective_put)
 #   expect_async_job         — strategy returns a job stub; runner drives a follow-up turn
-#   disabled                 — true skips the case (with disabled_reason)
 #   smoke                    — included in smoke-only runs
+#   disabled                 — true skips the case (with disabled_reason)
 
 test_cases:
-  # ── 1. Discovery: what's the market doing today? ──
-  - id: D1
-    feature: sector_rotation
-    query: "Which S&P 500 sectors are leading and lagging over the past month? Show 1M and 3M returns versus SPY and call out any clear rotation."
-    expected_tools: [market_data_analysis]
-    expected_skills: [obai-grounding-and-cache]
-    smoke: true
-    description: Sector relative-performance scan.
-
-  - id: D2
-    feature: macro_calendar
-    query: "What macro events — Fed decisions, CPI, NFP, GDP — are on the U.S. calendar over the next two weeks that could move equities?"
-    expected_tools: [events_news_analysis]
-    expected_skills_absent: [obai-strategy-routing]
-    description: Macro event calendar.
-
-  - id: D3
-    feature: unusual_volume
-    query: "Show me liquid U.S. large-caps trading on at least 2x their 20-day average volume today, with the percent change, sorted by relative volume."
-    expected_tools: [market_data_analysis]
-    expected_skills: [obai-grounding-and-cache]
-    description: Volume-anomaly screen for live action.
-
-  - id: D4
-    feature: earnings_week_watch
-    query: "Which mega-cap names are reporting earnings this coming week? Include the date, time of day, and consensus EPS/revenue estimates."
-    expected_tools: [events_news_analysis]
-    allowed_extras: [fundamentals_analysis]
-    smoke: true
-    description: Upcoming earnings agenda.
-
-  # ── 2. Universe: candidate set construction ──
-  - id: U1
-    feature: quality_screen
-    query: "Screen U.S. large-caps for high-quality compounders: ROE above 15%, debt-to-equity below 0.5, gross margin above 40%, and 5-year revenue CAGR above 8%."
-    expected_tools: [screener_lookup]
-    allowed_extras: [fundamentals_analysis]
-    description: Multi-factor quality screen.
-
-  - id: U2
-    feature: momentum_screen
-    query: "Find liquid mid-caps within 5% of their 52-week high that have outperformed SPY by at least 10% over the past 6 months."
-    expected_tools: [screener_lookup]
-    allowed_extras: [market_data_analysis]
-    description: Momentum + relative-strength screen.
-
-  - id: U3
-    feature: dividend_growth
-    query: "Screen for dividend growers: yield above 2.5%, payout ratio below 65%, and at least 10 consecutive years of dividend increases."
-    expected_tools: [screener_lookup]
-    allowed_extras: [fundamentals_analysis]
-    description: Dividend-aristocrat-style screen.
-
-  # ── 3. Thesis: single-name and cross-sectional research ──
-  - id: T1
-    feature: investment_case
-    query: "Build the investment case for Microsoft. Cover the moat, top 2-3 growth drivers, the strongest bear arguments, and where current valuation sits versus its own history."
-    expected_tools: [research_analysis]
-    expected_skills: [obai-research-routing]
-    allowed_extras: [screener_lookup, fundamentals_analysis, events_news_analysis, market_data_analysis]
-    smoke: true
-    description: Advisor-style investment thesis with full evidence stack.
-
-  - id: T2
-    feature: peer_comparison
-    query: "Compare AMD, NVDA, and INTC on revenue growth, gross margin, forward P/E, and 1-year stock performance. Which one screens cheapest on a quality-adjusted basis?"
-    expected_tools: [fundamentals_analysis, market_data_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [research_analysis, screener_lookup]
-    description: Cross-sectional fundamental + price comparison.
-
-  - id: T3
-    feature: earnings_setup
-    query: "TSLA reports next week. Walk me through the setup — recent estimate revisions, the last 4 quarters' beat/miss pattern, current price relative to its 50-day and 200-day SMA, and any pre-announcement news."
-    expected_tools: [events_news_analysis, fundamentals_analysis, market_data_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [research_analysis]
-    description: Pre-earnings situational read across three domains.
-
-  - id: T4
-    feature: catalyst_impact
-    query: "Palantir just announced a multi-year DoD contract worth roughly $400M. How material is this versus current run-rate revenue, and does it shift the bull case?"
-    expected_tools: [events_news_analysis, fundamentals_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [research_analysis, market_data_analysis]
-    description: News-driven thesis update.
-
-  # ── 4. Risk: portfolio context before placing the trade ──
-  - id: K1
-    feature: pre_trade_concentration
-    query: "I currently hold 15% AAPL, 30% QQQ, 25% VTI, 30% cash. I'm thinking about adding another 5% AAPL. What does my real AAPL exposure look like before and after the trade?"
-    expected_tools: [portfolio_analysis]
-    expected_skills: [obai-stock-synthesis]
-    smoke: true
-    description: Pre-trade concentration through ETF look-through.
-
-  - id: K2
-    feature: sharpe_drawdown_vs_benchmark
-    query: "Score my portfolio (50% VOO, 20% QQQ, 20% TLT, 10% GLD) on trailing 1-year and 3-year Sharpe and max drawdown. Compare to a 60/40 SPY/AGG benchmark."
-    expected_tools: [portfolio_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [market_data_analysis]
-    description: Risk metrics versus benchmark.
-
-  - id: K3
-    feature: correlation_diversification
-    query: "I hold MSFT, GOOGL, META, and AMZN as separate positions. How correlated are they actually over the past 2 years, and how much real diversification am I getting?"
-    expected_tools: [portfolio_analysis]
-    expected_skills: [obai-stock-synthesis]
-    allowed_extras: [market_data_analysis]
-    description: Correlation matrix to detect false diversification.
-
-  - id: K4
-    feature: scenario_stress
-    query: "Stress test my 60% SPY / 30% TLT / 10% GLD portfolio against (a) a 30% equity drawdown like 2008 and (b) a 100bp rate spike. What's the expected portfolio impact in each?"
-    expected_tools: [portfolio_analysis]
-    expected_skills: [obai-stock-synthesis]
-    description: Scenario stress test.
-
-  # ── 5. Strategy: backtest, validation, capital constraints ──
-  - id: S1
-    feature: factor_momentum
-    query: "Backtest a long-only cross-sectional momentum strategy on the S&P 500: top decile by 12-month-minus-1-month return, monthly rebalance, equal weight, from 2010 through 2024."
-    expected_tools: [strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    expected_skills_absent: [obai-research-routing]
-    description: Cross-sectional factor strategy.
-
-  - id: S2
-    feature: trend_with_regime
-    query: "Backtest an SPY trend strategy: long when SPY closes above its 200-day SMA AND VIX is below 20, otherwise flat. From 2010 to today."
-    expected_tools: [strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    expected_skills_absent: [obai-research-routing]
-    description: Trend with macro regime gate.
-
-  - id: S3
-    feature: intraday_mean_reversion
-    query: "Backtest a 5-minute mean-reversion on QQQ — enter long when RSI(14) drops below 25 between 9:45 and 11:00 ET, exit on RSI crossing back above 50, flat by close, 1.5% stop. Last 18 months."
-    expected_tools: [strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    smoke: true
-    description: Intraday session-bounded mean-reversion with strict thresholds.
-
-  - id: S4
-    feature: walk_forward
-    query: "I run a 5/20 EMA crossover on SPY. Walk-forward test it with 2-year train, 6-month test, rolling, from 2015 onward. Tell me if it's robust or overfit."
-    expected_tools: [strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    expect_async_job: true
-    smoke: true
-    description: Walk-forward robustness validation (async; runner drives the follow-up turn).
-
-  - id: S5
-    feature: portfolio_capital_pool
-    query: "Backtest an RSI(14) below 30 mean-reversion across XLK, XLF, XLE, XLV, XLY using a $200,000 shared capital pool, max 2 concurrent positions, daily bars, 2018 through 2024."
-    expected_tools: [strategy_analysis]
-    expected_skills: [obai-strategy-routing]
-    description: Multi-symbol portfolio mode with shared capital.
-
-  # ── 6. Execution: trade planning ──
-  - id: X1
-    feature: entry_levels
-    query: "I want to start an NVDA position. Identify the key technical levels — recent swing low, 50-day and 200-day SMA, and clear support/resistance from the past 6 months."
-    expected_tools: [market_data_analysis]
-    description: Technical entry-level read.
-
-  - id: X2
-    feature: protective_put
-    query: "I'm long 200 shares of AAPL at an average cost of $185. I want to hedge downside through year-end. What's a sensible protective put — strike, expiry, cost, and effective worst-case?"
-    expected_tools: [options_analysis]
-    expect_options_shape: protective_put
-    disabled: true
-    disabled_reason: "options data API not configured"
-    description: Protective-put sizing for an existing long.
-
-  - id: X3
-    feature: liquidity_check
-    query: "I want to buy $500,000 of PLTR in a single trading day. Given recent average daily volume, is that reasonable, and what slippage / market impact should I expect?"
-    expected_tools: [market_data_analysis]
-    allowed_extras: [screener_lookup]
-    description: Liquidity / market-impact assessment for a notional trade.
-
-  # ── 7. Coordination: multi-step flows that need ordering ──
-  - id: C1
-    feature: explain_the_move
-    query: "TSLA is down 6% today. What drove the move?"
-    expected_tools: [market_data_analysis, events_news_analysis]
-    expected_sequence: [market_data_analysis, events_news_analysis]
-    expected_skills: [obai-stock-synthesis]
-    description: Confirm the move with price/volume, then look for catalysts.
-
-  # ── 8. Prediction markets ──
-  - id: P1
-    feature: pm_market_explainer
-    query: "Find the most liquid Polymarket market on the 2026 U.S. midterm Senate control. Explain how it resolves and what it's pricing right now."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    smoke: true
-    description: Liquid PM market explainer with resolution criteria.
-
-  - id: P2
-    feature: pm_relative_value
-    query: "Compare two Polymarket markets on Fed policy: '50bps cut by year-end' versus 'any cut by year-end'. Are the implied probabilities internally consistent, and which is the better expression of a dovish view?"
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: PM relative-value sanity check.
-
-  # ── 9. Guardrail / boundary / error ──
-  - id: G1
-    feature: off_topic_reject
-    query: "Recommend a good Italian restaurant for dinner tonight."
-    expect_rejection: true
-    smoke: true
-    description: Off-topic rejection.
-
-  - id: G2
-    feature: sports_pm_accept
-    query: "Polymarket has markets on the next NBA Finals winner. What are the current odds and how liquid are they?"
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: Sports accepted via PM route (not a guardrail bypass).
-
-  - id: B1
-    feature: news_only_no_research
-    query: "Any breaking news on AAPL today?"
-    expected_tools: [events_news_analysis]
-    expected_skills_absent: [obai-research-routing]
-    description: Boundary — news query must not pull in research routing.
-
-  - id: ERR1
-    feature: ticker_typo
-    query: "What's the price of GOOGLE?"
-    expected_tools: [market_data_analysis]
-    allowed_extras: [screener_lookup]
-    description: Common-name typo — should disambiguate to GOOGL/GOOG.
-
-  # ── 10. Prediction markets — historical analytics (Phase 3-5 tools) ──
-  #
-  # Live trading flow is covered by P1/P2 above. The cases below exercise the
-  # historical analytics layer: calibration on resolved markets, longshot
-  # bias, structured rule backtests, Monte Carlo risk, and empirical Kelly.
-  # Also includes regression coverage for the four bugs from the May 2026
-  # code review:
-  #   - post-resolution rows leaking into observations
-  #   - 0.90/0.05 bucket float fuzz
-  #   - TTR filter evaluated at wall-clock time on closed markets
-  #   - resolution fingerprint missing from data_fingerprint chain
-  #
-  # Topics are framed around mid-2026 prediction markets (June 2026 FOMC,
-  # 2026 US midterms, 2026 NBA Finals, 2026 World Cup, BTC year-end targets).
-
-  - id: P3
-    feature: pm_calibration_politics
-    query: "Polymarket politics markets that resolved since the 2024 cycle — were the YES prices actually calibrated? Use the historical analytics tool, group by price bucket and time-to-resolution, and tell me the sample size, distinct market count, and reliability label."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    smoke: true
-    description: Historical calibration on resolved politics markets — analyze_prediction_calibration.
-
-  - id: P4
-    feature: pm_longshot_nba
-    query: "Has the longshot bias actually shown up in Polymarket 2026 NBA Finals championship markets? Compare sub-10¢ longshots against 90¢+ favorites. Show realized win rate, implied probability, and per-contract YES return for each tail."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: analyze_longshot_bias on NBA Finals championship markets; response should report tail counts, distinct markets, and excess return.
+  # ── P: Prediction markets — routing + historical analytics ──
 
   - id: P5
     feature: pm_backtest_rule_politics
@@ -340,77 +67,23 @@ test_cases:
     description: estimate_empirical_kelly with full risk constraints — numerical fractions, kelly_method, IID caveat. Conservative fraction must be min(haircut * half_kelly, drawdown_constrained).
 
   - id: P10
-    feature: pm_historical_pipeline_e2e
-    query: "Run the full historical workflow on Polymarket June 2026 FOMC markets that have resolved. First calibrate by price bucket and time-to-resolution. Then longshot bias with thresholds 0.15 and 0.85. Then backtest YES buys in the 5¢-15¢ band hold-to-resolution with $25K min lifetime volume. Then Monte Carlo with $50K bankroll, 10% position size, 25% drawdown cap. Then size with confidence haircut 0.4."
+    feature: pm_backtest_out_of_sample
+    query: "I'm worried that 5¢-15¢ politics longshot Polymarket rule is just overfit to the past. Run the backtest but split the markets in two by date — fit on the older ones, then test on the newer ones I didn't fit on — and tell me whether the edge actually holds up out of sample. Give me the win rate on each half and the difference, and if the test half has barely any markets, tell me it's too small to trust instead of pretending it held."
     expected_tools: [prediction_market_analysis]
     expected_skills: [obai-prediction-market-routing]
-    description: Single-turn end-to-end pipeline across all five Phase 3-5 tools. Tests that the agent chains calibration → longshot → backtest → Monte Carlo → Kelly while preserving monte_carlo_input between tools.
+    description: "backtest_prediction_rule with holdout_fraction/holdout_split_at (§11.5). Response must add the out_of_sample block (train, holdout, signed delta on win_rate/avg_return_on_cost) and flag out_of_sample.low_n when the holdout is thin. Phrased as a retail trader worried about overfitting, not naming the parameter."
 
   - id: P11
-    feature: pm_calibration_boundary_bucket_regression
-    query: "Calibrate Polymarket markets for the heavy-favorite range. Specifically tell me realized win rate for the 0.90-0.95 price bucket. Use 0.05 buckets, sampling_mode 'both', and report both effective_n and raw_observation_count."
+    feature: pm_estimate_market_edge
+    query: "Find me a live Polymarket politics longshot trading somewhere around 25-35¢ and tell me whether it's actually cheap. Compare its price to how markets at that kind of price and time-left have really resolved in the past — I want the historical base rate, the edge in cents versus what it's trading at now, and a confidence interval on that base rate. If there aren't enough comparable resolved markets to say anything, just tell me it's too thin to call instead of guessing a number."
     expected_tools: [prediction_market_analysis]
     expected_skills: [obai-prediction-market-routing]
-    description: "Regression for the 0.90/0.05 bucket float-fuzz bug. Prices like 0.90 must land in 0.90-0.95, not 0.85-0.90. Also exercises sampling_mode='both' so the response carries the effective_n vs raw_observation_count distinction."
+    smoke: true
+    description: "estimate_market_edge (§10.7/§12.5) on a discovered live market — base_rate, signed edge (base_rate - price), Wilson base_rate_ci, calibration_universe. Discovery surfaces a real slug to satisfy grounding; must return edge=null with reason=low_n/no_bucket when the bucket is thin rather than quoting a number."
 
   - id: P12
-    feature: pm_calibration_post_resolution_guard
-    query: "Calibrate Polymarket Fed-decision markets since the start of the rate-cut cycle. Use 0.05 price buckets. If you see any 0_3h-bucket entries that look degenerate (implied probability 0.0 or 1.0), flag them — I don't want terminal prints contaminating the short-horizon evidence."
+    feature: pm_backtest_execution_cost
+    query: "Run that 5¢-15¢ politics longshot Polymarket backtest again, but this time assume I'm not trading for free — bake in about a 1¢ cost getting in and another 1¢ getting out. Does the edge actually survive once I'm paying to trade? Show me the win rate and average return with the cost baked in, and be straight with me that this is an assumed round-trip cost I'm telling you to use, not real fills you measured."
     expected_tools: [prediction_market_analysis]
     expected_skills: [obai-prediction-market-routing]
-    description: "Regression for the post-resolution filter (P1). _load_price_rows now filters timestamp > end_date at the DB layer, so terminal 1.0/0.0 samples cannot become 0_3h observations."
-
-  # ── 11. May 2026 follow-on regressions ──
-  #
-  # Two prediction-market regressions for the calibration fixes shipped in
-  # commit 92e9cd8 (per-bucket low_n tagging + categories list fan-out), plus
-  # one fundamentals-primary case and one multi-day execution plan to widen
-  # specialist coverage beyond the existing suite.
-
-  - id: P13
-    feature: pm_categories_fanout
-    query: "Compare YES-price calibration on resolved Polymarket markets across sports, politics, and crypto. Use the categories parameter so each category comes back with its own sample size, reliability label, and bucket breakdown — don't run one calibration and relabel it across categories."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "Regression for the categories list fan-out. analyze_prediction_calibration must be called once with categories=[sports, politics, crypto] and return a per_category map rather than a single calibration relabeled."
-
-  - id: P14
-    feature: pm_low_n_bucket_discipline
-    query: "Calibrate resolved Polymarket sports markets in the heavy-favorite tail (0.85 and above) by price bucket and time-to-resolution. For any bucket with fewer than 10 samples, flag it explicitly — I do not want a 3-sample bucket quoted to me as a base rate."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "Regression for per-bucket low_n tagging. Response must carry low_n on each bucket and low_n_bucket_count on the summary; ECE excludes flagged buckets. Agent must not present low_n bucket values as base rates."
-
-  # ── 12. backtest_prediction_rule intermediate exits (stop_take_profit) ──
-  #
-  # Coverage for the May 2026 stop-loss / take-profit / max-hold extension to
-  # the structured prediction-market backtester. Each case asserts the
-  # exit_breakdown block is present, per-trade exit_reason / time_to_exit_days
-  # surface in examples, and the three fidelity caveats land in limitations.
-
-  - id: P15
-    feature: pm_backtest_rule_stop_only
-    query: "Backtest the same 5¢-15¢ YES politics longshot on resolved Polymarket markets, but exit at the first sample at-or-below 2¢ instead of holding to resolution. I want the exit breakdown across stop / take_profit / expiry / resolution, the per-trade exit_reason on examples, and the fidelity caveats the tool reports."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "backtest_prediction_rule with exit.type=stop_take_profit and stop_price only. Response must include exit_breakdown (four reasons summing to share=1.0), per-trade exit_reason on examples, and the intra-bucket / sampled-row / market-impact caveats in limitations."
-
-  - id: P16
-    feature: pm_backtest_rule_stop_tp_maxhold
-    query: "Backtest 5¢-15¢ YES politics longshots on resolved Polymarket with a 2¢ stop, 50¢ take-profit, and 90-day max-hold. Tell me the exit breakdown by reason, how many trades got skipped for max-hold data gaps, and the fidelity limitations the tool quotes."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "Combined stop_take_profit triggers. Response must surface counts under stop, take_profit, expiry, and resolution; any no_exit_price_for_max_hold skip count must appear in resolution_breakdown; the agent must NOT silently treat sampled trigger prices as guaranteed fills (must quote the limitations)."
-
-  - id: U4
-    feature: fundamentals_deep_dive
-    query: "Pull Costco's last 5 fiscal years of revenue, gross margin, operating margin, free cash flow, and net debt. Give me the 5-year revenue and FCF CAGR and the trend in operating margin."
-    expected_tools: [fundamentals_analysis]
-    allowed_extras: [market_data_analysis]
-    description: Pure fundamentals deep-dive — fundamentals_analysis as the primary specialist (currently only covered as allowed_extras in T2/T3).
-
-  - id: X4
-    feature: vwap_execution_plan
-    query: "I need to accumulate $2M of CRWD over the next 3 trading days. Given current ADV and intraday volume profile, lay out a VWAP-style execution plan — per-day allocation and the times of day to lean into the order."
-    expected_tools: [market_data_analysis]
-    description: Multi-day execution plan extending the X-series beyond X3's single-day liquidity check.
+    description: "backtest_prediction_rule with entry_cost/exit_cost (§11.6). Nonzero costs must echo assumed_execution_cost and append the assumed-cost limitation; entry filled at entry_price + entry_cost, intermediate exits at exit_price - exit_cost. Must frame it as an assumption, not reconstructed maker/taker fills."

@@ -81,6 +81,19 @@ def test_estimate_sizing_conservative_picks_min() -> None:
     assert sizing.conservative_fraction <= sizing.drawdown_constrained_fraction + 1e-9
 
 
+def test_estimate_sizing_capped_kelly_is_min_half_and_drawdown() -> None:
+    """capped_kelly on SizingResult = min(half_kelly, drawdown_constrained)."""
+    sizing = estimate_sizing(
+        returns=[0.5, -0.3, 0.5, -0.3, 0.5],
+        max_drawdown_limit=0.8,
+        confidence_haircut=0.5,
+        num_paths=200,
+        seed=5,
+    )
+    expected = min(sizing.estimates.half_kelly, sizing.drawdown_constrained_fraction)
+    assert sizing.capped_kelly == pytest.approx(expected, abs=1e-9)
+
+
 def test_estimate_sizing_rejects_invalid_haircut() -> None:
     with pytest.raises(ValueError):
         estimate_sizing(
