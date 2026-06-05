@@ -22,6 +22,7 @@ def setup_env() -> None:  # type: ignore[misc]
         "FUNDAMENTALS_MODEL",
         "EVENTS_NEWS_MODEL",
         "OPTIONS_MODEL",
+        "CRYPTO_MODEL",
         "LOG_LEVEL",
         "ENABLE_GUARDRAILS",
     ]
@@ -55,6 +56,7 @@ class TestAgentConfig:
         assert "localhost:8002" in config.mcp_market_data_url
         assert "localhost:8003" in config.mcp_events_news_url
         assert "localhost:8004" in config.mcp_options_url
+        assert "localhost:8010" in config.mcp_crypto_url
 
     def test_get_agent_model_default(self) -> None:
         """Test get_agent_model falls back to specialist_model."""

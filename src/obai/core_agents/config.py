@@ -157,6 +157,10 @@ class AgentConfig(BaseSettings):
         default="gpt-5.1",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
+    crypto_model: str | None = Field(
+        default="gpt-5.1",
+        description="Override model for crypto agent (uses specialist_model if None)",
+    )
     guardrail_model: str = Field(
         default="gpt-5-mini",
         description=(
@@ -200,6 +204,12 @@ class AgentConfig(BaseSettings):
         le=100,
         description="Max turns for the strategy_analysis tool's inner Runner.run loop",
     )
+    crypto_max_turns: int = Field(
+        default=25,
+        ge=5,
+        le=100,
+        description="Max turns for the crypto_analysis tool's inner Runner.run loop",
+    )
 
     # MCP Server URLs
     mcp_fundamentals_url: str = Field(
@@ -237,6 +247,10 @@ class AgentConfig(BaseSettings):
     mcp_prediction_markets_url: str = Field(
         default="http://localhost:8009/mcp",
         description="Prediction markets MCP server URL",
+    )
+    mcp_crypto_url: str = Field(
+        default="http://localhost:8010/mcp",
+        description="Crypto MCP server URL",
     )
 
     # MCP Client Settings

@@ -24,6 +24,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Agent names with prompt files (excludes CLAUDE.md)
 PROMPT_NAMES = [
     "central_hub_base",
+    "crypto",
     "events_news",
     "fundamentals",
     "guardrail",

@@ -51,7 +51,11 @@ from clients.cli.widgets import (
     WelcomeBanner,
 )
 from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
-from core_agents.central_hub_agent import PredictionPassthroughEvent, get_inner_tool_outputs
+from core_agents.central_hub_agent import (
+    CryptoPassthroughEvent,
+    PredictionPassthroughEvent,
+    get_inner_tool_outputs,
+)
 from core_agents.config import get_config
 from evaluation.scorers.faithfulness import (
     CompletenessScorer,
@@ -617,8 +621,8 @@ class OBaIApp(App[None]):
                 # Log all events to debug panel
                 self._log_stream_event(event)
 
-                # Prediction passthrough: hub relay failed, use specialist output
-                if isinstance(event, PredictionPassthroughEvent):
+                # Terminal passthrough: use specialist output directly
+                if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
                     response.append(event.content)
                     response_text = event.content
                     continue

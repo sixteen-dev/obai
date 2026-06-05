@@ -127,22 +127,22 @@ class TestStrategyConfig:
 
     def test_backtest_url_default(self) -> None:
         """Default backtest URL should be localhost:8007."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert "localhost:8007" in config.mcp_backtest_url
 
     def test_strategy_model_default(self) -> None:
         """Strategy model should default to the dedicated strategy model."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert config.strategy_model == "gpt-5.1"
 
     def test_strategy_max_turns_default(self) -> None:
         """Strategy run loop default must accommodate multi-step design+backtest flows."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         assert config.strategy_max_turns == 25
 
     def test_strategy_model_fallback(self) -> None:
         """Strategy model should fall back to orchestrator_model when None."""
-        config = AgentConfig()  # type: ignore[call-arg]
+        config = AgentConfig()
         model = config.get_strategy_model()
         assert model == config.strategy_model
 
@@ -191,6 +191,14 @@ class TestHubIntegration:
         assert "Strategy pre-flight (mandatory)" in prompt
         assert "load_skill('obai-strategy-routing')" in prompt
         assert "before any call to `strategy_analysis`" in prompt
+
+    def test_sandbox_base_prompt_mandates_crypto_skill_preflight(self) -> None:
+        """Base prompt must require loading obai-crypto-routing before crypto_analysis."""
+        prompt = load_prompt("central_hub_base", USER_PREFERENCES="{}")
+
+        assert "Crypto pre-flight (mandatory)" in prompt
+        assert "load_skill('obai-crypto-routing')" in prompt
+        assert "before any call to `crypto_analysis`" in prompt
 
     def test_strategy_routing_skill_preserves_threshold_semantics(self) -> None:
         """Sandbox routing skill should not rewrite threshold checks as crosses."""

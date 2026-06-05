@@ -11,6 +11,7 @@ Architecture:
     - Options Agent: Options chains and Greeks analysis (Massive)
     - Screener Agent: Stock screening and ticker discovery
     - Research Agent: Deep company research via Exa semantic search
+    - Crypto Agent: Coinbase spot crypto data, backtests, and artifacts
 
 All agent classes and factories are importable from this package but loaded
 lazily to avoid pulling in the entire agent system when only config or a
@@ -40,6 +41,7 @@ __all__ = [
     "ScreenerAgent",
     "PortfolioAgent",
     "StrategyAgent",
+    "CryptoAgent",
     # Central Hub
     "CentralHubAgent",
     # Convenience Functions
@@ -50,6 +52,7 @@ __all__ = [
     "create_research_agent",
     "create_screener_agent",
     "create_central_hub",
+    "create_crypto_agent",
 ]
 
 _LAZY_IMPORTS: dict[str, str] = {
@@ -59,6 +62,8 @@ _LAZY_IMPORTS: dict[str, str] = {
     "BaseAgent": ".base_agent",
     "CentralHubAgent": ".central_hub_agent",
     "create_central_hub": ".central_hub_agent",
+    "CryptoAgent": ".crypto_agent",
+    "create_crypto_agent": ".crypto_agent",
     "EventsNewsAgent": ".events_news_agent",
     "create_events_news_agent": ".events_news_agent",
     "FundamentalsAgent": ".fundamentals_agent",

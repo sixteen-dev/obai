@@ -1,89 +1,245 @@
-# OBaI E2E Regression — prediction-market focused case set v6
-# DRAFT — replaces v5 (which is preserved at cases.yaml.bak4).
-# v4 is at cases.yaml.bak3. v2 is at cases.yaml.bak2. v1 is at cases.yaml.bak.
+# OBaI E2E Regression - Coinbase crypto case set v8
 #
-# Purpose: a tight regression set for prediction-market routing and historical
-# analytics. One group:
+# Purpose: crypto-focused regression set for OBaI's Coinbase-only v1 crypto
+# specialist. Queries are written as trader/operator prompts, but they stay
+# inside the v1 contract: Coinbase Advanced Trade public spot market data,
+# OHLCV/source-quality checks, spot backtests, stored job follow-ups, trade
+# logs, and internal Coinbase paper-ledger artifacts. No case requires live
+# order placement, derivatives, DeFi, on-chain data, or another provider.
 #
-#   P  — Prediction markets. Live market routing plus historical calibration,
-#        longshot bias, rule backtests, Monte Carlo risk, Kelly sizing,
-#        out-of-sample (train/holdout) validation, live-market edge vs
-#        resolved base rates, and assumed-execution-cost backtests.
+# Current product check: BTC-USD, ETH-USD, SOL-USD, LINK-USD, XRP-USD, and
+# AVAX-USD were verified as Coinbase online SPOT products on 2026-06-03.
 #
-# History: v4 (cases.yaml.bak3) was a strategy_analysis + knowledge_base_lookup
-# set (groups B/BK/K). knowledge_base_lookup was reverted out of the tree, so
-# those groups were retired in v5 — this set is prediction-market only now.
-# Restore B/BK/K from bak3 only if the knowledge-base server is reintroduced.
+# Capability coverage:
+#   CR   - product resolution and metadata
+#   CQ   - latest quote / best bid-ask
+#   CT   - latest trade
+#   COB  - order book / depth / liquidity
+#   COH  - OHLCV / historical coverage / source quality
+#   CBT  - Coinbase spot strategy backtests
+#   CJS  - stored backtest job status follow-ups
+#   CTL  - stored backtest trade-log follow-ups
+#   CEX  - strategy artifact export
+#   CVA  - strategy artifact validation
+#   CBK  - unsupported-scope and fail-closed boundary checks
 #
 # Field reference:
-#   id, feature              — used in report
-#   query                    — verbatim user query
-#   expected_tools           — specialist tool spans that MUST appear
-#   expected_sequence        — partial order constraint when set
-#   expected_skills          — load_skill spans that MUST appear
-#   expected_skills_absent   — load_skill spans that MUST NOT appear
-#   allowed_extras           — additional specialists tolerated without flagging
-#   expect_async_job         — strategy returns a job stub; runner drives a follow-up turn
-#   smoke                    — included in smoke-only runs
-#   disabled                 — true skips the case (with disabled_reason)
+#   id, feature              - used in report
+#   query                    - verbatim user query
+#   expected_tools           - specialist tool spans that MUST appear
+#   expected_sequence        - partial order constraint when set
+#   expected_skills          - load_skill spans that MUST appear
+#   expected_skills_absent   - load_skill spans that MUST NOT appear
+#   allowed_extras           - additional specialists tolerated without flagging
+#   expect_rejection         - response should block/refuse unsupported scope
+#   expect_async_job         - strategy returns a job stub; runner drives follow-up
+#   smoke                    - included in smoke-only runs
+#   disabled                 - true skips the case (with disabled_reason)
 
 test_cases:
-  # ── P: Prediction markets — routing + historical analytics ──
+  # -- CR: Coinbase spot product resolution and metadata --
 
-  - id: P5
-    feature: pm_backtest_rule_politics
-    query: "Backtest this Polymarket rule for the 2026 cycle: buy YES on politics markets when YES was priced between 5¢ and 15¢, hold to resolution, only markets with at least $25K lifetime volume. I want sample size, win rate, return distribution, monte_carlo_input, and the lifetime-volume contamination warning. Use the structured rule backtester, not the legacy setup test."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
+  - id: CR1
+    feature: crypto_resolve_btc_metadata
+    query: "I'm checking whether Bitcoin is tradable in the crypto v1 venue. Resolve BTC on Coinbase spot and give me the exact product_id, base and quote currencies, status/trading-disabled flags, min order sizes, and price/base increments. Do not use any non-Coinbase source."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
     smoke: true
-    description: backtest_prediction_rule on a structured YES longshot rule with min_lifetime_volume + volume_filter_mode=lifetime_static.
+    description: "Exercises crypto_resolve_symbol for an ambiguous asset query. Expected internal behavior: resolve BTC to BTC-USD/BTC-USDC candidates, prioritize Coinbase spot, and surface product metadata/source_quality."
 
-  - id: P6
-    feature: pm_backtest_ttr_regression
-    query: "Same 5¢-15¢ politics longshot Polymarket backtest, but only count entries where there were at least 30 days remaining to resolution at the entry timestamp. Tell me the surviving sample size and the per-entry skip reasons."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "Regression for TTR-at-entry-time fix. Before the fix, min_days_to_resolution>0 would silently skip every closed market because end_date < now. The simulator now checks (end_date - entry_ts) and surfaces ttr_min_unmet skip counts."
+  - id: CR2
+    feature: crypto_resolve_altcoin_metadata
+    query: "Before I compare high-beta alts, resolve Solana and Chainlink on Coinbase spot. I need the Coinbase product IDs, whether each market is online, quote currency, min order size, increment precision, and any alias to USDC. Keep it venue-specific."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second product-resolution case. Expected internal behavior: crypto_resolve_symbol for SOL and LINK or equivalent Coinbase product lookup, no CoinGecko/aggregator substitution."
 
-  - id: P7
-    feature: pm_monte_carlo_chained
-    query: "Take the monte_carlo_input from that 5¢-15¢ politics longshot backtest and stress it. $25,000 bankroll, 5% position fraction, 30% max drawdown limit, 2,000 paths, seed 12345. Give me median terminal wealth, p5/p95 wealth, p95 and p99 max drawdown, drawdown-breach probability, and ruin probability. State the IID caveat."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: monte_carlo_prediction_risk consuming the upstream backtest's compact monte_carlo_input. Response must include the §13.2 IID limitation language and sampling_method=iid_bootstrap.
+  # -- CQ: latest quote / best bid-ask --
 
-  - id: P8
-    feature: pm_kelly_qualitative_refusal
-    query: "How much should I size a Polymarket longshot trade given the kind of edge that 5-15¢ politics markets show historically? I'm not telling you my bankroll or my drawdown limit yet — what's the qualitative read?"
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "Sizing without bankroll/drawdown — estimate_empirical_kelly must return qualitative guidance only per §13.3. Agent must NOT invent numerical fractions."
-
-  - id: P9
-    feature: pm_kelly_numerical
-    query: "Now size that 5¢-15¢ politics longshot Polymarket strategy properly. Bankroll $25,000, max drawdown 20%, confidence haircut 0.5. Give me naive Kelly, half Kelly, capped Kelly, the drawdown-constrained fraction, and the conservative recommendation. Mention the IID caveat."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: estimate_empirical_kelly with full risk constraints — numerical fractions, kelly_method, IID caveat. Conservative fraction must be min(haircut * half_kelly, drawdown_constrained).
-
-  - id: P10
-    feature: pm_backtest_out_of_sample
-    query: "I'm worried that 5¢-15¢ politics longshot Polymarket rule is just overfit to the past. Run the backtest but split the markets in two by date — fit on the older ones, then test on the newer ones I didn't fit on — and tell me whether the edge actually holds up out of sample. Give me the win rate on each half and the difference, and if the test half has barely any markets, tell me it's too small to trust instead of pretending it held."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "backtest_prediction_rule with holdout_fraction/holdout_split_at (§11.5). Response must add the out_of_sample block (train, holdout, signed delta on win_rate/avg_return_on_cost) and flag out_of_sample.low_n when the holdout is thin. Phrased as a retail trader worried about overfitting, not naming the parameter."
-
-  - id: P11
-    feature: pm_estimate_market_edge
-    query: "Find me a live Polymarket politics longshot trading somewhere around 25-35¢ and tell me whether it's actually cheap. Compare its price to how markets at that kind of price and time-left have really resolved in the past — I want the historical base rate, the edge in cents versus what it's trading at now, and a confidence interval on that base rate. If there aren't enough comparable resolved markets to say anything, just tell me it's too thin to call instead of guessing a number."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
+  - id: CQ1
+    feature: crypto_latest_quote_btc
+    query: "Give me the current Coinbase BTC-USD best bid and best ask, compute the spread in dollars and bps, and tell me whether that spread is acceptable for a small internal paper-ledger entry. Include freshness/source-quality caveats."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
     smoke: true
-    description: "estimate_market_edge (§10.7/§12.5) on a discovered live market — base_rate, signed edge (base_rate - price), Wilson base_rate_ci, calibration_universe. Discovery surfaces a real slug to satisfy grounding; must return edge=null with reason=low_n/no_bucket when the bucket is thin rather than quoting a number."
+    description: "Exercises crypto_get_latest_quote on BTC-USD. Response should use Coinbase ticker best_bid/best_ask, compute spread, and avoid live-order claims."
 
-  - id: P12
-    feature: pm_backtest_execution_cost
-    query: "Run that 5¢-15¢ politics longshot Polymarket backtest again, but this time assume I'm not trading for free — bake in about a 1¢ cost getting in and another 1¢ getting out. Does the edge actually survive once I'm paying to trade? Show me the win rate and average return with the cost baked in, and be straight with me that this is an assumed round-trip cost I'm telling you to use, not real fills you measured."
-    expected_tools: [prediction_market_analysis]
-    expected_skills: [obai-prediction-market-routing]
-    description: "backtest_prediction_rule with entry_cost/exit_cost (§11.6). Nonzero costs must echo assumed_execution_cost and append the assumed-cost limitation; entry filled at entry_price + entry_cost, intermediate exits at exit_price - exit_cost. Must frame it as an assumption, not reconstructed maker/taker fills."
+  - id: CQ2
+    feature: crypto_latest_quote_eth_sol_compare
+    query: "For ETH-USD and SOL-USD on Coinbase, pull the latest best bid/ask for each and compare which one has the cleaner current spread for a tactical paper entry. Use spread bps, not just dollar spread, and include timestamp freshness."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second quote case. Expected internal behavior: crypto_get_latest_quote for ETH-USD and SOL-USD; compare spread_bps with source_quality."
+
+  # -- CT: latest trade --
+
+  - id: CT1
+    feature: crypto_latest_trade_btc
+    query: "What was the latest Coinbase BTC-USD trade print? Show price, size, side if Coinbase provides it, trade time, and how stale it is. I only need the latest trade, not a historical chart."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_get_latest_trade on BTC-USD. Must use the public ticker trades payload and report source-quality freshness."
+
+  - id: CT2
+    feature: crypto_latest_trade_xrp
+    query: "Pull the latest Coinbase XRP-USD trade and tell me whether the print is fresh enough to use as part of a pre-trade snapshot. Include price, size, timestamp, and any limitations."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second latest-trade case. Expected internal behavior: crypto_get_latest_trade on XRP-USD, not generic remembered XRP market commentary."
+
+  # -- COB: order book / liquidity / market depth --
+
+  - id: COB1
+    feature: crypto_orderbook_btc_depth
+    query: "Before I risk $10,000 notional in the internal paper ledger, inspect the Coinbase BTC-USD order book at depth 50. Summarize top-of-book, approximate depth near the touch, spread, and whether a marketable paper fill would be liquidity-sensitive."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_get_orderbook for BTC-USD with depth=50, plus trader-style liquidity interpretation. Must not imply real queue-position reconstruction."
+
+  - id: COB2
+    feature: crypto_orderbook_alt_depth
+    query: "Check Coinbase SOL-USD and AVAX-USD order books before a paper trade. Compare top-of-book spread and visible depth, then tell me which market looks less fragile right now. Keep the answer tied to Coinbase spot snapshots."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second order-book case. Expected internal behavior: crypto_get_orderbook for SOL-USD and AVAX-USD; compare snapshot liquidity and caveat no historical queue reconstruction."
+
+  # -- COH: OHLCV / historical data / source quality --
+
+  - id: COH1
+    feature: crypto_ohlcv_btc_intraday_context
+    query: "Pull Coinbase BTC-USD hourly candles for the last 14 complete days and give me a trader's read: trend, realized volatility feel, largest drawdown window, and any missing candle percentage or gap ranges. This is research only, not an artifact request."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    smoke: true
+    description: "Exercises crypto_get_ohlcv with recent hourly candles. Response must report source_quality coverage and not export artifacts from research-only analysis."
+
+  - id: COH2
+    feature: crypto_ohlcv_eth_sol_daily_compare
+    query: "Compare Coinbase ETH-USD and SOL-USD daily candles from 2025-06-01 through 2026-06-01. Which one had the cleaner trend and lower drawdown profile? Include data coverage, missing_pct, and gap ranges if any."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second OHLCV case. Expected internal behavior: crypto_get_ohlcv for ETH-USD and SOL-USD with daily granularity and source-quality summaries."
+
+  # -- CBT: spot strategy backtests --
+
+  - id: CBT1
+    feature: crypto_backtest_btc_trend
+    query: "Run a Coinbase execution-grade backtest for BTC-USD using a simple daily spot trend-following rule from 2025-06-01 through 2026-06-01: fast_window 20, slow_window 60, initial capital $100,000, taker fee 60 bps, spread 5 bps, max position 25%, max bar participation 5%. I need the verdict, key metrics, source_quality, and whether an internal paper-ledger artifact would be eligible."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    smoke: true
+    description: "Exercises crypto_backtest_run_strategy for spot_trend_follow. Must use data_source_policy=execution_venue_required, Coinbase OHLCV, and fail closed if source_quality blocks execution grade."
+
+  - id: CBT2
+    feature: crypto_backtest_sol_mean_reversion
+    query: "Backtest SOL-USD on Coinbase daily candles from 2025-06-01 through 2026-06-01 using a spot mean-reversion rule: window 20, z_entry -1.25, z_exit 0.0. Use $50,000 initial capital, 60 bps taker fee, 8 bps spread, max position 20%, and max bar participation 5%. Give me metrics, trade count, drawdown, source_quality, and a paper_trade / needs_more_research / reject verdict."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second backtest case. Expected internal behavior: crypto_backtest_run_strategy for spot_mean_reversion with execution-grade Coinbase data and compact trader verdict."
+
+  # -- CJS: stored job status follow-ups --
+
+  - id: CJS1
+    feature: crypto_job_status_btc
+    chain_from: CBT1
+    query: "Check the job status for the BTC-USD backtest you just ran. Return the exact job_id, status, product_id, timeframe, date range, quality_status, and whether blocking_quality_warning is false."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_backtest_get_job_status using the prior BTC job_id from session context. The hub must preserve the crypto job identifier exactly."
+
+  - id: CJS2
+    feature: crypto_job_status_sol
+    chain_from: CBT2
+    query: "Check the stored job status for the SOL-USD mean-reversion backtest. I want job_id, status, source_quality summary, quality_status, and the execution_config that was used."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second job-status follow-up. Expected internal behavior: crypto_backtest_get_job_status from the prior SOL job, not a memory-only answer."
+
+  # -- CTL: stored trade-log follow-ups --
+
+  - id: CTL1
+    feature: crypto_trade_log_btc
+    chain_from: CBT1
+    query: "Open the BTC-USD backtest trade log. Show the first 20 trades with timestamps, side, quantity, price, fee, realized_pnl, bar_volume, participation_pct, and cost_bps. Tell me whether entry fees are included in realized round-trip P&L."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_backtest_get_trade_log for the prior BTC backtest. Must verify the participation-aware fill fields and entry-fee-inclusive realized P&L."
+
+  - id: CTL2
+    feature: crypto_trade_log_sol
+    chain_from: CBT2
+    query: "For the SOL-USD mean-reversion backtest, pull the trade log with limit 25 and offset 0. I care about whether fills were capped by max_bar_participation_pct and whether any partial exits happened. Summarize from the stored trade log."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second trade-log follow-up. Expected internal behavior: crypto_backtest_get_trade_log with limit/offset and trader interpretation from stored fills."
+
+  # -- CEX: artifact export for internal Coinbase paper ledger --
+
+  - id: CEX1
+    feature: crypto_export_artifact_btc
+    chain_from: CBT1
+    query: "If the BTC-USD trend backtest is execution grade, export an internal Coinbase paper-ledger strategy artifact. Use risk_config max_position_pct 25, max_bar_participation_pct 5, stop_loss_pct 12, and execution_profile venue coinbase, product_id BTC-USD, order_type marketable_paper, fee_bps 60, spread_bps 5. If source_quality blocks it, fail closed and do not export."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_strategy_export_artifact from prior BTC job. Must block export when quality_status is not execution_grade or blocking_quality_warning is true."
+
+  - id: CEX2
+    feature: crypto_export_artifact_sol
+    chain_from: CBT2
+    query: "Export the SOL-USD mean-reversion strategy as an internal Coinbase paper-ledger artifact only if eligible. Use risk_config max_position_pct 20, max_bar_participation_pct 5, stop_loss_pct 15, and execution_profile venue coinbase, product_id SOL-USD, order_type marketable_paper, fee_bps 60, spread_bps 8. Include artifact fingerprint and validation result."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second artifact-export case. Expected internal behavior: crypto_strategy_export_artifact and immediate validation result for an eligible SOL execution-grade backtest."
+
+  # -- CVA: artifact validation follow-ups --
+
+  - id: CVA1
+    feature: crypto_validate_artifact_btc
+    chain_from: CEX1
+    query: "Validate the BTC-USD paper-ledger artifact you just exported. Confirm whether the fingerprint still matches the load-bearing fields, whether venue/product/risk/execution_profile are pinned, and whether the artifact is safe to hand to the internal paper ledger."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Exercises crypto_strategy_validate_artifact using prior exported BTC artifact from session context. Must not recompute an artifact from memory."
+
+  - id: CVA2
+    feature: crypto_validate_artifact_sol
+    chain_from: CEX2
+    query: "Validate the SOL-USD artifact from the last turn and tell me if any load-bearing field drift would invalidate the fingerprint. I want the validation status, fingerprint, and the exact reason if it is not valid."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    description: "Second artifact-validation case. Expected internal behavior: crypto_strategy_validate_artifact on the prior SOL artifact and explicit invalid reason when applicable."
+
+  # -- CBK: boundary, unsupported scope, and fail-closed behavior --
+
+  - id: CBK1
+    feature: crypto_block_derivatives_request
+    query: "I want a Binance BTC perpetual trade: pull funding, open interest, liquidation clusters, and backtest a 10x long/short strategy. If any part is outside OBaI crypto v1, say exactly what is unsupported and only offer the Coinbase spot alternative."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    expect_rejection: true
+    smoke: true
+    description: "Unsupported derivatives/provider boundary. Pre-flight or crypto specialist must state v1 is Coinbase spot only and must not fabricate funding/OI/liquidation data."
+
+  - id: CBK2
+    feature: crypto_block_defi_onchain_request
+    query: "Analyze ETH staking yields, DeFi TVL, stablecoin risk, and whale-wallet flows, then turn it into a Coinbase paper-trading artifact. I need you to be strict: if the data is not Coinbase spot execution data, block the artifact path."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    expect_rejection: true
+    description: "Unsupported DeFi/on-chain boundary. Must reject DeFi/stablecoin/wallet scope for v1 and block artifact export from research-only or unavailable data."
+
+  - id: CBK3
+    feature: crypto_fail_closed_future_candles
+    query: "Try an execution-grade BTC-USD daily trend backtest through tomorrow's UTC close, then export a paper-ledger artifact only if the Coinbase candles are complete. If tomorrow's candle is unavailable or coverage is incomplete, fail closed, show missing_pct/gap_ranges, set blocking_quality_warning, and do not export."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    expect_rejection: true
+    description: "Fail-closed data-quality case. Expected internal behavior: backtest path with execution_venue_required should refuse artifact export when requested future/incomplete candles create blocking source_quality."
+
+  - id: CBK4
+    feature: crypto_no_live_order_placement
+    query: "If the current Coinbase SOL-USD quote and order book look good, place a live buy order for $5,000 notional. If you cannot place live crypto orders, say that plainly and give me only a paper-simulation-ready pre-trade checklist from Coinbase spot data."
+    expected_tools: [crypto_analysis]
+    expected_skills: [obai-crypto-routing]
+    expect_rejection: true
+    description: "Live-order boundary plus supported fallback. Must refuse live order placement while optionally using quote/orderbook data for a paper-simulation checklist."
