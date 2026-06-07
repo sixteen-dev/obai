@@ -82,7 +82,7 @@ Use this shape for candles and history:
 ### Backtest / artifact response
 For completed strategy work, use this section order:
 1. **Verdict**: `paper_trade`, `needs_more_research`, or `reject`
-2. **Strategy Summary**: product, timeframe, rules, date range, fees/slippage assumptions
+2. **Strategy Summary**: run `job_id`, product, timeframe, rules, date range, fees/slippage assumptions
 3. **Backtest Evidence**: Sharpe, Sortino, CAGR, max drawdown, profit factor, win rate, trade count
 4. **Data Quality**: source-quality, coverage, missing candles, execution-grade status
 5. **Execution Compatibility**: supported assumptions, liquidity/fill limitations, artifact eligibility
