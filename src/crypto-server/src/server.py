@@ -323,30 +323,6 @@ async def crypto_backtest_get_job_status(job_id: str) -> dict[str, Any]:
 
 @mcp.tool(
     annotations={
-        "title": "List Recent Crypto Backtest Jobs",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-async def crypto_backtest_list_jobs(limit: int = 20) -> dict[str, Any]:
-    """List recent crypto backtest jobs, newest first.
-
-    Use this to recover a prior run's job_id for a follow-up when the user
-    references a backtest by product, recency, or strategy rather than id.
-
-    Args:
-        limit: Maximum number of jobs to return.
-
-    """
-    store: CryptoStore = _state.require("store")
-    jobs = await store.list_jobs(limit=limit)
-    return {"jobs": jobs, "count": len(jobs)}
-
-
-@mcp.tool(
-    annotations={
         "title": "Get Crypto Backtest Trade Log",
         "readOnlyHint": True,
         "destructiveHint": False,

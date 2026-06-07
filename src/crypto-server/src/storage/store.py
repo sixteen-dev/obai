@@ -159,50 +159,6 @@ class CryptoStore:
             "created_at": row[4],
         }
 
-    async def list_jobs(self, limit: int) -> list[dict[str, Any]]:
-        """Return recent jobs as compact summaries, newest first.
-
-        Args:
-            limit: Maximum number of jobs to return. Must be positive.
-
-        Returns:
-            One summary per job with identifying fields (job_id, status,
-            product_id, timeframe, date range, strategy template) so a
-            follow-up can match a prior run without the raw job_id.
-
-        """
-        if limit <= 0:
-            msg = "limit must be positive"
-            raise ValueError(msg)
-        rows = self._conn.execute(
-            """
-            SELECT job_id, status, result_json, created_at
-            FROM jobs
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            [limit],
-        ).fetchall()
-        return [self._job_summary(row) for row in rows]
-
-    @staticmethod
-    def _job_summary(row: tuple[Any, ...]) -> dict[str, Any]:
-        """Build a compact, identifying summary from one jobs-table row."""
-        result = json.loads(row[2]) if row[2] else {}
-        data_config = result.get("data_config", {}) if isinstance(result, dict) else {}
-        return {
-            "job_id": row[0],
-            "status": row[1],
-            "created_at": row[3],
-            "product_id": data_config.get("product_id"),
-            "timeframe": data_config.get("timeframe"),
-            "start": data_config.get("start"),
-            "end": data_config.get("end"),
-            "strategy_template": result.get("strategy_template")
-            if isinstance(result, dict)
-            else None,
-        }
-
     async def store_trade_log(self, job_id: str, trades: list[dict[str, Any]]) -> None:
         """Store trade log sidecar."""
         async with self._write_lock:
