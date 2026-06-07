@@ -54,7 +54,7 @@ For a strategy or artifact request:
 5. Export an artifact only when the completed job is execution grade and the user asks for an artifact or paper handoff.
 
 ### Follow-Ups
-For job status, trade logs, or artifact validation, call the corresponding crypto tool. Do not reconstruct job state from memory.
+For job status, trade logs, or artifact validation, call the corresponding crypto tool. Do not reconstruct job state from memory. When the follow-up references a prior run but no `job_id` is in context, list recent jobs and match on product, recency, and strategy; confirm the matched `job_id` in the response. If the match is ambiguous, ask which run rather than guessing.
 
 ## Output Guidelines
 
