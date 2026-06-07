@@ -471,8 +471,11 @@ _PREDICTION_MARKET_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Executable-handoff intent. "paper" is intentionally excluded: it is a context
+# word ("before a paper trade", "paper ledger") that does not by itself signal an
+# export/handoff. Genuine handoffs always carry export/artifact/handoff/validate.
 _CRYPTO_BACKTEST_INTENT = re.compile(
-    r"\b(backtest|backtesting|strategy|artifact|paper(?:[- ]trading)?|handoff|trade log"
+    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log"
     r"|job[_ ]?id|export|validate)\b",
     re.IGNORECASE,
 )
@@ -535,7 +538,7 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
         return None
 
     if _CRYPTO_RESEARCH_ONLY_INTENT.search(input_text) and not re.search(
-        r"\b(backtest|strategy|artifact|paper|handoff|export|validate)\b",
+        r"\b(backtest|strategy|artifact|handoff|export|validate)\b",
         input_text,
         re.IGNORECASE,
     ):
@@ -562,7 +565,7 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
         )
 
     artifact_intent = re.search(
-        r"\b(artifact|paper(?:[- ]trading)?|handoff|export|validate|trade log)\b",
+        r"\b(artifact|handoff|export|validate|trade log)\b",
         input_text,
         re.IGNORECASE,
     )

@@ -78,6 +78,35 @@ class TestCryptoAgentInitialization:
         """Research and snapshot requests should not be over-gated."""
         assert _get_crypto_preflight_error("Compare BTC and ETH spot liquidity") is None
 
+    def test_crypto_preflight_ignores_paper_context_word(self) -> None:
+        """`paper` as a context word must not trigger the artifact/job-id gate."""
+        order_book = (
+            "Check Coinbase spot SOL-USD and AVAX-USD order books before a paper trade. "
+            "Compare top-of-book spread and visible depth, then tell which market looks "
+            "less fragile right now."
+        )
+        paper_ledger_context = (
+            "Before I risk $10,000 notional in the internal paper ledger, inspect the "
+            "Coinbase BTC-USD order book at depth 50."
+        )
+        live_order = (
+            "If the current Coinbase SOL-USD quote and order book look good, place a live "
+            "buy order for $5,000 notional with a paper-simulation checklist."
+        )
+
+        assert _get_crypto_preflight_error(order_book) is None
+        assert _get_crypto_preflight_error(paper_ledger_context) is None
+        assert _get_crypto_preflight_error(live_order) is None
+
+    def test_crypto_preflight_still_blocks_real_export_without_job(self) -> None:
+        """A genuine export verb without a job id is still gated to the specialist contract."""
+        error = _get_crypto_preflight_error(
+            "Export the SOL-USD strategy as an internal Coinbase paper-ledger artifact"
+        )
+
+        assert error is not None
+        assert "crypto_bt_" in error
+
     def test_crypto_passthrough_contextvar_resets(self) -> None:
         """Crypto passthrough is run-scoped state, not an instance attribute."""
         _set_crypto_passthrough("result")
