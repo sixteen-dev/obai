@@ -14,3 +14,4 @@
 
 ## Known Pitfalls
 - Update this section every time the repo teaches you the same lesson twice.
+- Hub pre-flight gates may check hard scope facts only (unsupported venue/instrument, missing symbol). Never regex-classify fuzzy intent (export eligibility, follow-ups) in the hub — context words ("paper", "artifact") false-positive; that classification belongs to the skill + specialist.
