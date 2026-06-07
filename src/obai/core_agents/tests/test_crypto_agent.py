@@ -67,12 +67,9 @@ class TestCryptoAgentInitialization:
         assert error is not None
         assert "Coinbase Advanced Trade spot only" in error
 
-    def test_crypto_preflight_requires_job_for_artifact_export(self) -> None:
-        """Artifact exports require a completed crypto job ID."""
-        error = _get_crypto_preflight_error("Export the BTC-USD Coinbase paper artifact")
-
-        assert error is not None
-        assert "crypto_bt_" in error
+    def test_crypto_preflight_routes_artifact_export_to_specialist(self) -> None:
+        """Export eligibility is the specialist's contract; the hub must not pre-classify it."""
+        assert _get_crypto_preflight_error("Export the BTC-USD Coinbase paper artifact") is None
 
     def test_crypto_preflight_allows_research_snapshot(self) -> None:
         """Research and snapshot requests should not be over-gated."""
@@ -98,14 +95,16 @@ class TestCryptoAgentInitialization:
         assert _get_crypto_preflight_error(paper_ledger_context) is None
         assert _get_crypto_preflight_error(live_order) is None
 
-    def test_crypto_preflight_still_blocks_real_export_without_job(self) -> None:
-        """A genuine export verb without a job id is still gated to the specialist contract."""
-        error = _get_crypto_preflight_error(
-            "Export the SOL-USD strategy as an internal Coinbase paper-ledger artifact"
+    def test_crypto_preflight_allows_backtest_asking_artifact_eligibility(self) -> None:
+        """A new backtest that asks whether an artifact would be eligible must run."""
+        query = (
+            "Run a Coinbase execution-grade backtest for BTC-USD using a daily spot "
+            "trend-following rule: fast_window 20, slow_window 60. I need the verdict, "
+            "key metrics, source_quality, and whether an internal paper-ledger artifact "
+            "would be eligible."
         )
 
-        assert error is not None
-        assert "crypto_bt_" in error
+        assert _get_crypto_preflight_error(query) is None
 
     def test_crypto_passthrough_contextvar_resets(self) -> None:
         """Crypto passthrough is run-scoped state, not an instance attribute."""

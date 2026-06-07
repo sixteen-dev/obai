@@ -501,7 +501,6 @@ _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN = re.compile(
     r"|liquidation|liquidations|basis|defi|yield|stablecoin|on[- ]?chain)\b",
     re.IGNORECASE,
 )
-_CRYPTO_JOB_PATTERN = re.compile(r"\bcrypto_bt_[a-f0-9]{6,}\b", re.IGNORECASE)
 
 
 def _is_strategy_query(query: str) -> bool:
@@ -532,7 +531,13 @@ def _build_strategy_routing_hint() -> str:
 
 
 def _get_crypto_preflight_error(input_text: str) -> str | None:
-    """Fail closed for unresolved executable crypto backtest/artifact handoffs."""
+    """Fail closed on hard scope violations in executable crypto handoffs.
+
+    Blocks only deterministic facts: unsupported venue, unsupported
+    instrument, wrong data-source policy, or a backtest with no product
+    symbol at all. Fuzzy intent (export eligibility, job follow-ups) is
+    the crypto specialist's contract, not the hub's.
+    """
     is_executable_intent = bool(_CRYPTO_BACKTEST_INTENT.search(input_text))
     if not is_executable_intent:
         return None
@@ -564,17 +569,10 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
             "`data_source_policy=execution_venue_required` using Coinbase market data."
         )
 
-    artifact_intent = re.search(
-        r"\b(artifact|handoff|export|validate|trade log)\b",
-        input_text,
-        re.IGNORECASE,
-    )
-    if artifact_intent and not _CRYPTO_JOB_PATTERN.search(input_text):
-        return (
-            "MISSING_CRYPTO_INPUTS: artifact, paper-handoff, validation, and trade-log "
-            "requests require a prior `crypto_bt_...` job_id. Retry with the job_id "
-            "from the completed Coinbase execution-grade backtest."
-        )
+    # Export/validation/trade-log eligibility is the specialist's contract: it
+    # resolves job state through crypto tools and cannot fabricate a job_id.
+    # Pre-classifying that intent here false-positives on requests that merely
+    # mention artifacts (e.g. "would an artifact be eligible" on a new backtest).
 
     if not (_CRYPTO_PRODUCT_PATTERN.search(input_text) or _CRYPTO_ASSET_PATTERN.search(input_text)):
         return (
