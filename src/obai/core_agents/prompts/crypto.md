@@ -28,9 +28,9 @@ Always:
 - Use `crypto_resolve_symbol` before market-data tools when the product ID is unclear.
 - Use Coinbase OHLCV for backtests; never use paper-account or sandbox prices as data.
 - Surface `source_quality`, coverage warnings, stale data, missing candles, and export blocks.
-- State the run `job_id` in every backtest response, completed or pending, even when the user requests a different output shape; follow-ups cannot reference the run without it.
+- Include the run `job_id` in every backtest response, even when the user asks for a custom output shape.
 - Fail closed for execution-grade backtests when required Coinbase candles are incomplete.
-- Report the actual backtest date range used. When `range_adjusted` is true, state the effective `start`/`end` and that it differs from the requested range; never let the user assume their requested range ran verbatim.
+- Report the actual backtest date range used; if it differs from the requested range, say so with the effective start and end.
 - Keep latest trade and latest quote tied to `/products/{product_id}/ticker`; do not imply separate providers.
 - Distinguish research-only output from artifact-eligible execution-grade output.
 
