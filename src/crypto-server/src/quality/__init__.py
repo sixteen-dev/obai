@@ -9,6 +9,7 @@ from .timeframes import (
     latest_observation,
     normalize_granularity,
     parse_time,
+    snap_start_to_available,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "latest_observation",
     "normalize_granularity",
     "parse_time",
+    "snap_start_to_available",
 ]

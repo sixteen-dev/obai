@@ -28,6 +28,7 @@ from .quality import (
     freshness_seconds,
     normalize_granularity,
     parse_time,
+    snap_start_to_available,
 )
 from .response_utils import format_api_error
 from .storage import CryptoStore, canonical_json
@@ -277,6 +278,8 @@ async def crypto_backtest_run_strategy(
         )
         source_quality = quality.to_dict()
         source_quality_fingerprint = _fingerprint(source_quality)
+        effective_start = quality.coverage.start if quality.coverage else start.isoformat()
+        effective_end = quality.coverage.end if quality.coverage else end.isoformat()
         result = {
             **backtest.result,
             "data_config": {
@@ -284,8 +287,12 @@ async def crypto_backtest_run_strategy(
                 "venue": "coinbase",
                 "timeframe": timeframe,
                 "granularity": granularity,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
+                "requested_start": start.isoformat(),
+                "requested_end": end.isoformat(),
+                "start": effective_start,
+                "end": effective_end,
+                "range_adjusted": effective_start != start.isoformat()
+                or effective_end != end.isoformat(),
                 "data_source_policy": _data_config.get(
                     "data_source_policy", "execution_venue_required"
                 ),
@@ -451,6 +458,16 @@ async def _load_candles(
                 product_id=product,
                 timeframe=timeframe,
             )
+
+    if execution_grade_required:
+        start, coverage = snap_start_to_available(
+            cached,
+            coverage,
+            requested_start=start,
+            requested_end=end,
+            granularity=granularity,
+        )
+        cached = [c for c in cached if int(start.timestamp()) <= c.start_ts < int(end.timestamp())]
 
     quality = build_candle_source_quality(
         product_id=product,

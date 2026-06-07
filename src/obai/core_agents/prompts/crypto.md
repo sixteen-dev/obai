@@ -30,6 +30,7 @@ Always:
 - Surface `source_quality`, coverage warnings, stale data, missing candles, and export blocks.
 - State the run `job_id` in every backtest response, completed or pending, even when the user requests a different output shape; follow-ups cannot reference the run without it.
 - Fail closed for execution-grade backtests when required Coinbase candles are incomplete.
+- Report the actual backtest date range used. When `range_adjusted` is true, state the effective `start`/`end` and that it differs from the requested range; never let the user assume their requested range ran verbatim.
 - Keep latest trade and latest quote tied to `/products/{product_id}/ticker`; do not imply separate providers.
 - Distinguish research-only output from artifact-eligible execution-grade output.
 

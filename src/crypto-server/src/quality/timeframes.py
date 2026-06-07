@@ -133,6 +133,53 @@ def compute_coverage(
     )
 
 
+def snap_start_to_available(
+    candles: list[Candle],
+    coverage: Coverage,
+    *,
+    requested_start: datetime,
+    requested_end: datetime,
+    granularity: str,
+) -> tuple[datetime, Coverage]:
+    """Advance a leading data gap to the first available candle.
+
+    Coinbase sometimes omits the candle at the requested start. When the only
+    gap is at the leading edge, snap the effective start to the first available
+    candle so a complete interior window counts as execution grade. Interior or
+    trailing gaps remain and still block.
+
+    Args:
+        candles: Candles returned for the requested window.
+        coverage: Coverage computed over the requested window.
+        requested_start: The start the caller asked for.
+        requested_end: The end the caller asked for.
+        granularity: Coinbase granularity string.
+
+    Returns:
+        The effective start and its coverage. Unchanged when there is no
+        leading-only gap to snap.
+
+    """
+    start_ts = int(requested_start.timestamp())
+    end_ts = int(requested_end.timestamp())
+    in_range = [c.start_ts for c in candles if start_ts <= c.start_ts < end_ts]
+    if coverage.missing_intervals == 0 or not in_range:
+        return requested_start, coverage
+    first_ts = min(in_range)
+    if first_ts <= start_ts:
+        return requested_start, coverage
+    snapped_start = datetime.fromtimestamp(first_ts, UTC)
+    snapped = compute_coverage(
+        candles,
+        requested_start=snapped_start,
+        requested_end=requested_end,
+        granularity=granularity,
+    )
+    if snapped.missing_intervals > 0:
+        return requested_start, coverage
+    return snapped_start, snapped
+
+
 def _gap_dict(start_ts: int, end_ts: int) -> dict[str, str]:
     return {
         "start": datetime.fromtimestamp(start_ts, UTC).isoformat(),
