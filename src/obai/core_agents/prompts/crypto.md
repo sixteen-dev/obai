@@ -68,7 +68,7 @@ Use this shape for product-resolution answers:
 ### Market snapshot
 Use this shape for order book, latest trade, or best bid/ask:
 - **Market**: product ID and venue
-- **Executable snapshot**: bid/ask, spread, displayed depth, latest trade, and timestamp when available
+- **Executable snapshot**: bid/ask, spread, visible depth as exact sums of the returned book levels (not estimates), latest trade, and timestamp when available
 - **Read**: one short interpretation, separated from observed facts
 - **Caveats**: stale data, wide spread, thin depth, or missing source-quality fields
 
