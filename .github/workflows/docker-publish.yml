@@ -31,11 +31,11 @@ jobs:
 
           if [ -z "$PREV_TAG" ]; then
             # First tag — build everything
-            echo 'servers=["fundamentals-server","market-data-server","events-news-server","options-server","screening-server","portfolio-server","backtest-server","research-server","prediction-markets-server"]' >> "$GITHUB_OUTPUT"
+            echo 'servers=["fundamentals-server","market-data-server","events-news-server","options-server","screening-server","portfolio-server","backtest-server","research-server","prediction-markets-server","crypto-server"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          ALL_SERVERS=("fundamentals-server" "market-data-server" "events-news-server" "options-server" "screening-server" "portfolio-server" "backtest-server" "research-server" "prediction-markets-server")
+          ALL_SERVERS=("fundamentals-server" "market-data-server" "events-news-server" "options-server" "screening-server" "portfolio-server" "backtest-server" "research-server" "prediction-markets-server" "crypto-server")
           CHANGED=()
 
           for server in "${ALL_SERVERS[@]}"; do
