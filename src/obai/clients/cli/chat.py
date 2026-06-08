@@ -323,7 +323,11 @@ async def _run_query(  # noqa: PLR0912
     )
     from openai.types.responses import ResponseTextDeltaEvent
 
-    from core_agents.central_hub_agent import PredictionPassthroughEvent, get_inner_tool_outputs
+    from core_agents.central_hub_agent import (
+        CryptoPassthroughEvent,
+        PredictionPassthroughEvent,
+        get_inner_tool_outputs,
+    )
     from core_agents.config import get_config
     from core_agents.guardrails import get_rejection_message
     from evaluation.scorers.faithfulness import (
@@ -343,8 +347,8 @@ async def _run_query(  # noqa: PLR0912
 
     try:
         async for event in hub.run(query, session):
-            # Prediction passthrough: hub relay failed, use specialist output
-            if isinstance(event, PredictionPassthroughEvent):
+            # Terminal passthrough: use specialist output directly
+            if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
                 response_text = event.content
                 continue
 
@@ -641,7 +645,7 @@ def status(
         help="Output structured JSON",
     ),
 ) -> None:
-    """Check connectivity to all 9 MCP data servers."""
+    """Check connectivity to all MCP data servers."""
 
     async def _main() -> int:
         import httpx
@@ -659,6 +663,7 @@ def status(
             ("Backtest", config.mcp_backtest_url),
             ("Research", config.mcp_research_url),
             ("Prediction Markets", config.mcp_prediction_markets_url),
+            ("Crypto", config.mcp_crypto_url),
         ]
 
         results: list[dict[str, Any]] = []

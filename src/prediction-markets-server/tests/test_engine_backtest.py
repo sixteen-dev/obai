@@ -72,6 +72,86 @@ def _loser_market(condition: str) -> BacktestMarket:
     )
 
 
+def _stp_rule(*, take_profit_price: float):
+    return validate_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.05, "price_max": 0.15},
+            "exit": {"type": "stop_take_profit", "take_profit_price": take_profit_price},
+        }
+    )
+
+
+# -- §11.6 assumed execution cost --------------------------------------------
+
+
+def test_simulate_rule_entry_cost_reduces_return_on_cost() -> None:
+    """entry_cost lifts the cost basis: a 0.10 winner at +0.05 cost returns on 0.15."""
+    [trade] = simulate_rule(_rule(0.05, 0.15), [_winner_market("0xW")], entry_cost=0.05)
+    # Win on effective entry 0.15: (1 - 0.15)/0.15 ≈ 5.667, vs 9.0 at zero cost.
+    assert trade.return_on_cost == pytest.approx((1 - 0.15) / 0.15)
+    assert trade.entry_price == pytest.approx(0.10)  # displayed price stays the market price
+
+
+def test_simulate_rule_zero_cost_matches_baseline() -> None:
+    """entry_cost=exit_cost=0 reproduces the no-cost trade exactly."""
+    rule = _rule(0.05, 0.15)
+    baseline = simulate_rule(rule, [_winner_market("0xW")])[0]
+    zeroed = simulate_rule(rule, [_winner_market("0xW")], entry_cost=0.0, exit_cost=0.0)[0]
+    assert zeroed.return_on_cost == baseline.return_on_cost == pytest.approx(9.0)
+    assert zeroed.pnl_per_contract == baseline.pnl_per_contract
+
+
+@pytest.mark.parametrize(("entry_cost", "exit_cost"), [(0.6, 0.0), (0.0, 0.6), (-0.1, 0.0)])
+def test_simulate_rule_rejects_out_of_range_costs(entry_cost: float, exit_cost: float) -> None:
+    with pytest.raises(ValueError, match="must be in"):
+        simulate_rule(_rule(), [_winner_market("0xW")], entry_cost=entry_cost, exit_cost=exit_cost)
+
+
+def test_simulate_rule_cost_makes_entry_invalid_is_skipped() -> None:
+    """A cost that pushes the effective entry above 1.0 skips the trade, loudly."""
+    rule = validate_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.90, "price_max": 0.99},
+            "exit": {"type": "hold_to_resolution"},
+        }
+    )
+    rows = [
+        _row("0xH-Y", "0xH", _now() - timedelta(days=5), 0.95),
+        _row("0xH-Y", "0xH", _now() - timedelta(days=1), 1.0),
+    ]
+    market = BacktestMarket(
+        condition_id="0xH",
+        event_slug="e",
+        end_date=_now(),
+        winning_outcome_label="Yes",
+        yes_token_rows=rows,
+    )
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(rule, [market], out_skipped=skipped, entry_cost=0.10)
+    assert trades == []
+    assert skipped.get("cost_makes_entry_invalid") == 1
+
+
+def test_simulate_rule_exit_cost_not_applied_at_resolution() -> None:
+    """Resolution settles to 0/1 with no exit transaction → exit_cost is ignored there."""
+    [trade] = simulate_rule(_rule(0.05, 0.15), [_winner_market("0xW")], exit_cost=0.10)
+    assert trade.exit_reason == "resolution"
+    assert trade.return_on_cost == pytest.approx(9.0)  # unchanged by exit_cost
+
+
+def test_simulate_rule_exit_cost_reduces_intermediate_exit() -> None:
+    """exit_cost haircuts the booked intermediate (take-profit) exit price."""
+    winner = _winner_market("0xW")  # crosses 0.30 ≥ TP 0.25 at the -5d sample
+    no_cost = simulate_rule(_stp_rule(take_profit_price=0.25), [winner])[0]
+    with_cost = simulate_rule(_stp_rule(take_profit_price=0.25), [winner], exit_cost=0.05)[0]
+    assert no_cost.exit_reason == "take_profit"
+    assert no_cost.return_on_cost == pytest.approx((0.30 - 0.10) / 0.10)  # 2.0
+    # Effective exit 0.25 → (0.25 - 0.10)/0.10 = 1.5.
+    assert with_cost.return_on_cost == pytest.approx((0.25 - 0.10) / 0.10)
+
+
 def test_simulate_rule_yields_one_trade_per_market_with_eligible_entry() -> None:
     """One winner + one loser at p=0.10 entry → two trades."""
     rule = _rule(0.05, 0.15)

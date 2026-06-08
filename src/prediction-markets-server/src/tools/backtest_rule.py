@@ -8,7 +8,7 @@ tools — preventing accidental drift on which markets each tool considers.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Final
 
 import pydantic
 
@@ -22,8 +22,11 @@ from ..data import (
 )
 from ..engine import (
     BacktestMarket,
+    HoldoutSpec,
     StopTakeProfitExit,
+    Trade,
     build_monte_carlo_input,
+    build_out_of_sample,
     simulate_rule,
     summarize_trades,
     trade_to_dict,
@@ -55,6 +58,10 @@ async def backtest_prediction_rule(
     max_markets: int = 100,
     fidelity: int = 60,
     seed: int = _DEFAULT_SEED,
+    holdout_fraction: float | None = None,
+    holdout_split_at: datetime | None = None,
+    entry_cost: float = 0.0,
+    exit_cost: float = 0.0,
     max_history_points: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -68,6 +75,16 @@ async def backtest_prediction_rule(
         max_markets: Hard cap on selected universe.
         fidelity: Sampled-price resolution in minutes.
         seed: Seed echoed into monte_carlo_input for downstream reproducibility.
+        holdout_fraction: Optional out-of-sample split (§11.5); the latest
+            ``fraction`` of trades by entry timestamp become the holdout.
+            Mutually exclusive with ``holdout_split_at``. Unset → no split.
+        holdout_split_at: Optional explicit out-of-sample cutoff timestamp;
+            trades entered before it are train, on/after are holdout.
+        entry_cost: Assumed cost added to the entry price paid, in
+            probability points (§11.6). Default 0.0 leaves the response and
+            fingerprint identical to a cost-free run.
+        exit_cost: Assumed cost subtracted from intermediate exit prices;
+            never applied to the resolution leg.
         max_history_points: Per-token CLOB cap from settings.
         now: Optional override; defaults to current UTC.
 
@@ -158,14 +175,39 @@ async def backtest_prediction_rule(
         resolution_fingerprints.append(fingerprint_resolution(market_row))
 
     simulate_skipped: dict[str, int] = {}
-    trades = simulate_rule(rule, backtest_markets, out_skipped=simulate_skipped)
+    trades = simulate_rule(
+        rule,
+        backtest_markets,
+        out_skipped=simulate_skipped,
+        entry_cost=entry_cost,
+        exit_cost=exit_cost,
+    )
     for reason, count in simulate_skipped.items():
         resolution_summary[reason] = resolution_summary.get(reason, 0) + count
     summary = summarize_trades(trades)
+    out_of_sample = _backtest_out_of_sample(
+        trades, HoldoutSpec(fraction=holdout_fraction, cutoff=holdout_split_at)
+    )
     limitations = _limitations(rule)
+    if entry_cost or exit_cost:
+        limitations.append(
+            f"Returns are net of an ASSUMED round-trip cost (entry +{entry_cost}, "
+            f"exit -{exit_cost} in probability points); not derived from reconstructed "
+            "fills or live spread. Resolution payoffs carry entry cost only."
+        )
+    # Costs enter the fingerprint ONLY when nonzero, so a cost-free call
+    # reproduces today's params dict (and fingerprint) byte-for-byte (§6.2).
+    fingerprint_params: dict[str, Any] = {
+        "rule": rule.model_dump(),
+        "max_markets": max_markets,
+        "fidelity": fidelity,
+    }
+    if entry_cost or exit_cost:
+        fingerprint_params["entry_cost"] = entry_cost
+        fingerprint_params["exit_cost"] = exit_cost
     fingerprint = fingerprint_analysis(
         tool_name="backtest_prediction_rule",
-        params={"rule": rule.model_dump(), "max_markets": max_markets, "fidelity": fidelity},
+        params=fingerprint_params,
         universe_fingerprint=selection.fingerprint,
         resolution_fingerprints=resolution_fingerprints,
     )
@@ -196,7 +238,7 @@ async def backtest_prediction_rule(
         coverage=coverage,
         lifetime_volume_filter_used=rule.filters.volume_filter_mode == "lifetime_static",
     )
-    return {
+    response: dict[str, Any] = {
         "tool": "backtest_prediction_rule",
         "universe": "gamma_closed_markets",
         "selected_condition_ids": selection.condition_ids,
@@ -220,6 +262,37 @@ async def backtest_prediction_rule(
         "reliability_label": reliability_label(coverage, flags),
         "data_fingerprint": fingerprint,
     }
+    if entry_cost or exit_cost:
+        response["assumed_execution_cost"] = {"entry_cost": entry_cost, "exit_cost": exit_cost}
+    if out_of_sample is not None:
+        response["out_of_sample"] = out_of_sample
+    return response
+
+
+# -- out-of-sample ------------------------------------------------------------
+
+
+_BACKTEST_OOS_KEYS: Final[tuple[str, ...]] = ("win_rate", "avg_return_on_cost")
+
+
+def _backtest_out_of_sample(trades: list[Trade], spec: HoldoutSpec) -> dict[str, Any] | None:
+    """Build the §11.5 out_of_sample block for the rule backtest, or None when off.
+
+    V1 is one trade per market, so trades are already independent units.
+    Deltas ``win_rate`` and ``avg_return_on_cost``.
+    """
+    if not spec.engaged:
+        return None
+    return build_out_of_sample(
+        trades,
+        key=lambda trade: trade.entry_ts,
+        market_key=lambda trade: trade.condition_id,
+        spec=spec,
+        aggregate=summarize_trades,
+        delta=lambda holdout, train: {
+            key: round(holdout[key] - train[key], 6) for key in _BACKTEST_OOS_KEYS
+        },
+    )
 
 
 # -- helpers ------------------------------------------------------------------

@@ -146,6 +146,62 @@ async def test_ensure_price_history_writes_and_dedupes(store: PredictionStore) -
 
 
 @pytest.mark.asyncio
+async def test_ensure_market_from_payload_slug_fallback_fetches_tokens(
+    store: PredictionStore,
+) -> None:
+    """Empty token arrays (a public_search mini-payload) trigger the slug-based refetch."""
+    mini_payload: dict[str, Any] = {
+        "condition_id": "0xabc",
+        "slug": "x",
+        "question": "Will X happen?",
+        "clob_token_ids": [],
+        "outcomes": [],
+        "outcome_prices": [],
+        "closed": True,
+        "uma_resolution_status": "resolved",
+        "winning_outcome": None,
+        "volume": 50000.0,
+        "end_date": "2026-04-01T00:00:00Z",
+    }
+    gamma = _FakeGamma(_resolved_payload())  # get_market returns full payload with tokens
+    dl = HistoryDownloader(gamma=gamma, clob=_FakeClob([]), data_client=_FakeData(), store=store)
+
+    result = await dl.ensure_market_from_payload(mini_payload, now=_now())
+
+    assert len(result.tokens) == 2
+    assert gamma.calls == ["x"]  # slug-based fallback triggered once
+    n = store.manager.conn.execute("SELECT count(*) FROM pm_tokens").fetchone()
+    assert n is not None and n[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_ensure_market_from_payload_no_slug_skips_fallback(
+    store: PredictionStore,
+) -> None:
+    """When mini-payload has no slug and no tokens, no Gamma fallback is attempted."""
+    mini_payload: dict[str, Any] = {
+        "condition_id": "0xdef",
+        "slug": "",
+        "question": "Will Y happen?",
+        "clob_token_ids": [],
+        "outcomes": [],
+        "outcome_prices": [],
+        "closed": True,
+        "uma_resolution_status": "resolved",
+        "winning_outcome": None,
+        "volume": 10000.0,
+        "end_date": "2026-04-01T00:00:00Z",
+    }
+    gamma = _FakeGamma(_resolved_payload())
+    dl = HistoryDownloader(gamma=gamma, clob=_FakeClob([]), data_client=_FakeData(), store=store)
+
+    result = await dl.ensure_market_from_payload(mini_payload, now=_now())
+
+    assert len(result.tokens) == 0
+    assert gamma.calls == []  # no fallback attempted
+
+
+@pytest.mark.asyncio
 async def test_ensure_price_history_raises_when_over_cap(store: PredictionStore) -> None:
     """When upstream returns more points than max_history_points, raise ValueError."""
     history = [{"timestamp": 1700000000 + i, "price": 0.5} for i in range(50)]

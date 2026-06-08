@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from ..clients.clob_client import ClobClient
 from ..clients.data_client import DataClient
 from ..clients.gamma_client import GammaClient
@@ -130,10 +132,28 @@ class HistoryDownloader:
         broken: Gamma's /markets endpoint silently ignores condition_ids
         filter params and returns either an empty list or an unrelated
         market.
+
+        When the payload lacks token data (a common gap in public_search
+        mini-payloads where markets are embedded inside events), falls back
+        to a slug-based re-fetch that returns the full payload with tokens so
+        price-history backfill can proceed.
         """
         condition_id = (payload.get("condition_id") or "").strip()
         existed = bool(condition_id) and self.store.get_market(condition_id) is not None
-        return await self._persist_market_payload(payload, existed=existed, now=now)
+        result = await self._persist_market_payload(payload, existed=existed, now=now)
+        if not result.tokens:
+            slug = (payload.get("slug") or "").strip()
+            if slug:
+                try:
+                    result = await self.ensure_market(slug, now=now)
+                except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as exc:
+                    logger.warning(
+                        "token_slug_fallback_failed",
+                        condition_id=condition_id,
+                        slug=slug,
+                        error=str(exc),
+                    )
+        return result
 
     async def _persist_market_payload(
         self,

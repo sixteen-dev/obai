@@ -44,6 +44,7 @@ class SizingResult:
 
     estimates: KellyEstimates
     drawdown_constrained_fraction: float
+    capped_kelly: float  # min(half_kelly, drawdown_constrained_fraction)
     conservative_fraction: float
     confidence_haircut: float
     max_drawdown_limit: float
@@ -178,6 +179,7 @@ def estimate_sizing(
     return SizingResult(
         estimates=estimates,
         drawdown_constrained_fraction=drawdown_fraction,
+        capped_kelly=round(min(estimates.half_kelly, drawdown_fraction), 6),
         conservative_fraction=conservative,
         confidence_haircut=confidence_haircut,
         max_drawdown_limit=max_drawdown_limit,

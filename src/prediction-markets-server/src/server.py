@@ -36,6 +36,7 @@ from .tools import (
     compare_prediction_markets,
     ensure_prediction_market_history,
     estimate_empirical_kelly,
+    estimate_market_edge,
     explore_trending_markets,
     get_market_details,
     get_market_snapshot,
@@ -630,6 +631,8 @@ async def analyze_prediction_calibration_tool(
     max_markets: int = 100,
     fidelity: int = 60,
     sampling_mode: str = "market_bucket_once",
+    holdout_fraction: float | None = None,
+    holdout_split_at: str = "",
 ) -> dict[str, Any]:
     """Calibration of Polymarket implied probabilities vs realized outcomes.
 
@@ -650,10 +653,14 @@ async def analyze_prediction_calibration_tool(
         fidelity: Sampled-price resolution in minutes (default 60).
         sampling_mode: ``market_bucket_once`` (default), ``sample_weighted``,
             or ``both``.
+        holdout_fraction: Optional out-of-sample split — latest ``fraction``
+            of observations become the holdout (§11.5). Omit for no split.
+        holdout_split_at: Optional ISO-8601 out-of-sample cutoff timestamp.
 
     Returns:
         Dict matching the §15 response contract. When ``categories`` is
         used, the response carries ``per_category`` keyed by category name.
+        An ``out_of_sample`` block is added only when a holdout is requested.
 
     """
     settings = get_settings()
@@ -682,6 +689,8 @@ async def analyze_prediction_calibration_tool(
             max_markets=max_markets,
             fidelity=fidelity,
             sampling_mode=sampling_mode,  # type: ignore[arg-type]
+            holdout_fraction=holdout_fraction,
+            holdout_split_at=_parse_iso_or_none(holdout_split_at),
             max_history_points=settings.prediction_max_history_points,
         )
         return truncate_response(result)
@@ -713,6 +722,8 @@ async def analyze_longshot_bias_tool(
     max_markets: int = 100,
     fidelity: int = 60,
     price_bucket_size: float = DEFAULT_PRICE_BUCKET_SIZE,
+    holdout_fraction: float | None = None,
+    holdout_split_at: str = "",
 ) -> dict[str, Any]:
     """Longshot vs favorite bias over resolved Polymarket markets.
 
@@ -731,10 +742,14 @@ async def analyze_longshot_bias_tool(
         max_markets: Hard cap on selected universe (default 100).
         fidelity: Sampled-price resolution in minutes.
         price_bucket_size: Width for the per-bucket breakdown.
+        holdout_fraction: Optional out-of-sample split — latest ``fraction``
+            of observations become the holdout (§11.5). Omit for no split.
+        holdout_split_at: Optional ISO-8601 out-of-sample cutoff timestamp.
 
     Returns:
         Dict matching the §15 response contract with longshot/favorite
         win rates, excess return, bucket detail, and reliability_label.
+        An ``out_of_sample`` block is added only when a holdout is requested.
 
     """
     settings = get_settings()
@@ -764,6 +779,8 @@ async def analyze_longshot_bias_tool(
             max_markets=max_markets,
             fidelity=fidelity,
             price_bucket_size=price_bucket_size,
+            holdout_fraction=holdout_fraction,
+            holdout_split_at=_parse_iso_or_none(holdout_split_at),
             max_history_points=settings.prediction_max_history_points,
         )
         return truncate_response(result)
@@ -810,6 +827,10 @@ async def backtest_prediction_rule_tool(
     max_markets: int = 100,
     fidelity: int = 60,
     seed: int = 12345,
+    holdout_fraction: float | None = None,
+    holdout_split_at: str = "",
+    entry_cost: float = 0.0,
+    exit_cost: float = 0.0,
 ) -> dict[str, Any]:
     """Backtest a structured prediction-market rule (§10.4 V1 schema).
 
@@ -847,6 +868,14 @@ async def backtest_prediction_rule_tool(
         fidelity: Sampled-price resolution in minutes (default 60).
         seed: Seed echoed into ``monte_carlo_input`` for downstream
             reproducibility of the risk tool.
+        holdout_fraction: Optional out-of-sample split — latest ``fraction``
+            of trades by entry timestamp become the holdout (§11.5). Omit
+            for no split.
+        holdout_split_at: Optional ISO-8601 out-of-sample cutoff timestamp.
+        entry_cost: Assumed entry cost in probability points (§11.6); 0.0
+            (default) leaves the response and fingerprint unchanged.
+        exit_cost: Assumed cost on intermediate exits; never applied at
+            resolution.
 
     Returns:
         Dict matching the §15 response contract with sample_size,
@@ -886,11 +915,91 @@ async def backtest_prediction_rule_tool(
             max_markets=max_markets,
             fidelity=fidelity,
             seed=seed,
+            holdout_fraction=holdout_fraction,
+            holdout_split_at=_parse_iso_or_none(holdout_split_at),
+            entry_cost=entry_cost,
+            exit_cost=exit_cost,
             max_history_points=settings.prediction_max_history_points,
         )
         return truncate_response(result)
     except Exception as exc:
         log_error(logger, exc, context={"tool": "backtest_prediction_rule"})
+        return format_api_error(exc, "Polymarket")
+    finally:
+        await gamma.close()
+        await clob.close()
+        await data_client.close()
+
+
+# -- Historical Tool: Estimate Market Edge -----------------------------------
+
+
+async def estimate_market_edge_tool(
+    slug: str = "",
+    condition_id: str = "",
+    market_url: str = "",
+    price: float | None = None,
+    days_to_resolution: int | None = None,
+    category: str = "",
+    max_markets: int = 200,
+    fidelity: int = 60,
+    price_bucket_size: float = DEFAULT_PRICE_BUCKET_SIZE,
+) -> dict[str, Any]:
+    """Estimate a live market's YES-side edge vs our own resolved-market base rate.
+
+    Provide ``slug`` (preferred), ``market_url``, or ``condition_id`` to read
+    the live price + time-to-resolution, or pass explicit ``price`` (0-1) plus
+    ``days_to_resolution`` to skip the live fetch. The base rate is a
+    population average for the matching price/TTR bucket — not a forecast for
+    this specific market; size separately with ``estimate_empirical_kelly``.
+
+    Args:
+        slug: Market slug (preferred identifier).
+        condition_id: Market condition id (fallback identifier).
+        market_url: Market URL; its trailing path segment is used as the slug.
+        price: Explicit live YES price in (0, 1); requires ``days_to_resolution``.
+        days_to_resolution: Explicit days to resolution; requires ``price``.
+        category: Optional Gamma tag for the calibration universe; broadens to
+            all resolved markets when the matching bucket is empty/thin.
+        max_markets: Cap on the calibration universe size (default 200).
+        fidelity: Sampled-price resolution in minutes (default 60).
+        price_bucket_size: Bucket width (default 0.05).
+
+    Returns:
+        Dict with the YES-side edge estimate, base-rate CI, calibration
+        universe, data coverage/quality, and base-rate limitations.
+
+    """
+    settings = get_settings()
+    store = get_prediction_store()
+    gamma = GammaClient()
+    clob = ClobClient()
+    data_client = DataClient()
+    try:
+        downloader = HistoryDownloader(
+            gamma=gamma,
+            clob=clob,
+            data_client=data_client,
+            store=store,
+            data_freshness_hours=settings.prediction_data_freshness_hours,
+        )
+        result = await estimate_market_edge(
+            downloader=downloader,
+            store=store,
+            slug=slug,
+            condition_id=condition_id,
+            market_url=market_url,
+            price=price,
+            days_to_resolution=days_to_resolution,
+            category=category,
+            max_markets=max_markets,
+            fidelity=fidelity,
+            price_bucket_size=price_bucket_size,
+            max_history_points=settings.prediction_max_history_points,
+        )
+        return truncate_response(result)
+    except Exception as exc:
+        log_error(logger, exc, context={"tool": "estimate_market_edge", "slug": slug})
         return format_api_error(exc, "Polymarket")
     finally:
         await gamma.close()
@@ -1185,6 +1294,15 @@ async def main() -> None:
                 "openWorldHint": True,
             },
         )(estimate_empirical_kelly_tool)
+        mcp.tool(
+            annotations={
+                "title": "Estimate Market Edge",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
+        )(estimate_market_edge_tool)
         logger.info(
             "historical_tools_registered",
             tools=[
@@ -1193,6 +1311,7 @@ async def main() -> None:
                 "backtest_prediction_rule",
                 "monte_carlo_prediction_risk",
                 "estimate_empirical_kelly",
+                "estimate_market_edge",
             ],
         )
 

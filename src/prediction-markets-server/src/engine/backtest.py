@@ -30,6 +30,10 @@ from .rules import HoldToResolutionExit, PredictionRule, StopTakeProfitExit
 ExitReason = Literal["stop", "take_profit", "expiry", "resolution"]
 EXIT_REASONS: tuple[ExitReason, ...] = ("stop", "take_profit", "expiry", "resolution")
 
+# Upper bound on an assumed execution-cost knob (§11.6), in probability points.
+# A round-trip beyond half the price range is not a realistic transaction cost.
+_MAX_ASSUMED_COST = 0.5
+
 
 @dataclass(frozen=True)
 class Trade:
@@ -65,6 +69,8 @@ def simulate_rule(
     markets: list[BacktestMarket],
     *,
     out_skipped: dict[str, int] | None = None,
+    entry_cost: float = 0.0,
+    exit_cost: float = 0.0,
 ) -> list[Trade]:
     """Run the rule against one row per market.
 
@@ -88,9 +94,16 @@ def simulate_rule(
         out_skipped: Optional dict; when supplied, simulate_rule writes
             named skip counts into it (``no_eligible_entry``,
             ``ttr_min_unmet``, ``ttr_max_exceeded``,
-            ``no_exit_price_for_max_hold``). Lets callers surface drop
-            reasons in their response without re-running the eligibility
-            loop.
+            ``no_exit_price_for_max_hold``, ``cost_makes_entry_invalid``).
+            Lets callers surface drop reasons in their response without
+            re-running the eligibility loop.
+        entry_cost: Assumed cost added to the entry price paid, in
+            probability points (§11.6). Default 0.0 reproduces the no-cost
+            result exactly; a cost-adjusted entry outside (0, 1] skips the
+            trade with ``cost_makes_entry_invalid``.
+        exit_cost: Assumed cost subtracted from intermediate exit prices
+            (stop / take_profit / expiry). Never applied to the resolution
+            leg, which settles to 0/1 with no exit transaction.
 
     Returns:
         List of Trade dataclasses, one per market that had an eligible
@@ -98,6 +111,7 @@ def simulate_rule(
         consistent with the rule's exit type.
 
     """
+    _validate_costs(entry_cost=entry_cost, exit_cost=exit_cost)
     p_min = rule.entry.price_min
     p_max = rule.entry.price_max
     min_days = rule.filters.min_days_to_resolution
@@ -119,7 +133,14 @@ def simulate_rule(
         if max_days is not None and days_to_resolution > max_days:
             _bump(out_skipped, "ttr_max_exceeded")
             continue
-        trade = _build_trade(market, entry_row, rule, out_skipped=out_skipped)
+        trade = _build_trade(
+            market,
+            entry_row,
+            rule,
+            out_skipped=out_skipped,
+            entry_cost=entry_cost,
+            exit_cost=exit_cost,
+        )
         if trade is not None:
             trades.append(trade)
     return trades
@@ -131,13 +152,31 @@ def _build_trade(
     rule: PredictionRule,
     *,
     out_skipped: dict[str, int] | None,
+    entry_cost: float,
+    exit_cost: float,
 ) -> Trade | None:
-    """Construct one Trade from an eligible entry, dispatching on exit type."""
+    """Construct one Trade from an eligible entry, dispatching on exit type.
+
+    ``entry_cost`` is folded into the cost basis here (§11.6); a cost that
+    pushes the effective entry outside (0, 1] skips the trade with
+    ``cost_makes_entry_invalid`` rather than feeding ``_terminal_payoff`` an
+    invalid price.
+    """
+    entry_price_effective = entry_row.price + entry_cost
+    if not 0.0 < entry_price_effective <= 1.0:
+        _bump(out_skipped, "cost_makes_entry_invalid")
+        return None
     if isinstance(rule.exit, HoldToResolutionExit):
-        return _trade_at_resolution(market, entry_row, rule.side)
+        return _trade_at_resolution(market, entry_row, rule.side, entry_price_effective)
     if isinstance(rule.exit, StopTakeProfitExit):
         return _trade_with_intermediate_exits(
-            market, entry_row, rule.side, rule.exit, out_skipped=out_skipped
+            market,
+            entry_row,
+            rule.side,
+            rule.exit,
+            entry_price_effective=entry_price_effective,
+            exit_cost=exit_cost,
+            out_skipped=out_skipped,
         )
     # Unreachable while ExitRule remains the declared discriminated union;
     # surface loudly if a new variant lands without engine wiring.
@@ -145,14 +184,22 @@ def _build_trade(
     raise TypeError(msg)
 
 
-def _trade_at_resolution(market: BacktestMarket, entry_row: PriceRow, side: str) -> Trade | None:
+def _trade_at_resolution(
+    market: BacktestMarket,
+    entry_row: PriceRow,
+    side: str,
+    entry_price_effective: float,
+) -> Trade | None:
     """Exit at the terminal sampled YES price; payoff math from winning_outcome.
 
     exit_price/exit_ts come from the last sampled row (preserves pre-change
     byte-for-byte behavior for hold_to_resolution; reused for the
     stop_take_profit max-hold-not-violated fallthrough). PnL math is the
-    §10.4 terminal payoff — ``1 - entry_price`` (win) or ``-entry_price``
-    (lose) — independent of the terminal sampled price.
+    §10.4 terminal payoff on the cost-adjusted entry
+    (``entry_price_effective``) — ``1 - entry`` (win) or ``-entry`` (lose),
+    independent of the terminal sampled price. ``exit_cost`` is not applied:
+    resolution settles to 0/1 with no exit transaction (§11.6). The
+    displayed ``entry_price`` stays the observed market price.
     """
     exit_row = market.yes_token_rows[-1] if market.yes_token_rows else None
     if exit_row is None:
@@ -161,7 +208,7 @@ def _trade_at_resolution(market: BacktestMarket, entry_row: PriceRow, side: str)
     # because the YES side maps onto a specific outcome ("Yes" by
     # convention but not guaranteed).
     realized_win = market.winning_outcome_label.strip().lower() == "yes"
-    return_on_cost, pnl_per_contract = _terminal_payoff(entry_row.price, realized_win)
+    return_on_cost, pnl_per_contract = _terminal_payoff(entry_price_effective, realized_win)
     return Trade(
         condition_id=market.condition_id,
         event_slug=market.event_slug,
@@ -184,6 +231,8 @@ def _trade_with_intermediate_exits(
     side: str,
     exit_rule: StopTakeProfitExit,
     *,
+    entry_price_effective: float,
+    exit_cost: float,
     out_skipped: dict[str, int] | None,
 ) -> Trade | None:
     """Walk sampled rows after entry, returning the first trigger or resolution.
@@ -207,11 +256,19 @@ def _trade_with_intermediate_exits(
         reason = _trigger_for_row(row, exit_rule, boundary_ts)
         if reason is None:
             continue
-        return _intermediate_trade(market, entry_row, row, side, reason)
+        return _intermediate_trade(
+            market,
+            entry_row,
+            row,
+            side,
+            reason,
+            entry_price_effective=entry_price_effective,
+            exit_cost=exit_cost,
+        )
     if boundary_ts is not None and market.end_date > boundary_ts:
         _bump(out_skipped, "no_exit_price_for_max_hold")
         return None
-    return _trade_at_resolution(market, entry_row, side)
+    return _trade_at_resolution(market, entry_row, side, entry_price_effective)
 
 
 def _trigger_for_row(
@@ -242,11 +299,20 @@ def _intermediate_trade(
     exit_row: PriceRow,
     side: str,
     reason: ExitReason,
+    *,
+    entry_price_effective: float,
+    exit_cost: float,
 ) -> Trade:
-    """Construct a booked-PnL Trade from a triggered intermediate exit row."""
-    exit_price = exit_row.price
-    pnl_per_contract = exit_price - entry_row.price
-    return_on_cost = pnl_per_contract / entry_row.price
+    """Construct a booked-PnL Trade from a triggered intermediate exit row.
+
+    PnL is net of the assumed costs (§11.6): the effective exit
+    (``exit_row.price - exit_cost``, floored at 0) less the cost-adjusted
+    entry. Displayed ``entry_price``/``exit_price`` stay the observed
+    samples, so at zero cost the booked numbers are unchanged.
+    """
+    exit_price_effective = max(0.0, exit_row.price - exit_cost)
+    pnl_per_contract = exit_price_effective - entry_price_effective
+    return_on_cost = pnl_per_contract / entry_price_effective
     return Trade(
         condition_id=market.condition_id,
         event_slug=market.event_slug,
@@ -254,13 +320,21 @@ def _intermediate_trade(
         entry_ts=entry_row.timestamp,
         entry_price=entry_row.price,
         exit_ts=exit_row.timestamp,
-        exit_price=exit_price,
+        exit_price=exit_row.price,
         realized_win=pnl_per_contract > 0.0,
         return_on_cost=return_on_cost,
         pnl_per_contract=pnl_per_contract,
         exit_reason=reason,
         time_to_exit_days=_days_between(entry_row.timestamp, exit_row.timestamp),
     )
+
+
+def _validate_costs(*, entry_cost: float, exit_cost: float) -> None:
+    """Reject execution-cost assumptions outside [0, 0.5] (§11.6)."""
+    for name, value in (("entry_cost", entry_cost), ("exit_cost", exit_cost)):
+        if not 0.0 <= value <= _MAX_ASSUMED_COST:
+            msg = f"{name} must be in [0, {_MAX_ASSUMED_COST}]; got {value}"
+            raise ValueError(msg)
 
 
 def _max_hold_boundary(entry_ts: datetime, max_hold_days: int | None) -> datetime | None:

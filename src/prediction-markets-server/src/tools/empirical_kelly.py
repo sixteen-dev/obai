@@ -90,7 +90,7 @@ def estimate_empirical_kelly(
             "kelly_method": sizing.estimates.method,
             "naive_kelly": sizing.estimates.naive_kelly,
             "half_kelly": sizing.estimates.half_kelly,
-            "capped_kelly": sizing.estimates.capped_kelly,
+            "capped_kelly": sizing.capped_kelly,
             "drawdown_constrained_fraction": sizing.drawdown_constrained_fraction,
             "conservative_fraction": sizing.conservative_fraction,
         },

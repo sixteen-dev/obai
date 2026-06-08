@@ -9,6 +9,7 @@ This agent acts as the central hub for a team of 8 specialist agents:
     - Portfolio Agent: Portfolio parsing, risk preferences, ETF holdings
     - Strategy Agent: Trading strategy design, backtesting, optimization
     - Prediction Markets Agent: Polymarket analysis and trade ideas
+    - Crypto Agent: Coinbase spot crypto data, backtests, and artifacts
 
 The central hub uses the "agents-as-tools" pattern (not handoffs):
     1. Understands user intent
@@ -30,6 +31,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
 from .base_agent import BaseAgent
 from .cache import QueryCache
 from .config import ReasoningEffort, Verbosity, get_cache_config, get_config
+from .crypto_agent import CryptoAgent
 from .events_news_agent import EventsNewsAgent
 from .fundamentals_agent import FundamentalsAgent
 from .guardrails import create_input_guardrail
@@ -100,6 +103,25 @@ class PredictionPassthroughEvent:
     """
 
     content: str
+
+
+@dataclass(frozen=True)
+class CryptoPassthroughEvent:
+    """Emitted by hub.run() for terminal crypto specialist output."""
+
+    content: str
+
+
+@dataclass
+class CryptoPassthroughState:
+    """Mutable run-scoped crypto passthrough holder.
+
+    Agent SDK tool execution may run in a copied context. Mutating a shared
+    holder preserves per-run isolation while keeping child-task writes visible
+    to the parent stream loop.
+    """
+
+    content: str | None = None
 
 
 # Module-level storage for strategy passthrough (reset per query)
@@ -154,6 +176,44 @@ def _clear_prediction_passthrough() -> None:
     """Reset prediction passthrough state (call between queries)."""
     global _prediction_passthrough
     _prediction_passthrough = None
+
+
+_crypto_passthrough: ContextVar[CryptoPassthroughState | None] = ContextVar(
+    "crypto_passthrough",
+    default=None,
+)
+
+
+def _get_crypto_passthrough_state() -> CryptoPassthroughState:
+    state = _crypto_passthrough.get()
+    if state is None:
+        state = CryptoPassthroughState()
+        _crypto_passthrough.set(state)
+    return state
+
+
+def _set_crypto_passthrough(content: str) -> None:
+    """Store crypto output in run-scoped context for passthrough."""
+    _get_crypto_passthrough_state().content = content
+    logger.info("Crypto passthrough set (len=%d)", len(content))
+    _inner_tool_outputs.append(
+        {
+            "specialist": "Crypto Agent",
+            "tool_name": "crypto_passthrough",
+            "output": content,
+        }
+    )
+
+
+def _get_crypto_passthrough() -> str | None:
+    """Return run-scoped crypto passthrough output."""
+    state = _crypto_passthrough.get()
+    return state.content if state is not None else None
+
+
+def _clear_crypto_passthrough() -> None:
+    """Reset run-scoped crypto passthrough output."""
+    _crypto_passthrough.set(CryptoPassthroughState())
 
 
 def _is_completed_strategy_output(output: str) -> bool:
@@ -220,6 +280,7 @@ _STRATEGY_TOOL_DESCRIPTION = (
 )
 _TERMINAL_STRATEGY_OUTPUT_PREFIX = "__TERMINAL_TOOL_OUTPUT__:strategy_analysis:"
 _TERMINAL_PREDICTION_PREFIX = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
+_TERMINAL_CRYPTO_PREFIX = "__TERMINAL_TOOL_OUTPUT__:crypto_analysis:"
 
 
 def _wrap_terminal_strategy_output(output: str, kind: str) -> str:
@@ -244,6 +305,19 @@ def _wrap_terminal_prediction_output(output: str) -> str:
     return f"{control}\n\n{output}"
 
 
+def _wrap_terminal_crypto_output(output: str) -> str:
+    """Wrap terminal crypto output with rendering control line."""
+    control = (
+        f"{_TERMINAL_CRYPTO_PREFIX}"
+        "render=verbatim_relay; "
+        "no_compression=true; "
+        "preserve_for_followup=job_id,fingerprint,product_id; "
+        "no_provider_switch=true; "
+        "coinbase_spot_v1_only=true"
+    )
+    return f"{control}\n\n{output}"
+
+
 _PREDICTION_TOOL_DESCRIPTION = (
     "Polymarket prediction market analysis. "
     "Use for market discovery, understanding, and comparison; "
@@ -258,6 +332,21 @@ _PREDICTION_TOOL_DESCRIPTION = (
     "Do NOT route prediction-market backtests to strategy_analysis. "
     "This tool may return a finished user-facing deliverable; when it does, "
     "relay it according to the obai-prediction-market-routing skill."
+)
+
+_CRYPTO_TOOL_DESCRIPTION = (
+    "Coinbase spot crypto specialist. "
+    "Use for Coinbase-tradable crypto product lookup, OHLCV candles, "
+    "order book snapshots, latest trade, best bid/ask, Coinbase spot "
+    "strategy backtests, trade-log and job-status follow-ups, strategy "
+    "artifact validation, and internal Coinbase paper-ledger artifact export. "
+    "V1 supports Coinbase Advanced Trade public market-data endpoints only. "
+    "Do not use for equities, options, Polymarket, DeFi, on-chain analysis, "
+    "perpetuals, funding, open interest, liquidations, or live order placement. "
+    "MANDATORY PRE-CONDITION: before calling this tool, call "
+    "load_skill('obai-crypto-routing') in the same turn. "
+    "This tool is a terminal author; relay its output according to the "
+    "obai-crypto-routing skill."
 )
 
 _STRATEGY_OBJECTIVE_PATTERNS = (
@@ -382,6 +471,37 @@ _PREDICTION_MARKET_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Executable-handoff intent. "paper" is intentionally excluded: it is a context
+# word ("before a paper trade", "paper ledger") that does not by itself signal an
+# export/handoff. Genuine handoffs always carry export/artifact/handoff/validate.
+_CRYPTO_BACKTEST_INTENT = re.compile(
+    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log"
+    r"|job[_ ]?id|export|validate)\b",
+    re.IGNORECASE,
+)
+_CRYPTO_RESEARCH_ONLY_INTENT = re.compile(
+    r"\b(what moved|why did|compare|explain|snapshot|quote|order book|orderbook"
+    r"|latest trade|bid|ask|price|ohlcv|candles?)\b",
+    re.IGNORECASE,
+)
+_CRYPTO_PRODUCT_PATTERN = re.compile(r"\b[A-Z0-9]{2,15}-(?:USD|USDC|EUR|BTC|ETH)\b")
+_CRYPTO_ASSET_PATTERN = re.compile(
+    r"\b(BTC|ETH|SOL|XRP|DOGE|ADA|AVAX|LINK|LTC|BCH|UNI|AAVE|MATIC|DOT"
+    r"|bitcoin|ethereum|solana|ripple|dogecoin|cardano|avalanche|chainlink"
+    r"|litecoin|uniswap|polygon|polkadot)\b",
+    re.IGNORECASE,
+)
+_CRYPTO_UNSUPPORTED_VENUE_PATTERN = re.compile(
+    r"\b(alpaca|binance|kraken|coingecko|coinalyze|kaiko|tardis|glassnode"
+    r"|amberdata|coinbase exchange)\b",
+    re.IGNORECASE,
+)
+_CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN = re.compile(
+    r"\b(perp|perpetual|future|futures|option|options|funding|open interest"
+    r"|liquidation|liquidations|basis|defi|yield|stablecoin|on[- ]?chain)\b",
+    re.IGNORECASE,
+)
+
 
 def _is_strategy_query(query: str) -> bool:
     """Detect if the user query is an equity strategy/backtest request.
@@ -408,6 +528,60 @@ def _build_strategy_routing_hint() -> str:
         "rewrite signal conditions, risk rules, thresholds, or order semantics. Do "
         "not answer from training data.]\n\n"
     )
+
+
+def _get_crypto_preflight_error(input_text: str) -> str | None:
+    """Fail closed on hard scope violations in executable crypto handoffs.
+
+    Blocks only deterministic facts: unsupported venue, unsupported
+    instrument, wrong data-source policy, or a backtest with no product
+    symbol at all. Fuzzy intent (export eligibility, job follow-ups) is
+    the crypto specialist's contract, not the hub's.
+    """
+    is_executable_intent = bool(_CRYPTO_BACKTEST_INTENT.search(input_text))
+    if not is_executable_intent:
+        return None
+
+    if _CRYPTO_RESEARCH_ONLY_INTENT.search(input_text) and not re.search(
+        r"\b(backtest|strategy|artifact|handoff|export|validate)\b",
+        input_text,
+        re.IGNORECASE,
+    ):
+        return None
+
+    if match := _CRYPTO_UNSUPPORTED_VENUE_PATTERN.search(input_text):
+        return (
+            "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase Advanced "
+            f"Trade spot only. Unsupported venue/provider in handoff: {match.group(0)}. "
+            "Retry with Coinbase spot scope or route to the correct specialist."
+        )
+
+    if match := _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN.search(input_text):
+        return (
+            "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase spot only. "
+            f"Unsupported instrument/data type in handoff: {match.group(0)}. "
+            "Do not request derivatives, DeFi, on-chain, or non-spot artifacts."
+        )
+
+    if "data_source_policy" in input_text and "execution_venue_required" not in input_text:
+        return (
+            "MISSING_CRYPTO_INPUTS: executable crypto backtests require "
+            "`data_source_policy=execution_venue_required` using Coinbase market data."
+        )
+
+    # Export/validation/trade-log eligibility is the specialist's contract: it
+    # resolves job state through crypto tools and cannot fabricate a job_id.
+    # Pre-classifying that intent here false-positives on requests that merely
+    # mention artifacts (e.g. "would an artifact be eligible" on a new backtest).
+
+    if not (_CRYPTO_PRODUCT_PATTERN.search(input_text) or _CRYPTO_ASSET_PATTERN.search(input_text)):
+        return (
+            "MISSING_CRYPTO_INPUTS: Coinbase spot backtests require a concrete product "
+            "or asset symbol. Retry with a Coinbase product_id such as BTC-USD or an "
+            "asset ticker/name the Crypto Agent can resolve."
+        )
+
+    return None
 
 
 def _get_missing_strategy_inputs(input_text: str) -> list[str]:
@@ -790,6 +964,7 @@ class CentralHubAgent:
         self.strategy_agent: StrategyAgent | None = None
         self.research_agent: ResearchAgent | None = None
         self.prediction_markets_agent: PredictionMarketsAgent | None = None
+        self.crypto_agent: CryptoAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -812,7 +987,7 @@ class CentralHubAgent:
         """Initialize central hub and all specialist agents.
 
         This async method must be called before using the hub.
-        It initializes all 5 specialist agents and converts them to tools
+        It initializes specialist agents and converts them to tools
         using the agents-as-tools pattern. Properly cleans up on partial failure.
 
         Raises:
@@ -979,6 +1154,9 @@ class CentralHubAgent:
             if self.prediction_markets_agent and self.prediction_markets_agent.agent:
                 specialist_tools.append(self._build_prediction_tool())
 
+            if self.crypto_agent and self.crypto_agent.agent:
+                specialist_tools.append(self._build_crypto_tool())
+
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
             specialist_tools.append(set_preferences)
@@ -1021,8 +1199,8 @@ class CentralHubAgent:
         loads its tools via list_tools(), and reads its prompt file.
         No shared state — safe to run concurrently.
 
-        All 8 required agents must succeed. Research agent is optional
-        and degrades gracefully if its server is unavailable.
+        All required agents must succeed. Research, prediction markets, and
+        crypto are optional and degrade gracefully if unavailable.
 
         Raises:
             MCPClientError: If any required agent fails to initialize.
@@ -1037,6 +1215,7 @@ class CentralHubAgent:
         self.strategy_agent = StrategyAgent()
         self.research_agent = ResearchAgent()
         self.prediction_markets_agent = PredictionMarketsAgent()
+        self.crypto_agent = CryptoAgent()
 
         required = [
             self.fundamentals_agent,
@@ -1048,7 +1227,7 @@ class CentralHubAgent:
             self.strategy_agent,
         ]
 
-        optional = [self.research_agent, self.prediction_markets_agent]
+        optional = [self.research_agent, self.prediction_markets_agent, self.crypto_agent]
         all_agents = [*required, *optional]
         results = await asyncio.gather(
             *[a.initialize() for a in all_agents],
@@ -1077,6 +1256,13 @@ class CentralHubAgent:
                     )
                     self.prediction_markets_agent = None
                     self.degraded_capabilities.append("prediction_markets")
+                elif agent is self.crypto_agent:
+                    logger.warning(
+                        "Crypto Agent unavailable — crypto_analysis tool disabled. "
+                        "Other agents unaffected.",
+                    )
+                    self.crypto_agent = None
+                    self.degraded_capabilities.append("crypto")
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result
@@ -1105,6 +1291,7 @@ class CentralHubAgent:
         self.strategy_agent = None
         self.research_agent = None
         self.prediction_markets_agent = None
+        self.crypto_agent = None
         self.agent = None
         self._run_config = None
         self._initialized = False
@@ -1171,6 +1358,51 @@ class CentralHubAgent:
             return _wrap_terminal_prediction_output(output)
 
         return prediction_market_analysis
+
+    def _build_crypto_tool(self) -> Tool:
+        """Build crypto tool wrapper with terminal relay."""
+        if self.crypto_agent is None or self.crypto_agent.agent is None:
+            msg = "Crypto Agent not initialized"
+            raise ValueError(msg)
+
+        crypto_agent = self.crypto_agent.agent
+        stream_handler = _create_stream_handler("crypto_analysis", "Crypto Agent")
+
+        @function_tool(
+            name_override="crypto_analysis",
+            description_override=_CRYPTO_TOOL_DESCRIPTION,
+            strict_mode=False,
+        )
+        async def crypto_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            preflight_error = _get_crypto_preflight_error(input)
+            if preflight_error:
+                logger.info("Blocked crypto_analysis due to preflight violation")
+                _set_crypto_passthrough(preflight_error)
+                return _wrap_terminal_crypto_output(preflight_error)
+
+            result = Runner.run_streamed(
+                starting_agent=crypto_agent,
+                input=input,
+                context=ctx.context,
+                max_turns=self.config.crypto_max_turns,
+            )
+
+            async for event in result.stream_events():
+                await stream_handler({"agent": crypto_agent, "event": event})
+
+            final_output = getattr(result, "final_output", None)
+            output = ""
+            if isinstance(final_output, str):
+                output = final_output
+            elif final_output is not None:
+                output = str(final_output)
+
+            if not output:
+                return output
+            _set_crypto_passthrough(output)
+            return _wrap_terminal_crypto_output(output)
+
+        return crypto_analysis
 
     def _build_strategy_tool(self) -> Tool:
         """Build guarded strategy tool wrapper for hub routing.
@@ -1280,6 +1512,7 @@ class CentralHubAgent:
             "strategy": self.strategy_agent,
             "research": self.research_agent,
             "prediction_markets": self.prediction_markets_agent,
+            "crypto": self.crypto_agent,
         }
 
         if specialist_name not in specialists:
@@ -1337,6 +1570,7 @@ class CentralHubAgent:
         _clear_active_agents()
         _clear_strategy_passthrough()
         _clear_prediction_passthrough()
+        _clear_crypto_passthrough()
         self._current_user_query = query
 
         # RAG-style cache: search for similar cached response
@@ -1383,9 +1617,9 @@ class CentralHubAgent:
         # Buffer response text for caching
         response_buffer: list[str] = []
 
-        # Buffered hub-mediated relay: after prediction fires, buffer hub
-        # text synthesis and validate before emitting to clients.
-        prediction_fired = False
+        # Buffered hub-mediated relay: after a terminal specialist fires,
+        # buffer hub synthesis and emit the specialist output directly.
+        terminal_fired: str | None = None
         buffered_events: list[Any] = []
 
         async for event in result.stream_events():
@@ -1405,12 +1639,14 @@ class CentralHubAgent:
                     if text and not response_buffer:
                         response_buffer.append(text)
 
-            # Detect prediction firing: passthrough set by tool wrapper
-            if not prediction_fired and _prediction_passthrough is not None:
-                prediction_fired = True
+            # Detect terminal specialist firing: passthrough set by tool wrapper.
+            if terminal_fired is None and _prediction_passthrough is not None:
+                terminal_fired = "prediction"
+            if terminal_fired is None and _get_crypto_passthrough() is not None:
+                terminal_fired = "crypto"
 
-            # After prediction fires, buffer hub text synthesis
-            if prediction_fired:
+            # After a terminal specialist fires, buffer hub text synthesis.
+            if terminal_fired is not None:
                 if isinstance(event, RawResponsesStreamEvent):
                     buffered_events.append(event)
                     continue
@@ -1434,7 +1670,7 @@ class CentralHubAgent:
         # emit the specialist output directly to the client and discard the
         # buffered hub-authored text. validate_prediction_relay is still
         # invoked for trace diagnostics; the boolean does not gate the choice.
-        if prediction_fired and _prediction_passthrough:
+        if terminal_fired == "prediction" and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
             relay_ok = validate_prediction_relay(
                 hub_final_text,
@@ -1446,6 +1682,11 @@ class CentralHubAgent:
             yield PredictionPassthroughEvent(content=_prediction_passthrough)
             response_buffer.clear()
             response_buffer.append(_prediction_passthrough)
+        elif terminal_fired == "crypto" and _get_crypto_passthrough():
+            crypto_output = _get_crypto_passthrough() or ""
+            yield CryptoPassthroughEvent(content=crypto_output)
+            response_buffer.clear()
+            response_buffer.append(crypto_output)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)
@@ -1459,7 +1700,7 @@ class CentralHubAgent:
 async def create_central_hub() -> CentralHubAgent:
     """Create and initialize a Central Hub Agent.
 
-    This will also initialize all 9 specialist agents:
+    This will also initialize all specialist agents:
     - Fundamentals Agent (FMP)
     - Market Data Agent (FMP)
     - Events/News Agent (FMP)
@@ -1469,6 +1710,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Strategy Agent (backtest-server)
     - Research Agent (Exa)
     - Prediction Markets Agent (Polymarket)
+    - Crypto Agent (Coinbase spot)
 
     Opik tracing is automatically initialized before agent creation
     if OPIK_ENABLED=true (default). Traces are sent to the Opik UI.

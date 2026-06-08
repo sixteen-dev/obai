@@ -26,6 +26,7 @@ Use this skill when the primary user intent depends on prediction-market data, m
 - structured prediction-market rule backtests
 - Monte Carlo risk or drawdown analysis over prediction-market returns
 - empirical Kelly or drawdown-constrained sizing for prediction markets
+- edge or mispricing of a live market vs resolved-market base rates ("is this 30¢ market cheap?")
 
 Do not use this skill for:
 

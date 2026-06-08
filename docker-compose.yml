@@ -281,10 +281,37 @@ services:
       retries: 3
       start_period: 30s
 
+  crypto-server:
+    image: ghcr.io/sixteen-dev/obai/crypto-server:${OBAI_VERSION:-latest}
+    build:
+      context: ./src/crypto-server
+      dockerfile: Dockerfile
+    container_name: obai-crypto-server
+    ports:
+      - "8010:8010"
+    environment:
+      # No Coinbase keys required — v1 uses public Advanced Trade market data
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8010
+      - COINBASE_MARKET_BASE_URL=https://api.coinbase.com/api/v3/brokerage/market
+    volumes:
+      - crypto-data:/app/data
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8010/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   # qdrant-data:  # disabled with the qdrant service above
   backtest-data:
   prediction-data:
+  crypto-data:
 
 networks:
   obai-mcp-network:

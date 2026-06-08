@@ -12,10 +12,16 @@ class TestPromptManager:
         """Prediction-market prompt should be versioned alongside other prompts."""
         assert "prediction_markets" in PROMPT_NAMES
 
+    def test_crypto_prompt_is_in_sync_registry(self) -> None:
+        """Crypto prompt should be versioned alongside other prompts."""
+        assert "crypto" in PROMPT_NAMES
+
     def test_sync_results_include_prediction_markets_when_opik_unavailable(self) -> None:
         """Unavailable Opik still reports all tracked prompts."""
         with patch("core_agents.prompt_manager._get_opik_client", return_value=None):
             results = sync_prompts_to_opik()
 
         assert "prediction_markets" in results
+        assert "crypto" in results
         assert results["prediction_markets"] is False
+        assert results["crypto"] is False
