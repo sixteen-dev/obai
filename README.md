@@ -70,6 +70,8 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 | `EXA_API_KEY` | Exa | Free tier | research-server (semantic search) |
 | `ANTHROPIC_API_KEY` | Anthropic | Pay-per-use | *Optional* -- LLM-judge cross-family evaluation only |
 
+> **No key needed:** `crypto-server` (Coinbase Advanced Trade) and `prediction-markets-server` (Polymarket) use public market data only — no API key or account required.
+
 ---
 
 ## Install
