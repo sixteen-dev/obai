@@ -155,8 +155,30 @@ failing.
 
 ## User preferences
 
-If `~/.obai/preferences.json` exists, read it and use as defaults:
-`risk_tolerance` (moderate), `investment_horizon` (medium),
-`default_benchmark` (SPY), `initial_capital` (100000), `currency` (USD),
-`market` (US). User statements in conversation override the file. Do not ask
-for settings already covered.
+Preferences live in `~/.obai/preferences.json` and persist across sessions.
+Schema (defaults in parentheses):
+
+```json
+{
+  "risk_tolerance": "moderate",      // conservative | moderate | aggressive
+  "investment_horizon": "medium",    // short (<3yr) | medium (3-10yr) | long (>10yr)
+  "default_benchmark": "SPY",
+  "initial_capital": 100000,
+  "currency": "USD",
+  "market": "US"
+}
+```
+
+- **Read** the file when a task depends on a preference (benchmarks,
+  backtest capital, risk framing, horizon fit). Missing file or key →
+  use the defaults above. Do not ask for settings already covered.
+- **Write** when the user states a preference ("set my initial capital to
+  50000", "change my risk tolerance to aggressive"): update only the
+  stated key in the file (create the file with defaults plus the change
+  if absent), keep the values within the allowed sets above, and confirm
+  the new value in one line. No server call is involved — this file is
+  the single source of truth shared with the OBaI CLI.
+- **Answer** "what are my preferences?" directly from the file.
+- A preference stated for the current request only ("backtest this with
+  $25k") overrides the file for that task without persisting; persist
+  only when the user expresses a lasting preference.
