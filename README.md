@@ -428,9 +428,11 @@ uv run pytest
 
 ## Agent Skills
 
-OBaI ships with two agent skills that let any AI agent autonomously interact with the system:
+OBaI ships with agent skills that let any AI agent autonomously interact with the system:
 
 **[OBaI Query Skill](skills/obai/SKILL.md)** — Read-only financial research. The agent runs `obai query` commands directly, manages sessions, parses JSON responses, and presents answers. Ask any financial question and it routes to the right specialist automatically.
+
+**[OBaI MCP Skill Suite](skills/obai-hub/SKILL.md)** — Direct-MCP alternative to the query skill for agents that support both skills and MCP (Claude Code, OpenClaw, etc.). Instead of going through the OBaI hub agent, the host agent itself plays the hub: the [`obai-hub`](skills/obai-hub/SKILL.md) skill routes intent and enforces grounding/synthesis rules, and ten specialist skills (`obai-market-data`, `obai-fundamentals`, `obai-events-news`, `obai-options`, `obai-screening`, `obai-portfolio`, `obai-strategy`, `obai-research`, `obai-prediction-markets`, `obai-crypto`) carry the curated specialist playbooks for each MCP server on its fixed port (8001–8010). Register the servers from [`skills/obai-hub/mcp-config.json`](skills/obai-hub/mcp-config.json). No OpenAI key needed — the host agent's model does the reasoning.
 
 **[AutoTrader Skill](skills/autotrader/SKILL.md)** — Autonomous paper trading bot on Alpaca. Combines OBaI analysis (read-only) with Alpaca execution (trades) to manage a stock portfolio. Evaluates strategy signals against deployed strategies, executes trades with built-in risk checks (position sizing, exposure limits, daily loss caps), and maintains a trading journal. Requires `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 

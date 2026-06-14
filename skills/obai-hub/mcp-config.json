@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "obai-fundamentals": { "type": "http", "url": "http://localhost:8001/mcp" },
+    "obai-market-data": { "type": "http", "url": "http://localhost:8002/mcp" },
+    "obai-events-news": { "type": "http", "url": "http://localhost:8003/mcp" },
+    "obai-options": { "type": "http", "url": "http://localhost:8004/mcp" },
+    "obai-screening": { "type": "http", "url": "http://localhost:8005/mcp" },
+    "obai-portfolio": { "type": "http", "url": "http://localhost:8006/mcp" },
+    "obai-backtest": { "type": "http", "url": "http://localhost:8007/mcp" },
+    "obai-research": { "type": "http", "url": "http://localhost:8008/mcp" },
+    "obai-prediction-markets": { "type": "http", "url": "http://localhost:8009/mcp" },
+    "obai-crypto": { "type": "http", "url": "http://localhost:8010/mcp" }
+  }
+}
