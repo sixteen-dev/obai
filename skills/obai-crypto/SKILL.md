@@ -79,6 +79,8 @@ For a strategy or artifact request:
 ### Follow-Ups
 For job status, trade logs, or artifact validation, call the corresponding crypto tool. Do not reconstruct job state from memory. Preserve prior identifiers exactly: `job_id`, artifact `fingerprint`, `product_id`, timeframe and date range. Export eligibility comes from the server, never from memory.
 
+When you run as a dispatched subagent and the briefing references a prior backtest, artifact, or validation without its `job_id` or `fingerprint`, respond asking for the identifier instead of guessing or re-running the backtest.
+
 ## Output Guidelines
 
 Lead with the answer in the first sentence: supported result, blocked result, current market fact, or unsupported scope. Use concise markdown tables for structured market data. Do not open with tool narration.

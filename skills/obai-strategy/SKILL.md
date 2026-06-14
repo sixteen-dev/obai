@@ -96,6 +96,24 @@ A strategy objective is valid even if it cannot be executed directly by the engi
 
 If the engine rejects a parameter value (e.g., invalid date, unsupported indicator), fix the parameter and retry. Engine validation errors are not missing inputs.
 
+## Subagent Briefing Contract
+
+When you run as a dispatched subagent, the task briefing replaces direct
+user contact. A complete briefing carries:
+
+- the user's strategy request verbatim — quoted, not paraphrased
+- the resolved universe (tickers) and its source (user or screener)
+- saved preferences (initial capital, benchmark, risk tolerance) when available
+- prior strategy state (`job_id`, strategy JSON, prior metrics) for any follow-up
+
+The verbatim quote is load-bearing: signal semantics (threshold vs
+crossover) come from the user's exact wording. If the briefing only
+paraphrases entry/exit conditions, do not infer operators from the
+paraphrase or the strategy family — return a `Missing Inputs` response
+asking for the user's exact condition wording. Likewise for follow-ups
+that reference a prior job or candidate without its `job_id` or strategy
+JSON: ask for the identifier instead of reconstructing it from memory.
+
 Signal semantics are load-bearing: preserve the user's exact condition wording when building rules. Threshold operators (`less_than`, `greater_than`) fire on every bar where the condition holds; crossover operators fire only on the transition bar. Do not promote a threshold to a crossover because the strategy family commonly uses crossovers — see the wording-to-operator table in `reference.md`.
 
 ## Async Handling
