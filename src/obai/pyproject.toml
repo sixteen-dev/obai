@@ -19,13 +19,13 @@ exclude = [
 
 [project]
 name = "obai"
-version = "1.4.1"
+version = "1.5.1"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=2.15.0",
-    "openai-agents>=0.16.0",
+    "openai-agents>=0.17.3",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",

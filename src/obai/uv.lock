@@ -3,25 +3,25 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-05-16T14:00:08.047868297Z"
+exclude-newer = "2026-06-07T21:20:58.469275182Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-openai-agents = { timestamp = "2026-05-23T14:00:08.047885709Z", span = "PT0S" }
-pytest = { timestamp = "2026-05-23T14:00:08.047884718Z", span = "PT0S" }
-pillow = { timestamp = "2026-05-23T14:00:08.047884938Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-05-23T14:00:08.04788615Z", span = "PT0S" }
-opik = { timestamp = "2026-05-23T14:00:08.04788591Z", span = "PT0S" }
-starlette = { timestamp = "2026-05-23T14:00:08.047886381Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-05-23T14:00:08.047883686Z", span = "PT0S" }
-litellm = { timestamp = "2026-05-23T14:00:08.047878035Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-05-23T14:00:08.047883455Z", span = "PT0S" }
-cryptography = { timestamp = "2026-05-23T14:00:08.047884267Z", span = "PT0S" }
-authlib = { timestamp = "2026-05-23T14:00:08.047885479Z", span = "PT0S" }
-idna = { timestamp = "2026-05-23T14:00:08.047886601Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-05-23T14:00:08.047885269Z", span = "PT0S" }
-pygments = { timestamp = "2026-05-23T14:00:08.047883936Z", span = "PT0S" }
-requests = { timestamp = "2026-05-23T14:00:08.047884497Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-06-14T21:20:58.469296262Z", span = "PT0S" }
+pytest = { timestamp = "2026-06-14T21:20:58.46929516Z", span = "PT0S" }
+pillow = { timestamp = "2026-06-14T21:20:58.46929541Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-06-14T21:20:58.469296753Z", span = "PT0S" }
+opik = { timestamp = "2026-06-14T21:20:58.469296502Z", span = "PT0S" }
+starlette = { timestamp = "2026-06-14T21:20:58.469297013Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-06-14T21:20:58.469294008Z", span = "PT0S" }
+litellm = { timestamp = "2026-06-14T21:20:58.469284339Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-06-14T21:20:58.469293767Z", span = "PT0S" }
+cryptography = { timestamp = "2026-06-14T21:20:58.469294629Z", span = "PT0S" }
+authlib = { timestamp = "2026-06-14T21:20:58.469296021Z", span = "PT0S" }
+idna = { timestamp = "2026-06-14T21:20:58.469297244Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-06-14T21:20:58.469295791Z", span = "PT0S" }
+pygments = { timestamp = "2026-06-14T21:20:58.469294268Z", span = "PT0S" }
+requests = { timestamp = "2026-06-14T21:20:58.469294909Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1771,7 +1771,7 @@ requires-dist = [
     { name = "langcache", marker = "extra == 'caching'", specifier = ">=0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "openai", specifier = ">=2.15.0" },
-    { name = "openai-agents", specifier = ">=0.16.0" },
+    { name = "openai-agents", specifier = ">=0.17.3" },
     { name = "opik", specifier = ">=2.0.23" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -1818,7 +1818,7 @@ wheels = [
 
 [[package]]
 name = "openai-agents"
-version = "0.16.0"
+version = "0.17.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffelib" },
@@ -1830,9 +1830,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/47/ecc92fb10898bd5458c887e3a8814ee3d612c585ea80aa3f6dc41b636030/openai_agents-0.16.0.tar.gz", hash = "sha256:5efd3a994c974ebe05fc38b5bc9b405f4ad61185fdab2c19d58b1d22901433a3", size = 5344082, upload-time = "2026-05-07T00:28:37.648Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/16/b79c1849125eb6d19cae98c21ff35caa2e55b5ec8d7a02b354b711917ef7/openai_agents-0.17.3.tar.gz", hash = "sha256:63b6dda6bd4fb51169e2a2cbd5d187a4e5ce823bbd15f965c8ed1d3b89072eec", size = 5406135, upload-time = "2026-05-19T01:28:15.971Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/ac/150e54b7114346501f9b1059fa90bfe3967e12902981e4f30df3473d04b8/openai_agents-0.16.0-py3-none-any.whl", hash = "sha256:10042d5374080c5323e1745723569fa19288f49c9f2eecb8921ec8d3529cf4c3", size = 824698, upload-time = "2026-05-07T00:28:35.549Z" },
+    { url = "https://files.pythonhosted.org/packages/80/ec/775a14cfd5f12f4ffe458c7ac9527831093c72e8c1aef682898fc6394106/openai_agents-0.17.3-py3-none-any.whl", hash = "sha256:a048bb0752d40913d18bccf6562f56260b603bb57c972597b6da58f60123f4bd", size = 841541, upload-time = "2026-05-19T01:28:13.334Z" },
 ]
 
 [[package]]
