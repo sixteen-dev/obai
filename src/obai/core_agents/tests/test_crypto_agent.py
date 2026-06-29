@@ -67,16 +67,44 @@ class TestCryptoAgentInitialization:
         assert error is not None
         assert "Coinbase Advanced Trade spot only" in error
 
-    def test_crypto_preflight_requires_job_for_artifact_export(self) -> None:
-        """Artifact exports require a completed crypto job ID."""
-        error = _get_crypto_preflight_error("Export the BTC-USD Coinbase paper artifact")
-
-        assert error is not None
-        assert "crypto_bt_" in error
+    def test_crypto_preflight_routes_artifact_export_to_specialist(self) -> None:
+        """Export eligibility is the specialist's contract; the hub must not pre-classify it."""
+        assert _get_crypto_preflight_error("Export the BTC-USD Coinbase paper artifact") is None
 
     def test_crypto_preflight_allows_research_snapshot(self) -> None:
         """Research and snapshot requests should not be over-gated."""
         assert _get_crypto_preflight_error("Compare BTC and ETH spot liquidity") is None
+
+    def test_crypto_preflight_ignores_paper_context_word(self) -> None:
+        """`paper` as a context word must not trigger the artifact/job-id gate."""
+        order_book = (
+            "Check Coinbase spot SOL-USD and AVAX-USD order books before a paper trade. "
+            "Compare top-of-book spread and visible depth, then tell which market looks "
+            "less fragile right now."
+        )
+        paper_ledger_context = (
+            "Before I risk $10,000 notional in the internal paper ledger, inspect the "
+            "Coinbase BTC-USD order book at depth 50."
+        )
+        live_order = (
+            "If the current Coinbase SOL-USD quote and order book look good, place a live "
+            "buy order for $5,000 notional with a paper-simulation checklist."
+        )
+
+        assert _get_crypto_preflight_error(order_book) is None
+        assert _get_crypto_preflight_error(paper_ledger_context) is None
+        assert _get_crypto_preflight_error(live_order) is None
+
+    def test_crypto_preflight_allows_backtest_asking_artifact_eligibility(self) -> None:
+        """A new backtest that asks whether an artifact would be eligible must run."""
+        query = (
+            "Run a Coinbase execution-grade backtest for BTC-USD using a daily spot "
+            "trend-following rule: fast_window 20, slow_window 60. I need the verdict, "
+            "key metrics, source_quality, and whether an internal paper-ledger artifact "
+            "would be eligible."
+        )
+
+        assert _get_crypto_preflight_error(query) is None
 
     def test_crypto_passthrough_contextvar_resets(self) -> None:
         """Crypto passthrough is run-scoped state, not an instance attribute."""

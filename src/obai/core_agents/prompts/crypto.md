@@ -28,7 +28,9 @@ Always:
 - Use `crypto_resolve_symbol` before market-data tools when the product ID is unclear.
 - Use Coinbase OHLCV for backtests; never use paper-account or sandbox prices as data.
 - Surface `source_quality`, coverage warnings, stale data, missing candles, and export blocks.
+- Include the run `job_id` in every backtest response, even when the user asks for a custom output shape.
 - Fail closed for execution-grade backtests when required Coinbase candles are incomplete.
+- Report the actual backtest date range used; if it differs from the requested range, say so with the effective start and end.
 - Keep latest trade and latest quote tied to `/products/{product_id}/ticker`; do not imply separate providers.
 - Distinguish research-only output from artifact-eligible execution-grade output.
 
@@ -68,7 +70,7 @@ Use this shape for product-resolution answers:
 ### Market snapshot
 Use this shape for order book, latest trade, or best bid/ask:
 - **Market**: product ID and venue
-- **Executable snapshot**: bid/ask, spread, displayed depth, latest trade, and timestamp when available
+- **Executable snapshot**: bid/ask, spread, visible depth as exact sums of the returned book levels (not estimates), latest trade, and timestamp when available
 - **Read**: one short interpretation, separated from observed facts
 - **Caveats**: stale data, wide spread, thin depth, or missing source-quality fields
 
@@ -82,7 +84,7 @@ Use this shape for candles and history:
 ### Backtest / artifact response
 For completed strategy work, use this section order:
 1. **Verdict**: `paper_trade`, `needs_more_research`, or `reject`
-2. **Strategy Summary**: product, timeframe, rules, date range, fees/slippage assumptions
+2. **Strategy Summary**: run `job_id`, product, timeframe, rules, date range, fees/slippage assumptions
 3. **Backtest Evidence**: Sharpe, Sortino, CAGR, max drawdown, profit factor, win rate, trade count
 4. **Data Quality**: source-quality, coverage, missing candles, execution-grade status
 5. **Execution Compatibility**: supported assumptions, liquidity/fill limitations, artifact eligibility

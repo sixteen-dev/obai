@@ -10,7 +10,12 @@ from src.engine import artifact_fingerprint, export_artifact, run_bar_backtest, 
 from src.engine.metrics import compute_metrics
 from src.json_utils import canonical_json
 from src.models import Candle
-from src.quality import build_candle_source_quality, compute_coverage, iter_candle_chunks
+from src.quality import (
+    build_candle_source_quality,
+    compute_coverage,
+    iter_candle_chunks,
+    snap_start_to_available,
+)
 
 
 def _candle(idx: int, close: float | None = None, volume: float = 10.0) -> Candle:
@@ -62,6 +67,71 @@ def test_compute_coverage_reports_missing_gap_ranges() -> None:
             "end": "2026-01-04T00:00:00+00:00",
         }
     ]
+
+
+def test_snap_start_advances_past_leading_gap() -> None:
+    """A missing leading candle snaps to the first available candle and clears the gap."""
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=5)
+    candles = [_candle(1), _candle(2), _candle(3), _candle(4)]  # day 0 missing
+    coverage = compute_coverage(
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+    )
+    assert coverage.missing_intervals == 1
+
+    effective_start, snapped = snap_start_to_available(
+        candles,
+        coverage,
+        requested_start=start,
+        requested_end=end,
+        granularity="ONE_DAY",
+    )
+
+    assert effective_start == start + timedelta(days=1)
+    assert snapped.missing_intervals == 0
+    assert snapped.start == "2026-01-02T00:00:00+00:00"
+
+
+def test_snap_start_leaves_interior_gap_blocking() -> None:
+    """An interior gap is not snappable and is returned unchanged (still blocking)."""
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=5)
+    candles = [_candle(0), _candle(1), _candle(3), _candle(4)]  # day 2 missing (interior)
+    coverage = compute_coverage(
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+    )
+
+    effective_start, returned = snap_start_to_available(
+        candles,
+        coverage,
+        requested_start=start,
+        requested_end=end,
+        granularity="ONE_DAY",
+    )
+
+    assert effective_start == start
+    assert returned.missing_intervals == 1
+
+
+def test_snap_start_noop_when_complete() -> None:
+    """A complete window is returned unchanged."""
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=3)
+    candles = [_candle(0), _candle(1), _candle(2)]
+    coverage = compute_coverage(
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+    )
+
+    effective_start, returned = snap_start_to_available(
+        candles,
+        coverage,
+        requested_start=start,
+        requested_end=end,
+        granularity="ONE_DAY",
+    )
+
+    assert effective_start == start
+    assert returned.missing_intervals == 0
 
 
 def test_execution_grade_quality_blocks_when_coinbase_fetch_fails() -> None:

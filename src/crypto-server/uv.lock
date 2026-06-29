@@ -7,20 +7,20 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-22T02:22:00.311210803Z"
+exclude-newer = "2026-06-22T02:32:32.396871251Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-06-29T02:22:00.311226854Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-06-29T02:22:00.311228196Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-06-29T02:22:00.311227715Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-06-29T02:22:00.31121968Z", span = "PT0S" }
-starlette = { timestamp = "2026-06-29T02:22:00.311228527Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-06-29T02:22:00.311226613Z", span = "PT0S" }
-pygments = { timestamp = "2026-06-29T02:22:00.311227074Z", span = "PT0S" }
-cryptography = { timestamp = "2026-06-29T02:22:00.311227455Z", span = "PT0S" }
-authlib = { timestamp = "2026-06-29T02:22:00.311227976Z", span = "PT0S" }
-idna = { timestamp = "2026-06-29T02:22:00.311228747Z", span = "PT0S" }
+pytest = { timestamp = "2026-06-29T02:32:32.396889716Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-06-29T02:32:32.396891008Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-06-29T02:32:32.396890527Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-06-29T02:32:32.396882302Z", span = "PT0S" }
+starlette = { timestamp = "2026-06-29T02:32:32.396891329Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-06-29T02:32:32.396889475Z", span = "PT0S" }
+pygments = { timestamp = "2026-06-29T02:32:32.396889936Z", span = "PT0S" }
+cryptography = { timestamp = "2026-06-29T02:32:32.396890267Z", span = "PT0S" }
+authlib = { timestamp = "2026-06-29T02:32:32.396890788Z", span = "PT0S" }
+idna = { timestamp = "2026-06-29T02:32:32.396891549Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -258,7 +258,7 @@ wheels = [
 
 [[package]]
 name = "crypto-server"
-version = "0.1.0"
+version = "1.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
