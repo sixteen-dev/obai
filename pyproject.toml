@@ -16,7 +16,7 @@ all = [
     # MCP Server dependencies
     "fastmcp>=1.0.0",
     "openai>=1.98.0",
-    "pydantic-settings>=2.10.1",
+    "pydantic-settings>=2.14.2",
     "mcp>=1.12.3",
     "pydantic>=2.10.1",
     "structlog>=25.1.0",
@@ -71,21 +71,21 @@ test = [
 [tool.uv]
 exclude-newer = "7 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days" }
+exclude-newer-package = { pydantic-settings = "0 days", requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
-    "python-multipart>=0.0.27",  # GHSA-pp6c-gr5w-3c5g: unbounded part-header DoS
+    "python-multipart>=0.0.31",  # GHSA-pp6c-gr5w-3c5g + GHSA-v9pg-7xvm-68hf + GHSA-5rvq-cxj2-64vf + GHSA-vffw-93wf-4j4q: header DoS, negative Content-Length, querystring parsing, param smuggling
     "requests>=2.33.0",      # GHSA-gc5v-m9x4-r6x2: insecure temp file fix
     "onnx>=1.21.0",          # CVE-2026-34447, GHSA-q56x: symlink traversal + TOCTOU
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape
-    "cryptography>=46.0.7",  # CVE-2026-34073 + GHSA-p423-j2cm-9vmq: buffer overflow fix
+    "cryptography>=48.0.1",  # CVE-2026-34073 + GHSA-p423-j2cm-9vmq + GHSA-537c-gmf6-5ccf: buffer overflow + vulnerable OpenSSL bundled in wheels
     "fastmcp>=3.2.0",        # GHSA-m8x7, GHSA-rww4, GHSA-vv7q: injection + SSRF
     "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
     "aiohttp>=3.13.4",       # CVE-2026-34513 thru CVE-2026-34525: header injection, SSRF, DoS
     "litellm>=1.85.0",       # GHSA-r75f-5x8p-qvmc + GHSA-v4p8-mg3p-g94g + GHSA-xqmj-j6mv-4862 + GHSA-wxxx-gvqv-xp7p: SQLi, auth-RCE, SSTI, sandbox escape
     "authlib>=1.7.2",        # GHSA-jj8c-mmj3-mmgv (CSRF), GHSA-r95x-qfjj-fjj2 (OIDC open redirect)
     "urllib3>=2.7.0",        # GHSA-mf9v-mfxr-j63j + GHSA-qccp-gfcp-xxvc: decompression bomb + header forwarding
-    "starlette>=1.0.1",      # GHSA-86qp-5c8j-p5mr / PYSEC-2026-161: Host header validation bypasses path security checks
+    "starlette>=1.3.1",      # GHSA-86qp-5c8j-p5mr + GHSA-82w8-qh3p-5jfq + GHSA-jp82-jpqv-5vv3 + GHSA-wqp7-x3pw-xc5r + GHSA-x746-7m8f-x49c: host header bypass, form() limit bypass, path auth, UNC SSRF, method dispatch
     "idna>=3.15",            # GHSA-65pc-fj4g-8rjx: IDNA DoS via crafted inputs (CVE-2024-3651 incomplete fix)
 ]
 

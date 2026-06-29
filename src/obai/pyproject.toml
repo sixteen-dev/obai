@@ -28,7 +28,7 @@ dependencies = [
     "openai-agents>=0.17.3",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic-settings>=2.14.2",
     "fastmcp>=2.14.3",
     "textual>=3.0.0",
     "typer>=0.12.0",
@@ -111,8 +111,8 @@ testpaths = ["core_agents/tests"]
 
 [tool.uv]
 exclude-newer = "7 days"
-exclude-newer-package = { litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", requests = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", openai-agents = "0 days", opik = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days" }
-constraint-dependencies = ["requests>=2.33.0", "cryptography>=46.0.7", "pillow>=12.2.0", "python-multipart>=0.0.27", "authlib>=1.7.2", "urllib3>=2.7.0", "starlette>=1.0.1", "idna>=3.15"]
+exclude-newer-package = { pydantic-settings = "0 days", litellm = "0 days", aiohttp = "0 days", fastmcp = "0 days", pygments = "0 days", cryptography = "0 days", requests = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", openai-agents = "0 days", opik = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days" }
+constraint-dependencies = ["requests>=2.33.0", "cryptography>=48.0.1", "pillow>=12.2.0", "python-multipart>=0.0.31", "authlib>=1.7.2", "urllib3>=2.7.0", "starlette>=1.3.1", "idna>=3.15"]
 override-dependencies = ["litellm==1.85.0", "python-dotenv>=1.1.0"]
 
 [dependency-groups]
