@@ -32,7 +32,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.5` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.5` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
 ---
 
@@ -40,11 +40,12 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 
 | Provider | Cost | Coverage |
 |----------|------|----------|
-| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 8 servers. |
+| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 10 servers. |
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 | **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |
 | **Polymarket** | Free (public APIs) | Prediction market data — market discovery, order books, price history, trade flow, leaderboard, wallet activity. |
+| **Coinbase Advanced Trade** | Free (public market data) | Spot crypto market data — product metadata, best bid/ask, order books, latest trades, OHLCV candles. No API key required. |
 
 FMP is the backbone -- it is not free, but a single subscription powers almost the entire system.
 
@@ -68,6 +69,8 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 | `TAVILY_API_KEY` | Tavily | Free tier | events-news-server (AI search) |
 | `EXA_API_KEY` | Exa | Free tier | research-server (semantic search) |
 | `ANTHROPIC_API_KEY` | Anthropic | Pay-per-use | *Optional* -- LLM-judge cross-family evaluation only |
+
+> **No key needed:** `crypto-server` (Coinbase Advanced Trade) and `prediction-markets-server` (Polymarket) use public market data only — no API key or account required.
 
 ---
 
@@ -110,7 +113,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 9 MCP servers (Docker Compose)
+5. Builds and starts all 10 MCP servers (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
@@ -170,6 +173,7 @@ obai status
 | **backtest-server** | 8007 | FMP | Strategy backtesting with Polars + polars-talib, DuckDB storage, daily + intraday (5min/15min/1hr), train/test split |
 | **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
 | **prediction-markets-server** | 8009 | Polymarket | Market discovery, executable pricing (bid/ask/depth), price history, trade flow, holder concentration, leaderboard, wallet tracing, setup-based backtesting |
+| **crypto-server** | 8010 | Coinbase Advanced Trade (public) | Spot product resolution, best bid/ask, order books, latest trades, OHLCV with source-quality checks, execution-grade spot backtests (trend/mean-reversion), trade logs, and internal paper-ledger strategy artifacts. No API key required. |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -364,7 +368,7 @@ The agents use `get_preferences` and `set_preferences` tools automatically.
 ```
 obai/
 ├── setup.sh                        # One-shot setup script
-├── docker-compose.yml              # All 8 MCP servers
+├── docker-compose.yml              # All 10 MCP servers
 ├── pyproject.toml                  # Monorepo dev tooling config
 ├── infra/
 │   └── opik/                       # Opik tracing stack (Docker Compose)
@@ -378,6 +382,7 @@ obai/
 │   ├── backtest-server/            # MCP server — strategy backtesting
 │   ├── research-server/            # MCP server — qualitative research (Exa)
 │   ├── prediction-markets-server/  # MCP server — Polymarket analysis (no API keys)
+│   ├── crypto-server/              # MCP server — Coinbase spot crypto (no API keys)
 │   └── obai/                       # Core application
 │       ├── pyproject.toml          # OBaI package config
 │       ├── core_agents/            # Agent definitions + orchestration
@@ -386,7 +391,7 @@ obai/
 │       │   ├── config.py
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
-│       │   └── *_agent.py          # 9 specialist agents
+│       │   └── *_agent.py          # 10 specialist agents
 │       ├── clients/
 │       │   ├── cli/                # CLI + TUI clients
 │       │   │   ├── chat.py         # Headless CLI (obai query/chat/status)
@@ -428,9 +433,11 @@ uv run pytest
 
 ## Agent Skills
 
-OBaI ships with two agent skills that let any AI agent autonomously interact with the system:
+OBaI ships with agent skills that let any AI agent autonomously interact with the system:
 
 **[OBaI Query Skill](skills/obai/SKILL.md)** — Read-only financial research. The agent runs `obai query` commands directly, manages sessions, parses JSON responses, and presents answers. Ask any financial question and it routes to the right specialist automatically.
+
+**[OBaI MCP Skill Suite](skills/obai-hub/SKILL.md)** — Direct-MCP alternative to the query skill for agents that support both skills and MCP (Claude Code, OpenClaw, etc.). Instead of going through the OBaI hub agent, the host agent itself plays the hub: the [`obai-hub`](skills/obai-hub/SKILL.md) skill routes intent and enforces grounding/synthesis rules, and ten specialist skills (`obai-market-data`, `obai-fundamentals`, `obai-events-news`, `obai-options`, `obai-screening`, `obai-portfolio`, `obai-strategy`, `obai-research`, `obai-prediction-markets`, `obai-crypto`) carry the curated specialist playbooks for each MCP server on its fixed port (8001–8010). Register the servers from [`skills/obai-hub/mcp-config.json`](skills/obai-hub/mcp-config.json). No OpenAI key needed — the host agent's model does the reasoning.
 
 **[AutoTrader Skill](skills/autotrader/SKILL.md)** — Autonomous paper trading bot on Alpaca. Combines OBaI analysis (read-only) with Alpaca execution (trades) to manage a stock portfolio. Evaluates strategy signals against deployed strategies, executes trades with built-in risk checks (position sizing, exposure limits, daily loss caps), and maintains a trading journal. Requires `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 

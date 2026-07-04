@@ -7,6 +7,8 @@ description: "Use the OBaI CLI to answer financial and stock market questions by
 
 OBaI is a multi-agent AI system for stock market research. When a user asks a financial question, **run the query yourself** using `obai query` and return the answer. Do not tell the user to run commands — execute them directly.
 
+If the OBaI MCP servers (localhost ports 8001-8010) are registered directly with your harness, prefer the `obai-hub` skill suite over this CLI — it skips the CLI round-trip and uses your own model as the orchestrator.
+
 ## How to Answer Financial Questions
 
 1. **Always use `--session`** to maintain conversation context. Generate a descriptive session ID for the topic (e.g., `aapl_research`, `portfolio_review`) or a UUID for general queries.
@@ -38,7 +40,7 @@ obai query "<question>" [OPTIONS]
 |------|-------|---------|-------------|
 | `--json` | `-j` | `false` | Structured JSON output (always use this) |
 | `--session` | `-s` | ephemeral | Named session for multi-turn conversation |
-| `--model` | `-m` | `gpt-5.1` | Override orchestrator model |
+| `--model` | `-m` | `ORCHESTRATOR_MODEL` | Override orchestrator model |
 
 ### JSON Output Structure
 
@@ -139,6 +141,8 @@ Route awareness helps you understand the response, but you don't need to pick ag
 | **Portfolio** | Portfolio analysis, ETF holdings, risk metrics, sector/asset class allocation, treasury rates |
 | **Strategy** | Backtest design and iteration (daily and intraday), walk-forward robustness validation, shared-capital portfolio backtesting |
 | **Research** | Company deep dives, business model analysis, management quality, product sentiment, competitive dynamics, industry structure, thematic research via Exa semantic web search |
+| **Prediction Markets** | Polymarket discovery, event odds, executable YES/NO pricing and depth, trade flow, holder/trader analysis, trade memos, calibration and rule backtests |
+| **Crypto** | Coinbase spot data (products, OHLCV, order books, quotes), crypto strategy backtests, paper-ledger strategy artifacts |
 
 Multi-domain queries (e.g., "Compare AAPL earnings with options flow") automatically dispatch to multiple agents in parallel.
 
@@ -186,13 +190,12 @@ uv run python -m evaluation evaluate --suite --category A
 | Variable | Default | What it does |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key for all agents |
-| `ORCHESTRATOR_MODEL` | `gpt-5.1` | Central Hub model |
+| `ORCHESTRATOR_MODEL` | `gpt-5.5` | Central Hub model |
 | `SPECIALIST_MODEL` | `gpt-5-mini` | Default specialist model |
-| `STRATEGY_MODEL` | `gpt-5.1` | Strategy agent model |
+| `STRATEGY_MODEL` | falls back to `ORCHESTRATOR_MODEL` | Strategy agent model |
 | `EXA_API_KEY` | optional | Exa API key for research server |
 | `ENABLE_GUARDRAILS` | `true` | Block non-financial queries |
 | `RESEARCH_MODEL` | `gpt-5-mini` | Research agent model |
 | `ENABLE_INLINE_SCORING` | `true` | Score every query for faithfulness |
 | `MCP_TIMEOUT` | `30` | Request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
-| `EXA_API_KEY` | optional | Exa API key for research agent web search |

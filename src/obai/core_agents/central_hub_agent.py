@@ -41,7 +41,7 @@ from agents.agent import AgentToolStreamEvent
 from agents.items import ItemHelpers, MessageOutputItem
 from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
-from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
+from agents.sandbox import Manifest, SandboxAgent, SandboxPathGrant, SandboxRunConfig
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 from agents.sandbox.entries import LocalDir
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
@@ -910,7 +910,13 @@ def _build_hub_agent(
         model=model,
         tools=specialist_tools,
         input_guardrails=guardrails,
-        default_manifest=Manifest(),
+        default_manifest=Manifest(
+            # openai-agents 0.17+ restricts LocalDir.src to the SDK process
+            # cwd unless explicitly granted. HUB_SKILLS_DIR is an absolute
+            # path under the source tree, so grant it (read-only) to keep
+            # skills loading independent of the launch directory.
+            extra_path_grants=(SandboxPathGrant(path=str(HUB_SKILLS_DIR), read_only=True),),
+        ),
         capabilities=[skills_capability],
         model_settings=ModelSettings(
             parallel_tool_calls=True,
@@ -1039,7 +1045,7 @@ class CentralHubAgent:
                         tool_name="market_data_analysis",
                         tool_description=(
                             "Get real-time stock prices, quotes, historical candles, "
-                            "technical indicators (RSI, MACD, SMA), volume analysis, "
+                            "technical indicators (RSI, moving averages, ADX), volume analysis, "
                             "market movers (gainers/losers), and market status. "
                             "Use for any price or technical analysis questions."
                         ),
