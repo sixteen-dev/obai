@@ -1045,7 +1045,7 @@ class CentralHubAgent:
                         tool_name="market_data_analysis",
                         tool_description=(
                             "Get real-time stock prices, quotes, historical candles, "
-                            "technical indicators (RSI, MACD, SMA), volume analysis, "
+                            "technical indicators (RSI, moving averages, ADX), volume analysis, "
                             "market movers (gainers/losers), and market status. "
                             "Use for any price or technical analysis questions."
                         ),

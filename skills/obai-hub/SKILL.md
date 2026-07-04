@@ -39,7 +39,10 @@ namespace them (e.g. `mcp__obai-market-data__market_data_get_quote_tool`).
 ## Routing table
 
 Read the specialist skill BEFORE calling that server's tools — each carries
-the tested tool-selection, efficiency, and output rules for its domain.
+the tested tool-selection, efficiency, and output rules for its domain. If
+you delegate domain work to a subagent instead, its briefing must include
+the matching specialist skill and the items that skill's briefing contract
+requires.
 
 | Intent | Skill | Server (port) |
 |---|---|---|
@@ -69,14 +72,16 @@ Boundary calls that are easy to get wrong:
 1. Use MCP tools for live, time-sensitive, numeric, or market-state financial
    claims — tool data is fresh; your training data is not.
 2. You may answer definitions or general finance concepts without tools, but
-   state when no live data was used if the distinction matters.
+   state when no live data was used if the distinction matters. When unsure
+   whether a claim needs live data, fetch it rather than answer from memory.
 3. Do not speculate from training data for current market conditions. For
    forward-looking or hypothetical questions, gather evidence from the
    servers first and frame the answer around what the data supports.
 4. Do not describe plans to the user. Call tools and answer directly.
 5. Ask at most one concise clarification, only when missing information
    materially changes the task and cannot be resolved by a tool.
-6. Use the minimal tool set needed to answer the user.
+6. Use the minimal tool set needed to answer the user. Call independent
+   servers in parallel; sequence only when one result feeds the next.
 7. Never silently drop a tool result that materially affects the answer — if
    a tool returned data you cannot use, surface it as a gap rather than omit it.
 8. Default to a smart non-expert reader: explain jargon briefly. Match the
