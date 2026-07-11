@@ -7,27 +7,27 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-22T02:32:32.396871251Z"
+exclude-newer = "2026-07-04T03:58:53.779264884Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-06-29T02:32:32.396889716Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-06-29T02:32:32.396891008Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-06-29T02:32:32.396890527Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-06-29T02:32:32.396882302Z", span = "PT0S" }
-starlette = { timestamp = "2026-06-29T02:32:32.396891329Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-06-29T02:32:32.396889475Z", span = "PT0S" }
-pygments = { timestamp = "2026-06-29T02:32:32.396889936Z", span = "PT0S" }
-cryptography = { timestamp = "2026-06-29T02:32:32.396890267Z", span = "PT0S" }
-authlib = { timestamp = "2026-06-29T02:32:32.396890788Z", span = "PT0S" }
-idna = { timestamp = "2026-06-29T02:32:32.396891549Z", span = "PT0S" }
+pytest = { timestamp = "2026-07-11T03:58:53.779288539Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-07-11T03:58:53.779291134Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-07-11T03:58:53.779290182Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-07-11T03:58:53.779278801Z", span = "PT0S" }
+starlette = { timestamp = "2026-07-11T03:58:53.779291755Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-07-11T03:58:53.779287998Z", span = "PT0S" }
+pygments = { timestamp = "2026-07-11T03:58:53.77928899Z", span = "PT0S" }
+cryptography = { timestamp = "2026-07-11T03:58:53.779289651Z", span = "PT0S" }
+authlib = { timestamp = "2026-07-11T03:58:53.779290693Z", span = "PT0S" }
+idna = { timestamp = "2026-07-11T03:58:53.779292196Z", span = "PT0S" }
 
 [manifest]
 constraints = [
     { name = "authlib", specifier = ">=1.7.2" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "idna", specifier = ">=3.15" },
-    { name = "joserfc", specifier = ">=1.6.7" },
+    { name = "joserfc", specifier = ">=1.6.8" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "starlette", specifier = ">=1.3.1" },
@@ -258,7 +258,7 @@ wheels = [
 
 [[package]]
 name = "crypto-server"
-version = "1.5.2"
+version = "1.5.3"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
@@ -610,14 +610,14 @@ wheels = [
 
 [[package]]
 name = "joserfc"
-version = "1.6.7"
+version = "1.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/cb/52e479f20804904f5df20ac4539d292dcecd1287aaa33cba1d1def1d9d8e/joserfc-1.6.7.tar.gz", hash = "sha256:6999fe89457069ecacd8cc797c88a805f83054dd883333fa0409f74b46479fd7", size = 232158, upload-time = "2026-05-23T01:46:44.069Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/26/abe1ad855eb334b5ebc9c6495d4798e12bee70e5e8e815d54570710b8312/joserfc-1.7.2.tar.gz", hash = "sha256:537ffb8888b2df039cb5b6d017d7cff6f09d521ce65d89cc9b8ab752b1cff947", size = 233183, upload-time = "2026-06-29T09:03:10.868Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c5/e4/bcf6718b5662894c6831f46296b73cd4b1a2e90c20b6d437e20c4997388c/joserfc-1.6.7-py3-none-any.whl", hash = "sha256:9e51e4a64840aa1734a058258e80a4480e2ff2d5686e480e7c92c954a92fbe05", size = 70603, upload-time = "2026-05-23T01:46:42.129Z" },
+    { url = "https://files.pythonhosted.org/packages/13/80/d1b30336582cced4dce0dae776508a6011723e32f907bc7a702c0b25890a/joserfc-1.7.2-py3-none-any.whl", hash = "sha256:ddd818c0ca9b4f17bbc2d72cb3966e6ded7502be089316c62c3cc64ae86132b5", size = 70426, upload-time = "2026-06-29T09:03:09.393Z" },
 ]
 
 [[package]]

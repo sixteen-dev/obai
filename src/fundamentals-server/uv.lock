@@ -12,7 +12,7 @@ constraints = [
     { name = "authlib", specifier = ">=1.7.2" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "idna", specifier = ">=3.15" },
-    { name = "joserfc", specifier = ">=1.6.7" },
+    { name = "joserfc", specifier = ">=1.6.8" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
@@ -447,7 +447,7 @@ wheels = [
 
 [[package]]
 name = "fundamentals-server"
-version = "0.1.9"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "cachetools" },
@@ -779,14 +779,14 @@ wheels = [
 
 [[package]]
 name = "joserfc"
-version = "1.7.1"
+version = "1.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/90/25cb27518750218e4f850be63d8bbb2343efaad1c01c3571aaa4b3c33bd7/joserfc-1.7.1.tar.gz", hash = "sha256:77d0b76514879c68c6f433bc5b7357a4ab72008ff1e33d8379fd11d72bd8ca81", size = 233181, upload-time = "2026-06-08T07:21:33.412Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/c6/b1cac0280f8efc57626ea8804866b37099f23cae11b1485a42b213245e31/joserfc-1.7.3.tar.gz", hash = "sha256:116955c2587139dba20621fd0bd7fc9255fa960c9fe7f43c43ebef2e801dcfcf", size = 233821, upload-time = "2026-07-08T12:41:42.66Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/00/fa62404c3e347f946faa13aa21085205f9cc06ad17671e37f81a51662ae8/joserfc-1.7.1-py3-none-any.whl", hash = "sha256:b3e3d655612e2e1ef67b2600f2f420e12e537b020208fab1761fad647319c164", size = 70423, upload-time = "2026-06-08T07:21:32.001Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/f5/650b59d1b74f5befb7a7a7e7d7c92a26b94256df3541e2b4914152cd177a/joserfc-1.7.3-py3-none-any.whl", hash = "sha256:7c39f3f2c943dbc03122747fa8ebbd8e156e54904cf25651b452f4d2634a6075", size = 70982, upload-time = "2026-07-08T12:41:41.521Z" },
 ]
 
 [[package]]

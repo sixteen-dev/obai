@@ -19,25 +19,25 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-22T02:32:31.568576035Z"
+exclude-newer = "2026-07-04T03:58:52.953184011Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-06-29T02:32:31.568600471Z", span = "PT0S" }
-pillow = { timestamp = "2026-06-29T02:32:31.568600692Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-06-29T02:32:31.568601383Z", span = "PT0S" }
-starlette = { timestamp = "2026-06-29T02:32:31.568601613Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-06-29T02:32:31.56859968Z", span = "PT0S" }
-cryptography = { timestamp = "2026-06-29T02:32:31.568599429Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-06-29T02:32:31.568600131Z", span = "PT0S" }
-authlib = { timestamp = "2026-06-29T02:32:31.568601152Z", span = "PT0S" }
-onnx = { timestamp = "2026-06-29T02:32:31.568598838Z", span = "PT0S" }
-idna = { timestamp = "2026-06-29T02:32:31.568601824Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-06-29T02:32:31.568600922Z", span = "PT0S" }
-anthropic = { timestamp = "2026-06-29T02:32:31.568599089Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-06-29T02:32:31.568590262Z", span = "PT0S" }
-pygments = { timestamp = "2026-06-29T02:32:31.5685999Z", span = "PT0S" }
-requests = { timestamp = "2026-06-29T02:32:31.568598558Z", span = "PT0S" }
+pytest = { timestamp = "2026-07-11T03:58:52.953207114Z", span = "PT0S" }
+pillow = { timestamp = "2026-07-11T03:58:52.953207365Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-07-11T03:58:52.953208066Z", span = "PT0S" }
+starlette = { timestamp = "2026-07-11T03:58:52.953208297Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-07-11T03:58:52.953206313Z", span = "PT0S" }
+cryptography = { timestamp = "2026-07-11T03:58:52.953206062Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-07-11T03:58:52.953206784Z", span = "PT0S" }
+authlib = { timestamp = "2026-07-11T03:58:52.953207846Z", span = "PT0S" }
+onnx = { timestamp = "2026-07-11T03:58:52.953205471Z", span = "PT0S" }
+idna = { timestamp = "2026-07-11T03:58:52.953208507Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-07-11T03:58:52.953207595Z", span = "PT0S" }
+anthropic = { timestamp = "2026-07-11T03:58:52.953205712Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-07-11T03:58:52.953196504Z", span = "PT0S" }
+pygments = { timestamp = "2026-07-11T03:58:52.953206563Z", span = "PT0S" }
+requests = { timestamp = "2026-07-11T03:58:52.953205241Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -47,7 +47,7 @@ constraints = [
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "idna", specifier = ">=3.15" },
-    { name = "joserfc", specifier = ">=1.6.7" },
+    { name = "joserfc", specifier = ">=1.6.8" },
     { name = "litellm", specifier = ">=1.85.0" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "pygments", specifier = ">=2.20.0" },
@@ -969,14 +969,14 @@ wheels = [
 
 [[package]]
 name = "joserfc"
-version = "1.7.1"
+version = "1.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/90/25cb27518750218e4f850be63d8bbb2343efaad1c01c3571aaa4b3c33bd7/joserfc-1.7.1.tar.gz", hash = "sha256:77d0b76514879c68c6f433bc5b7357a4ab72008ff1e33d8379fd11d72bd8ca81", size = 233181, upload-time = "2026-06-08T07:21:33.412Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/26/abe1ad855eb334b5ebc9c6495d4798e12bee70e5e8e815d54570710b8312/joserfc-1.7.2.tar.gz", hash = "sha256:537ffb8888b2df039cb5b6d017d7cff6f09d521ce65d89cc9b8ab752b1cff947", size = 233183, upload-time = "2026-06-29T09:03:10.868Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/00/fa62404c3e347f946faa13aa21085205f9cc06ad17671e37f81a51662ae8/joserfc-1.7.1-py3-none-any.whl", hash = "sha256:b3e3d655612e2e1ef67b2600f2f420e12e537b020208fab1761fad647319c164", size = 70423, upload-time = "2026-06-08T07:21:32.001Z" },
+    { url = "https://files.pythonhosted.org/packages/13/80/d1b30336582cced4dce0dae776508a6011723e32f907bc7a702c0b25890a/joserfc-1.7.2-py3-none-any.whl", hash = "sha256:ddd818c0ca9b4f17bbc2d72cb3966e6ded7502be089316c62c3cc64ae86132b5", size = 70426, upload-time = "2026-06-29T09:03:09.393Z" },
 ]
 
 [[package]]
@@ -1302,7 +1302,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.5.2"
+version = "1.5.3"
 source = { virtual = "." }
 dependencies = [
     { name = "qdrant-client" },
