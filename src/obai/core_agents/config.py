@@ -114,7 +114,7 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.5",
+        default="gpt-5.6-sol",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
@@ -172,7 +172,7 @@ class AgentConfig(BaseSettings):
     # Reasoning effort and output verbosity. Two tiers, same shape as the
     # model fields above. Defaults live in code; not exposed via .env.
     orchestrator_reasoning_effort: ReasoningEffort = Field(
-        default="high",
+        default="medium",
         description="Hub reasoning effort: none|minimal|low|medium|high|xhigh",
     )
     orchestrator_verbosity: Verbosity = Field(
@@ -186,6 +186,24 @@ class AgentConfig(BaseSettings):
     specialist_verbosity: Verbosity = Field(
         default="low",
         description="Specialist output verbosity: low|medium|high",
+    )
+
+    # Per-agent reasoning effort overrides. Mirror the per-agent model fields
+    # above: an override wins, else the specialist tier applies. Strategy,
+    # crypto, and prediction markets default to a higher tier because their
+    # analysis (backtest iteration, executable pricing, setup evaluation)
+    # benefits from stronger reasoning.
+    strategy_reasoning_effort: ReasoningEffort | None = Field(
+        default="high",
+        description="Override reasoning effort for strategy agent (uses specialist tier if None)",
+    )
+    crypto_reasoning_effort: ReasoningEffort | None = Field(
+        default="high",
+        description="Override reasoning effort for crypto agent (uses specialist tier if None)",
+    )
+    prediction_markets_reasoning_effort: ReasoningEffort | None = Field(
+        default="high",
+        description="Reasoning effort for prediction markets agent (uses specialist tier if None)",
     )
 
     # Guardrails
@@ -352,6 +370,28 @@ class AgentConfig(BaseSettings):
 
         # Fall back to specialist model
         return self.specialist_model
+
+    def get_agent_reasoning_effort(self, agent_type: str) -> ReasoningEffort:
+        """Get reasoning effort for a specific specialist agent type.
+
+        Mirrors get_agent_model: a per-agent ``{agent_type}_reasoning_effort``
+        override wins, else the shared specialist tier applies. Agent types
+        with no matching override field fall back to the specialist tier.
+
+        Args:
+            agent_type: Agent type (e.g. strategy, crypto, prediction_markets).
+
+        Returns:
+            Reasoning effort tier to use for this agent type.
+        """
+        override_field = f"{agent_type}_reasoning_effort"
+        override_value: ReasoningEffort | None = getattr(self, override_field, None)
+
+        if override_value is not None:
+            return override_value
+
+        # Fall back to specialist tier
+        return self.specialist_reasoning_effort
 
     def get_strategy_model(self) -> str:
         """Get model for strategy agent.

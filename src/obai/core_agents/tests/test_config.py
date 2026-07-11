@@ -46,8 +46,30 @@ class TestAgentConfig:
     def test_default_models(self) -> None:
         """Test default model values."""
         config = AgentConfig()
-        assert config.orchestrator_model == "gpt-5.5"
+        assert config.orchestrator_model == "gpt-5.6-sol"
         assert config.specialist_model == "gpt-5-mini"
+
+    def test_default_reasoning_effort(self) -> None:
+        """Hub drops to medium; the three heavy specialists default to high."""
+        config = AgentConfig()
+        assert config.orchestrator_reasoning_effort == "medium"
+        assert config.specialist_reasoning_effort == "medium"
+        assert config.strategy_reasoning_effort == "high"
+        assert config.crypto_reasoning_effort == "high"
+        assert config.prediction_markets_reasoning_effort == "high"
+
+    def test_get_agent_reasoning_effort_default(self) -> None:
+        """Specialists without an override fall back to the specialist tier."""
+        config = AgentConfig()
+        effort = config.get_agent_reasoning_effort("market_data")
+        assert effort == config.specialist_reasoning_effort
+
+    def test_get_agent_reasoning_effort_override(self) -> None:
+        """Strategy, crypto, and prediction markets resolve to high by default."""
+        config = AgentConfig()
+        assert config.get_agent_reasoning_effort("strategy") == "high"
+        assert config.get_agent_reasoning_effort("crypto") == "high"
+        assert config.get_agent_reasoning_effort("prediction_markets") == "high"
 
     def test_default_mcp_urls(self) -> None:
         """Test default MCP server URLs."""
