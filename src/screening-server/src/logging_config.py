@@ -1,10 +1,22 @@
 """Structured logging configuration for screening-server."""
 
 import logging
+import re
 import sys
 from typing import Any
 
 import structlog
+
+# httpx embeds the full request URL in HTTPStatusError messages, and the FMP
+# client passes the API key as an `apikey` query param, so raw exception text
+# can carry the secret. Redact any URL before it reaches the logs. Mirrors the
+# regex used for user-facing errors in response_utils.py.
+_URL_RE = re.compile(r"https?://[^\s'\"]+")
+
+
+def _redact_urls(text: str) -> str:
+    """Replace any URL (which may carry an API key) with a placeholder."""
+    return _URL_RE.sub("[URL REDACTED]", text)
 
 
 def configure_logging(log_level: str = "INFO") -> None:
@@ -88,9 +100,11 @@ def log_error(
         error: Exception that occurred
         context: Additional context (avoid using 'event' key as it's reserved)
     """
+    raw_message = str(error)
+    safe_message = _redact_urls(raw_message)
     error_context = {
         "error_type": type(error).__name__,
-        "error_message": str(error),
+        "error_message": safe_message,
     }
 
     # Merge context, renaming 'event' to 'error_event' if present to avoid conflicts
@@ -101,10 +115,12 @@ def log_error(
             else:
                 error_context[key] = value
 
+    # When the message carried a URL (redacted above), suppress the traceback:
+    # exc_info would re-render the raw exception text, re-exposing the secret.
     logger.error(
         "error_occurred",
         **error_context,
-        exc_info=True,
+        exc_info=safe_message == raw_message,
     )
 
 
