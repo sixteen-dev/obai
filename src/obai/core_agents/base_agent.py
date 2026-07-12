@@ -151,7 +151,9 @@ class BaseAgent(ABC):
                 tools=tools,  # type: ignore[arg-type]  # list covariance issue
                 model_settings=ModelSettings(
                     parallel_tool_calls=True,  # Enable parallel tool execution
-                    reasoning=Reasoning(effort=self.config.specialist_reasoning_effort),
+                    reasoning=Reasoning(
+                        effort=self.config.get_agent_reasoning_effort(self.agent_type)
+                    ),
                     verbosity=self.config.specialist_verbosity,
                 ),
             )

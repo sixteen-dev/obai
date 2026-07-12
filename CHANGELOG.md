@@ -6,6 +6,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-07-11
+
+Security patch release. Closes a cross-site WebSocket hijacking gap in the web
+UI, stops the FMP API key from reaching logs on upstream HTTP errors, and clears
+a `joserfc` advisory in the crypto-server lock. Also lands the hub model bump and
+per-agent reasoning-effort overrides.
+
+### Security
+
+- **Cross-Site WebSocket Hijacking (CSWSH) on the web UI `/ws` endpoint.** The
+  Origin-guard middleware only runs for HTTP-scope requests, so the WebSocket
+  handshake was unauthenticated — a malicious browser tab could open the socket,
+  drive the hub with the user's keys, and read the streamed responses. The
+  handshake now rejects any non-local `Origin` before `accept()`.
+- **FMP API key written to logs on upstream HTTP errors** (screening- and
+  fundamentals-server). httpx embeds the key-bearing request URL in
+  `HTTPStatusError` text; `log_error` now redacts URLs from the message and
+  suppresses the traceback for those errors (CWE-532).
+- **`joserfc` advisory GHSA-gg9x-qcx2-xmrh** (HS256/384/512 verify accepts an
+  empty/nil HMAC key, fixed in 1.6.8). Raised the floor to `>=1.6.8` across all
+  fastmcp manifests and re-locked; crypto-server moved off the stale 1.6.7 pin to
+  1.7.2. `uv audit` is clean across every service.
+
+### Changed
+
+- **Default hub (orchestrator) model → `gpt-5.6-sol`** (from `gpt-5.5`).
+- **Hub reasoning effort → `medium`** (from `high`); **strategy, crypto, and
+  prediction-markets specialists → `high`** via new per-agent reasoning-effort
+  overrides. Other specialists remain `medium`.
+
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.5.2 → 1.5.3`.
+- `screening-server`: `0.2.1 → 0.3.0`; `fundamentals-server`: `0.1.9 → 0.2.0`.
+
 ## [1.4.1] - 2026-05-23
 
 Stable graduation of the 1.4.1 line. Adds the prediction-markets historical
