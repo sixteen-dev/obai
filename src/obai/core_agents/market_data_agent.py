@@ -4,7 +4,7 @@ This agent specializes in:
     - Real-time and historical stock prices
     - Market movers (gainers, losers, most active)
     - Sector performance and market status
-    - Technical indicators (RSI, MACD, moving averages)
+    - Technical indicators (RSI, moving averages, ADX)
     - Short interest and volume analysis
 """
 
@@ -41,7 +41,7 @@ class MarketDataAgent(BaseAgent):
         """Description for orchestrator handoff decisions."""
         return (
             "Specialist for real-time stock prices, quotes, historical data, "
-            "market movers (gainers/losers), technical indicators (RSI, MACD), "
+            "market movers (gainers/losers), technical indicators (RSI, moving averages, ADX), "
             "and market status. Use for price checks, charts, and technical analysis."
         )
 

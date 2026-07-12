@@ -224,6 +224,16 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket) -> None:
+        # Reject cross-origin WebSocket handshakes (CSWSH). OriginGuardMiddleware
+        # is an http-scope BaseHTTPMiddleware and never runs for websocket scope,
+        # so the handshake must validate Origin itself — otherwise a malicious
+        # browser tab could open this socket, drive the hub with the user's keys,
+        # and read the streamed responses. Browsers always send Origin; non-browser
+        # clients (no Origin) are not confused deputies, matching OriginGuardMiddleware.
+        origin = ws.headers.get("origin", "")
+        if origin and not _origin_is_local(origin):
+            await ws.close(code=1008)
+            return
         await ws.accept()
         try:
             while True:
