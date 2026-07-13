@@ -54,6 +54,7 @@ from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
 from core_agents.central_hub_agent import (
     CryptoPassthroughEvent,
     PredictionPassthroughEvent,
+    StrategyPassthroughEvent,
     get_inner_tool_outputs,
 )
 from core_agents.config import get_config
@@ -622,7 +623,10 @@ class OBaIApp(App[None]):
                 self._log_stream_event(event)
 
                 # Terminal passthrough: use specialist output directly
-                if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
+                if isinstance(
+                    event,
+                    PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+                ):
                     response.append(event.content)
                     response_text = event.content
                     continue

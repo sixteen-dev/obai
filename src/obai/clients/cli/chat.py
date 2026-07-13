@@ -326,6 +326,7 @@ async def _run_query(  # noqa: PLR0912
     from core_agents.central_hub_agent import (
         CryptoPassthroughEvent,
         PredictionPassthroughEvent,
+        StrategyPassthroughEvent,
         get_inner_tool_outputs,
     )
     from core_agents.config import get_config
@@ -348,7 +349,10 @@ async def _run_query(  # noqa: PLR0912
     try:
         async for event in hub.run(query, session):
             # Terminal passthrough: use specialist output directly
-            if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
+            if isinstance(
+                event,
+                PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+            ):
                 response_text = event.content
                 continue
 

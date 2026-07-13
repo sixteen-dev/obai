@@ -112,6 +112,19 @@ class CryptoPassthroughEvent:
     content: str
 
 
+@dataclass(frozen=True)
+class StrategyPassthroughEvent:
+    """Emitted by hub.run() for terminal strategy specialist output.
+
+    Makes strategy relay deterministic like prediction/crypto: the client
+    renders ``content`` verbatim so hub-authored preamble (e.g. retry
+    narration after a handoff-format rejection) can never prefix the
+    nine-section deliverable.
+    """
+
+    content: str
+
+
 @dataclass
 class CryptoPassthroughState:
     """Mutable run-scoped crypto passthrough holder.
@@ -360,6 +373,9 @@ _STRATEGY_OBJECTIVE_PATTERNS = (
         r"\b(value|quality|growth|income|dividend|factor|rotation|swing|covered[- ]call|wheel)\b",
         re.IGNORECASE,
     ),
+    # Passive holding families (buy-and-hold is a complete objective on its own,
+    # not dependent on an incidental "dividend"/"income" token appearing nearby)
+    re.compile(r"\bbuy[- ]and[- ]hold\b|\bbuy[- ]?&[- ]?hold\b", re.IGNORECASE),
     # Indicator names (implies technical strategy)
     re.compile(
         r"\b(sma|ema|wma|dema|tema|rsi|macd|bbands|atr|adx|stoch|stochrsi|cci|willr|mom|roc|obv|mfi|aroon|sar)\b",
@@ -404,6 +420,10 @@ _STRATEGY_SYMBOL_LIST_PATTERNS = (
         r"^\s*[-*•]\s*(?P<body>[A-Z]{1,5}(?:\.[A-Z])?)(?=\s*\(|\s*$)",
         re.MULTILINE,
     ),
+    # Bracketed ticker list — the skill's canonical `Universe: [tickers]` form,
+    # but label-agnostic so the hub's paraphrases ("Concrete universe tickers:
+    # [KO]", "Resolved instrument: [KO]") still resolve a concrete universe.
+    re.compile(r"\[(?P<body>[A-Z]{1,5}(?:\.[A-Z])?(?:\s*,\s*[A-Z]{1,5}(?:\.[A-Z])?)*)\]"),
 )
 _NON_TICKER_TOKENS = {
     "AND",
@@ -1650,6 +1670,8 @@ class CentralHubAgent:
                 terminal_fired = "prediction"
             if terminal_fired is None and _get_crypto_passthrough() is not None:
                 terminal_fired = "crypto"
+            if terminal_fired is None and _get_strategy_passthrough() is not None:
+                terminal_fired = "strategy"
 
             # After a terminal specialist fires, buffer hub text synthesis.
             if terminal_fired is not None:
@@ -1669,13 +1691,13 @@ class CentralHubAgent:
         # was injecting stale market identifiers that biased followup queries.
 
         # Always-passthrough relay for prediction output.
-        # Prediction-market output is non-deterministic in shape (unlike the
-        # strategy 9-section deliverable), so the hub LLM consistently rewrites
-        # or compresses it regardless of how strongly the skill or control line
-        # frames the verbatim-relay contract. Bypass hub authoring entirely:
-        # emit the specialist output directly to the client and discard the
-        # buffered hub-authored text. validate_prediction_relay is still
-        # invoked for trace diagnostics; the boolean does not gate the choice.
+        # Prediction-market output is non-deterministic in shape, so the hub LLM
+        # consistently rewrites or compresses it regardless of how strongly the
+        # skill or control line frames the verbatim-relay contract. Bypass hub
+        # authoring entirely: emit the specialist output directly to the client
+        # and discard the buffered hub-authored text. validate_prediction_relay
+        # is still invoked for trace diagnostics; the boolean does not gate the
+        # choice. (Crypto and strategy use the same deterministic passthrough.)
         if terminal_fired == "prediction" and _prediction_passthrough:
             hub_final_text = "".join(response_buffer)
             relay_ok = validate_prediction_relay(
@@ -1693,6 +1715,16 @@ class CentralHubAgent:
             yield CryptoPassthroughEvent(content=crypto_output)
             response_buffer.clear()
             response_buffer.append(crypto_output)
+        elif terminal_fired == "strategy" and _get_strategy_passthrough():
+            # Strategy is a terminal author whose output is a deterministic
+            # nine-section (or pending-stub) deliverable. Emit it verbatim and
+            # drop any hub preamble (e.g. handoff-retry narration) — the hub is
+            # not trusted to relay it clean, as prediction/crypto already are.
+            strategy_state = _get_strategy_passthrough()
+            strategy_output = strategy_state.content if strategy_state else ""
+            yield StrategyPassthroughEvent(content=strategy_output)
+            response_buffer.clear()
+            response_buffer.append(strategy_output)
 
         # Cache the response for future follow-up questions
         final_response = "".join(response_buffer)

@@ -249,6 +249,19 @@ class TestHubIntegration:
         assert "status checks or drill-downs" in skill
         assert "Strategy Agent is stateless" in skill
 
+    def test_strategy_routing_skill_states_runtime_relay(self) -> None:
+        """Completed/pending relay is runtime-enforced (like crypto), not hub-authored.
+
+        Guards the skill against reverting to the old 'the Hub relays its
+        output' framing after the strategy passthrough (StrategyPassthroughEvent)
+        made completed/pending relay deterministic.
+        """
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "relayed by the runtime directly" in skill
+        assert "discards any Hub text authored after the tool returns" in skill
+
 
 class TestStrategyRoutingGuard:
     """Test deterministic hub guard for strategy tool routing."""
@@ -332,6 +345,41 @@ class TestStrategyRoutingGuard:
         # Dividend income strategy
         missing = _get_missing_strategy_inputs("Build a dividend income strategy for MSFT, JNJ")
         assert missing == []
+
+    def test_allows_bracketed_universe_and_buy_and_hold(self) -> None:
+        """Bracketed universe list + buy-and-hold objective must pass the gate.
+
+        Reproduces a production trace (RV25) where the hub authored the
+        universe as `- Concrete universe tickers: [KO]` / `Resolved
+        instrument: KO` with a buy-and-hold objective and was wrongly rejected
+        for missing tickers, because the extractor only recognized `Universe:`
+        (colon-adjacent) and buy-and-hold was not a known objective.
+        """
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
+        handoff = (
+            "User request:\n"
+            "Backtest a buy-and-hold on KO from 2015 to 2024 and report the "
+            "total return.\n"
+            "Strategy context:\n"
+            "- Concrete universe tickers: [KO].\n"
+            "- Objective and rules: buy KO once and hold to the end.\n"
+        )
+        assert _get_missing_strategy_inputs(handoff) == []
+
+    def test_extracts_bracketed_ticker_list(self) -> None:
+        """Bracketed ticker lists must count as a concrete universe."""
+        from core_agents.central_hub_agent import _extract_strategy_symbols
+
+        assert "KO" in _extract_strategy_symbols("- Resolved instrument: [KO]")
+        assert {"AAPL", "MSFT"} <= _extract_strategy_symbols("Universe: [AAPL, MSFT]")
+
+    def test_buy_and_hold_is_a_recognized_objective(self) -> None:
+        """Buy-and-hold must be a recognized objective on its own merit."""
+        from core_agents.central_hub_agent import _has_strategy_objective
+
+        assert _has_strategy_objective("buy-and-hold on KO")
+        assert _has_strategy_objective("a buy and hold strategy")
 
     def test_strategy_routing_hint_preserves_universe_resolution(self) -> None:
         """Routing hint should restore old nudge without bypassing screener."""
@@ -426,3 +474,34 @@ class TestStrategyRoutingGuard:
         # Follow-up shorthand: header-only Strategy context still has both headers.
         shorthand_handoff = "User request: Check status for job bt_12345\nStrategy context:\n"
         assert _get_strategy_handoff_format_error(shorthand_handoff) is None
+
+
+class TestStrategyPassthrough:
+    """Strategy output relays deterministically like prediction/crypto."""
+
+    def test_passthrough_state_roundtrip(self) -> None:
+        """Set/get/clear stores content and kind and resets to None."""
+        from core_agents.central_hub_agent import (
+            _clear_strategy_passthrough,
+            _get_strategy_passthrough,
+            _set_strategy_passthrough,
+        )
+
+        _clear_strategy_passthrough()
+        assert _get_strategy_passthrough() is None
+
+        _set_strategy_passthrough("#### 1. Verdict\npaper_trade", "completed")
+        state = _get_strategy_passthrough()
+        assert state is not None
+        assert state.content == "#### 1. Verdict\npaper_trade"
+        assert state.kind == "completed"
+
+        _clear_strategy_passthrough()
+        assert _get_strategy_passthrough() is None
+
+    def test_passthrough_event_carries_content(self) -> None:
+        """The relay event exposes the verbatim specialist content."""
+        from core_agents.central_hub_agent import StrategyPassthroughEvent
+
+        event = StrategyPassthroughEvent(content="deliverable")
+        assert event.content == "deliverable"

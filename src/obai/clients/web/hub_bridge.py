@@ -123,6 +123,7 @@ class HubBridge:
         from core_agents.central_hub_agent import (
             CryptoPassthroughEvent,
             PredictionPassthroughEvent,
+            StrategyPassthroughEvent,
         )
         from core_agents.guardrails import get_rejection_message
 
@@ -158,7 +159,12 @@ class HubBridge:
             try:
                 async for event in self._hub.run(text, session):
                     # --- Terminal passthrough ---
-                    if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
+                    if isinstance(
+                        event,
+                        PredictionPassthroughEvent
+                        | CryptoPassthroughEvent
+                        | StrategyPassthroughEvent,
+                    ):
                         response_text = event.content
                         yield {"type": "text_delta", "delta": event.content}
                         continue

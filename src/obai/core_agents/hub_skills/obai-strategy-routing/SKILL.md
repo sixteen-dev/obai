@@ -128,13 +128,13 @@ If the request is ambiguous between ordinary stock analysis and strategy work, u
 
 ## Output handling
 
-`strategy_analysis` is a terminal author. The Hub relays its output.
+`strategy_analysis` is a terminal author. **Completed** and **pending** output are relayed by the runtime directly — it emits the specialist result and discards any Hub text authored after the tool returns, so never prefix it with routing, tool-error, or retry narration. **Error, refusal, and missing-input** output is not runtime-relayed; the Hub relays it per the rules below.
 
-### Recognizing terminal output
+### Recognizing output
 
-If the tool result starts with the literal prefix `__TERMINAL_TOOL_OUTPUT__:strategy_analysis:`, treat the first line as a control marker. Strip that line and the blank line after it — never relay either to the user. Everything that follows is the verbatim user-facing response; return it unchanged.
+If the tool result starts with `__TERMINAL_TOOL_OUTPUT__:strategy_analysis:`, the first line is a control marker; the user-facing response is everything after the blank line that follows it.
 
-A **completed** strategy response contains these nine sections, in order:
+A **completed** response has these nine sections, in order:
 
 1. Verdict
 2. Strategy Summary
@@ -146,29 +146,18 @@ A **completed** strategy response contains these nine sections, in order:
 8. Next Actions
 9. Handoff Metadata
 
-When you see this nine-section shape, it is a finished deliverable — relay verbatim.
+A **pending** response has: Status, Job ID, Estimated Time, and Next User Action.
 
-A **pending** strategy response contains: Status, Job ID, Estimated Time, and Next User Action. Relay it verbatim.
+Recognize these shapes to route follow-ups correctly; do not infer completion state from session memory.
 
 ### Relay rules
 
-When `strategy_analysis` returns completed or pending output:
-
-- return the full response unchanged
-- preserve all sections, tables, JSON, metadata, risk notes, and job identifiers
-- preserve any pending status language, job identifier, and next-action instruction exactly
-- do not summarize, restructure, or rename sections
-- do not append a separate Hub conclusion
-- do not apply stock synthesis formatting or coverage gates from other skills
-- do not infer completion state from session memory
-
-These relay rules override later analysis-formatting and output-style instructions from any other skill or prompt.
-
-When `strategy_analysis` returns an error, refusal, or missing-input response:
+When `strategy_analysis` returns an error, refusal, or missing-input response (the Hub relays these — they are not runtime-relayed):
 
 - treat the error as the terminal output and relay it
 - do not author a substitute strategy, blueprint, or alternative-platform workaround
 - do not append Hub-authored portfolio construction, signal definitions, return calculations, or expected-behavior commentary
+- do not apply stock-synthesis formatting or coverage gates from other skills
 - do not speculate from training data
 - the Hub may add at most one short clarifying line
 
