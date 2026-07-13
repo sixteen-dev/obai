@@ -216,6 +216,49 @@ class FMPClient:
         self._statement_cache[cache_key] = result
         return result
 
+    async def get_key_metrics_ttm(self, symbol: str) -> list[dict[str, Any]]:
+        """Get trailing-twelve-month (TTM) key metrics for a symbol.
+
+        TTM metrics are computed against the latest price and the trailing four
+        quarters, so valuation ratios reflect current conditions rather than a
+        fiscal-period-end snapshot.
+
+        Args:
+            symbol: Stock ticker symbol
+
+        Returns:
+            List holding the single TTM key-metrics snapshot record
+        """
+        cache_key = f"metrics-ttm:{symbol.upper()}"
+        if cache_key in self._statement_cache:
+            logger.debug("cache_hit", endpoint="key-metrics-ttm", symbol=symbol)
+            return self._statement_cache[cache_key]
+
+        result = await self._get("key-metrics-ttm", {"symbol": symbol})
+        self._statement_cache[cache_key] = result
+        return result
+
+    async def get_financial_ratios_ttm(self, symbol: str) -> list[dict[str, Any]]:
+        """Get trailing-twelve-month (TTM) financial ratios for a symbol.
+
+        TTM ratios (P/E, P/S, EV/EBITDA, margins, ROE) are computed against the
+        latest price and the trailing four quarters, not a fiscal-period end.
+
+        Args:
+            symbol: Stock ticker symbol
+
+        Returns:
+            List holding the single TTM financial-ratios snapshot record
+        """
+        cache_key = f"ratios-ttm:{symbol.upper()}"
+        if cache_key in self._statement_cache:
+            logger.debug("cache_hit", endpoint="ratios-ttm", symbol=symbol)
+            return self._statement_cache[cache_key]
+
+        result = await self._get("ratios-ttm", {"symbol": symbol})
+        self._statement_cache[cache_key] = result
+        return result
+
     async def get_analyst_estimates(
         self, symbol: str, period: str = "annual", limit: int = 5
     ) -> list[dict[str, Any]]:

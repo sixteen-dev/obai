@@ -216,8 +216,10 @@ class FMPClient:
             volume_lower_than: Maximum volume
             beta_more_than: Minimum beta
             beta_lower_than: Maximum beta
-            dividend_more_than: Minimum dividend yield
-            dividend_lower_than: Maximum dividend yield
+            dividend_more_than: Minimum annual dividend in dollars per share
+                (FMP dividendMoreThan filters on lastAnnualDividend, not a yield percent)
+            dividend_lower_than: Maximum annual dividend in dollars per share
+                (FMP dividendLowerThan filters on lastAnnualDividend, not a yield percent)
             sector: Sector filter (e.g., "Technology")
             industry: Industry filter
             country: Country code (e.g., "US")

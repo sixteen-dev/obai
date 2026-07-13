@@ -10,6 +10,8 @@ filters:
       - companyName
       - marketCap
       - price
+      - lastDividend
+      - lastAnnualDividend
       - beta
       - volume
       - sector

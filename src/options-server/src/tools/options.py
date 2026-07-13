@@ -73,7 +73,7 @@ async def get_option_chain_snapshot(
             results = data.get("results", [])
             filtered_results = filter_option_chain_snapshot(results)
 
-            return {
+            response: dict[str, Any] = {
                 "underlying_asset": underlying_asset.upper(),
                 "filters": {
                     "expiration_date": expiration_date,
@@ -82,7 +82,19 @@ async def get_option_chain_snapshot(
                 },
                 "count": len(filtered_results),
                 "contracts": filtered_results,
+                "pages_fetched": data["pages_fetched"],
+                "truncated": data["truncated"],
             }
+            if data["truncated"]:
+                response["warning"] = (
+                    "Option chain was truncated at the page cap, so chain-wide "
+                    "stats (put/call ratio, max OI, IV skew) cover only the "
+                    "fetched contracts. Narrow the filter (e.g. by "
+                    "expiration_date or contract_type) to see the rest; "
+                    "``next_cursor`` can be used to resume."
+                )
+                response["next_cursor"] = data["next_cursor"]
+            return response
     except Exception as e:
         log_error(
             logger,

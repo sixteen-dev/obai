@@ -156,6 +156,7 @@ For every completed Mode 1 or Mode 2 response, use this section order:
 - Holding style
 
 #### 3. Backtest Evidence
+- All reported returns are total returns (dividends reinvested; prices are split- and dividend-adjusted). Do not add a separate dividend-yield adjustment on top of them.
 - Train-range metrics: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades
 - Final full-period metrics: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades
 - Explicit overfitting assessment

@@ -199,12 +199,42 @@ def _slug_from_url(market_url: str) -> str:
 
 
 def _yes_price(market: dict[str, Any]) -> float:
-    """Read the live YES price (first outcome) from a resolved market dict."""
+    """Read the live YES price by matching the outcome label, never by position.
+
+    Gamma markets are not always ordered ``['Yes', 'No']`` — many are
+    ``['No', 'Yes']`` or ``['Up', 'Down']`` — so reading ``outcome_prices[0]``
+    positionally would report the wrong side against this tool's YES-side
+    contract and flip the edge sign. Pair ``outcomes`` with ``outcome_prices``
+    index-for-index (as the Gamma normalizer emits them) and pick the price
+    whose label is "yes" (case-insensitive). The normalizer preserves
+    unparseable prices as ``None``, so raise a clear error rather than let
+    ``float(None)`` crash with an opaque ``TypeError``.
+
+    Raises:
+        ValueError: If there are no outcome_prices, no YES-labeled outcome, or
+            the YES price is unparseable/unavailable (``None``).
+
+    """
     prices = market.get("outcome_prices") or []
     if not prices:
         msg = "Market has no outcome_prices; cannot read a live YES price."
         raise ValueError(msg)
-    return float(prices[0])
+    outcomes = market.get("outcomes") or []
+    yes_index = next(
+        (i for i, label in enumerate(outcomes) if str(label).strip().lower() == "yes"),
+        None,
+    )
+    if yes_index is None:
+        msg = (
+            f"Market has no 'Yes' outcome (available outcomes: {outcomes}); "
+            "cannot read a YES price."
+        )
+        raise ValueError(msg)
+    yes_price = prices[yes_index] if yes_index < len(prices) else None
+    if yes_price is None:
+        msg = f"YES price is unparseable/unavailable for this market (outcome_prices: {prices})."
+        raise ValueError(msg)
+    return float(yes_price)
 
 
 def _parse_end_date(market: dict[str, Any]) -> datetime:

@@ -1,6 +1,7 @@
 """Market movers tool for market data."""
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from ..clients.fmp_client import FMPClient
@@ -11,7 +12,7 @@ from ..response_filters import filter_movers
 
 logger = get_logger(__name__)
 
-IndexName = Literal["sp500", "nasdaq", "dowjones"]
+IndexName = Literal["sp500", "nasdaq100", "dowjones"]
 
 # Max symbols per batch-quote request (URL length safety)
 _BATCH_SIZE = 100
@@ -71,11 +72,20 @@ async def _index_movers(
     """
     symbols = await _resolve_index_symbols(client, index)
     if not symbols:
+        # An empty constituent set means the provider returned nothing (not a
+        # genuine "no movers"). Disclose it and do not present it as authoritative;
+        # the empty set is not cached, so a subsequent call retries the fetch.
+        logger.warning("index_constituents_unavailable", index=index)
         return {
             "type": mover_type,
             "index": index,
             "constituents_count": 0,
             "data": [],
+            "retrieved_at": datetime.now(UTC).isoformat(),
+            "warnings": [
+                f"Constituent list for '{index}' was unavailable; "
+                "results are incomplete and will be retried on the next request."
+            ],
         }
 
     symbol_list = sorted(symbols)
@@ -114,20 +124,40 @@ async def _index_movers(
         index=index,
         constituents=len(symbols),
         quotes_received=len(all_quotes),
+        failed_chunks=failed_chunks,
     )
 
     sort_field = _sort_key(mover_type)
     reverse = mover_type != "losers"
-    all_quotes.sort(key=lambda q: q.get(sort_field, 0), reverse=reverse)
+    # Null-safe: drop quotes whose sort field is missing/None (common pre-market
+    # for changesPercentage) so list.sort never compares None to a float and
+    # crashes the whole response.
+    rankable = [q for q in all_quotes if q.get(sort_field) is not None]
+    rankable.sort(key=lambda q: q[sort_field], reverse=reverse)
+    top_movers = filter_movers(rankable[:limit])
 
-    top_movers = filter_movers(all_quotes[:limit])
-
-    return {
+    quotes_received = len(all_quotes)
+    constituents_count = len(symbols)
+    coverage_pct = round(quotes_received / constituents_count * 100, 1)
+    result: dict[str, Any] = {
         "type": mover_type,
         "index": index,
-        "constituents_count": len(symbols),
+        "constituents_count": constituents_count,
+        "quotes_received": quotes_received,
+        "failed_chunks": failed_chunks,
+        "coverage_pct": coverage_pct,
+        "retrieved_at": datetime.now(UTC).isoformat(),
         "data": top_movers,
     }
+    if failed_chunks > 0 or quotes_received < constituents_count:
+        # Disclose partial coverage explicitly instead of ranking a fraction of
+        # the universe and presenting it as the complete leaderboard.
+        result["warnings"] = [
+            f"Partial coverage for '{index}': priced {quotes_received} of "
+            f"{constituents_count} constituents ({coverage_pct}%); "
+            f"{failed_chunks} batch chunk(s) failed. The ranking may omit movers."
+        ]
+    return result
 
 
 async def get_movers(
@@ -144,8 +174,10 @@ async def get_movers(
     Args:
         mover_type: Type of movers to retrieve (gainers, losers, or actives)
         index: When provided, scopes results to the given index
-            (sp500, nasdaq, dowjones) by batch-quoting all constituents
-            and sorting server-side. Constituent lists are cached 24h.
+            (sp500, nasdaq100, dowjones) by batch-quoting all constituents
+            and sorting server-side. nasdaq100 is the Nasdaq-100 index
+            (~100 names), not the full Nasdaq exchange. Constituent lists
+            are cached 24h.
         limit: Max results to return for index movers (default 20)
 
     Returns:
@@ -162,7 +194,11 @@ async def get_movers(
 
             data = await client.get_stock_movers(mover_type)
             filtered_data = filter_movers(data)
-            return {"type": mover_type, "data": filtered_data}
+            return {
+                "type": mover_type,
+                "data": filtered_data,
+                "retrieved_at": datetime.now(UTC).isoformat(),
+            }
     except Exception as e:
         log_error(logger, e, context={"tool": "get_movers", "type": mover_type})
         raise

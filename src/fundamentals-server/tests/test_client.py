@@ -176,3 +176,119 @@ class TestFMPClientHealthCheck:
             await client.close()
 
             assert result is False
+
+
+class TestCombinedToolProviderFailure:
+    """Combined fundamentals tools must surface total provider failure, not empty success."""
+
+    @pytest.mark.asyncio
+    async def test_valuation_all_failed_returns_error(self) -> None:
+        """Both sub-fetches failing yields a typed isError payload, not empty lists."""
+        from src.tools.fundamentals import get_valuation_metrics
+
+        mock_fmp = MagicMock()
+        mock_fmp.get_key_metrics = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.get_financial_ratios = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.close = AsyncMock()
+
+        with patch("src.tools.fundamentals.FMPClient", return_value=mock_fmp):
+            result = await get_valuation_metrics("AAPL", period="annual", limit=1)
+
+        assert result.get("isError") is True
+        assert result.get("error")
+        assert result.get("error_type")
+        assert result["symbol"] == "AAPL"
+        assert "key_metrics" not in result
+        assert "financial_ratios" not in result
+        mock_fmp.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_valuation_partial_failure_flags_degraded(
+        self, sample_key_metrics: list[dict[str, Any]]
+    ) -> None:
+        """One failing source keeps the success shape and discloses degraded_sources."""
+        from src.tools.fundamentals import get_valuation_metrics
+
+        mock_fmp = MagicMock()
+        mock_fmp.get_key_metrics = AsyncMock(return_value=sample_key_metrics)
+        mock_fmp.get_financial_ratios = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.close = AsyncMock()
+
+        with patch("src.tools.fundamentals.FMPClient", return_value=mock_fmp):
+            result = await get_valuation_metrics("AAPL", period="annual")
+
+        assert result.get("isError") is not True
+        assert result["degraded_sources"] == ["financial_ratios"]
+        assert len(result["key_metrics"]) == 1
+        assert result["financial_ratios"] == []
+
+    @pytest.mark.asyncio
+    async def test_analyst_outlook_all_failed_returns_error(self) -> None:
+        """All three analyst sub-fetches failing yields a typed isError payload."""
+        from src.tools.fundamentals import get_analyst_outlook
+
+        mock_fmp = MagicMock()
+        mock_fmp.get_analyst_estimates = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.get_price_target_summary = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.get_company_rating = AsyncMock(side_effect=httpx.ConnectError("fmp down"))
+        mock_fmp.close = AsyncMock()
+
+        with patch("src.tools.fundamentals.FMPClient", return_value=mock_fmp):
+            result = await get_analyst_outlook("AAPL")
+
+        assert result.get("isError") is True
+        assert result.get("error_type")
+        assert result["symbol"] == "AAPL"
+        assert "analyst_estimates" not in result
+
+
+class TestValuationTTMBasis:
+    """Default valuation must use FMP TTM endpoints and label records with a basis."""
+
+    @pytest.mark.asyncio
+    async def test_valuation_uses_ttm_endpoint(self, mock_settings: Settings) -> None:
+        """Default (no explicit period) hits key-metrics-ttm/ratios-ttm with a ttm basis."""
+        from src.tools.fundamentals import get_valuation_metrics
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value=[{"symbol": "AAPL", "peRatioTTM": 30.1}])
+
+        with (
+            patch("src.clients.fmp_client.get_settings", return_value=mock_settings),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.return_value = mock_response
+
+            result = await get_valuation_metrics("AAPL")
+
+        called_urls = [call.args[0] for call in mock_get.call_args_list]
+        assert any("key-metrics-ttm" in url for url in called_urls)
+        assert any("ratios-ttm" in url for url in called_urls)
+        assert result["key_metrics"][0]["basis"] == "ttm"
+        assert result["financial_ratios"][0]["basis"] == "ttm"
+
+    @pytest.mark.asyncio
+    async def test_valuation_period_uses_fiscal_endpoint(self, mock_settings: Settings) -> None:
+        """Explicit period keeps the fiscal-period endpoints and a fiscal basis label."""
+        from src.tools.fundamentals import get_valuation_metrics
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(
+            return_value=[{"symbol": "AAPL", "date": "2023-09-30", "period": "FY", "peRatio": 28.5}]
+        )
+
+        with (
+            patch("src.clients.fmp_client.get_settings", return_value=mock_settings),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.return_value = mock_response
+
+            result = await get_valuation_metrics("AAPL", period="annual")
+
+        called_urls = [call.args[0] for call in mock_get.call_args_list]
+        assert not any("ttm" in url for url in called_urls)
+        assert result["key_metrics"][0]["basis"] == "FY2023"

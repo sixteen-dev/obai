@@ -1,6 +1,6 @@
 """FMP API client for market data."""
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -9,6 +9,56 @@ from ..logging_config import get_logger, log_api_call, log_error
 from ..utils import is_retryable_httpx_exc, retry_async
 
 logger = get_logger(__name__)
+
+# FMP's dividend-adjusted EOD endpoint returns adjusted OHLC under adj-prefixed
+# keys; downstream candle math reads the canonical open/high/low/close keys.
+_ADJUSTED_FIELD_MAP = {
+    "adjOpen": "open",
+    "adjHigh": "high",
+    "adjLow": "low",
+    "adjClose": "close",
+}
+
+
+def _normalize_adjusted_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Fold FMP dividend-adjusted OHLC fields onto the canonical OHLCV keys.
+
+    Args:
+        row: One candle from the dividend-adjusted daily endpoint.
+
+    Returns:
+        Row with adjOpen/adjHigh/adjLow/adjClose moved onto open/high/low/close.
+        Rows already in canonical shape are returned unchanged.
+    """
+    normalized = dict(row)
+    for adj_key, canonical_key in _ADJUSTED_FIELD_MAP.items():
+        if adj_key in normalized:
+            normalized[canonical_key] = normalized.pop(adj_key)
+    return normalized
+
+
+def _normalize_daily_adjusted(data: Any) -> dict[str, Any] | list[dict[str, Any]]:
+    """Normalize a daily EOD response so candles carry total-return OHLC.
+
+    Handles both the stable-API flat list and the legacy
+    ``{"symbol": ..., "historical": [...]}`` shape.
+
+    Args:
+        data: Raw JSON from the dividend-adjusted daily endpoint.
+
+    Returns:
+        The same container shape with each candle row normalized.
+    """
+    if isinstance(data, list):
+        return [_normalize_adjusted_row(row) for row in data]
+    if isinstance(data, dict):
+        historical = data.get("historical")
+        if isinstance(historical, list):
+            normalized = dict(data)
+            normalized["historical"] = [_normalize_adjusted_row(row) for row in historical]
+            return normalized
+    # Unexpected shape: pass through so _extract_candles_list logs and drops it.
+    return cast("dict[str, Any] | list[dict[str, Any]]", data)
 
 
 class FMPAPIError(Exception):
@@ -144,8 +194,14 @@ class FMPClient:
         symbol: str,
         from_date: str | None = None,
         to_date: str | None = None,
-    ) -> dict[str, Any]:
-        """Get daily historical price data.
+    ) -> dict[str, Any] | list[dict[str, Any]]:
+        """Get daily historical price data (split- and dividend-adjusted).
+
+        Uses FMP's dividend-adjusted EOD endpoint so daily closes are on a
+        total-return basis (reinvested dividends), and folds the adjusted
+        OHLC (adjOpen/adjHigh/adjLow/adjClose) onto the canonical
+        open/high/low/close keys so downstream math is unchanged. Intraday
+        data (get_historical_intraday) keeps raw prices.
 
         Args:
             symbol: Stock ticker symbol
@@ -153,7 +209,8 @@ class FMPClient:
             to_date: End date (YYYY-MM-DD format)
 
         Returns:
-            Dict with symbol info and historical data
+            Candle data with total-return OHLC, in the shape FMP returns
+            (flat list on the stable API; legacy dict with "historical").
         """
         params: dict[str, Any] = {"symbol": symbol}
         if from_date:
@@ -161,8 +218,8 @@ class FMPClient:
         if to_date:
             params["to"] = to_date
 
-        data: dict[str, Any] = await self._get("historical-price-eod/full", params)
-        return data
+        data = await self._get("historical-price-eod/dividend-adjusted", params)
+        return _normalize_daily_adjusted(data)
 
     async def get_stock_movers(self, mover_type: str) -> list[dict[str, Any]]:
         """Get market movers (gainers, losers, or most active).
@@ -305,7 +362,9 @@ class FMPClient:
         """Get constituent symbols for a market index.
 
         Args:
-            index: Index identifier ('sp500', 'nasdaq', 'dowjones')
+            index: Index identifier ('sp500', 'nasdaq100', 'dowjones').
+                'nasdaq100' is FMP's Nasdaq-100 constituent list (~100 names),
+                not the full Nasdaq exchange.
 
         Returns:
             List of constituent entries with symbol, name, sector, etc.
@@ -317,7 +376,7 @@ class FMPClient:
         """
         endpoint_map = {
             "sp500": "sp500-constituent",
-            "nasdaq": "nasdaq-constituent",
+            "nasdaq100": "nasdaq-constituent",
             "dowjones": "dowjones-constituent",
         }
         endpoint = endpoint_map.get(index)

@@ -50,6 +50,12 @@ class BacktestResult:
     avg_holding_minutes: float = 0.0
     timeframe: str = "daily"
 
+    # Risk-free rate disclosure (accuracy §5) — the rate Sharpe/Sortino/alpha
+    # were computed against, and where it came from ("treasury_3m", "fallback",
+    # "assumed_zero").
+    risk_free_rate: float = 0.0
+    risk_free_rate_source: str = "assumed_zero"
+
     # Breakdown
     yearly_returns: dict[str, float] = field(default_factory=dict)
     symbol_returns: dict[str, float] = field(default_factory=dict)
@@ -75,6 +81,8 @@ class BacktestResult:
                 "sortino_ratio": self.sortino_ratio,
                 "calmar_ratio": self.calmar_ratio,
             },
+            "risk_free_rate": self.risk_free_rate,
+            "risk_free_rate_source": self.risk_free_rate_source,
             "risk": {
                 "max_drawdown_pct": self.max_drawdown_pct,
                 "max_drawdown_start": self.max_drawdown_start,
@@ -140,6 +148,8 @@ class BacktestResult:
             avg_holding_minutes=trading.get("avg_holding_minutes", 0.0),
             max_consecutive_losses=trading.get("max_consecutive_losses", 0),
             timeframe=trading.get("timeframe", "daily"),
+            risk_free_rate=data.get("risk_free_rate", 0.0),
+            risk_free_rate_source=data.get("risk_free_rate_source", "assumed_zero"),
             benchmark_symbol=bench.get("benchmark_symbol", ""),
             benchmark_return_pct=bench.get("benchmark_return_pct", 0.0),
             benchmark_cagr_pct=bench.get("benchmark_cagr_pct", 0.0),

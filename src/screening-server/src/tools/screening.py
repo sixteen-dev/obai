@@ -46,8 +46,8 @@ async def screen_stocks(
     """Screen stocks with various filters for idea generation.
 
     Market-wide stock screening to find candidates matching specific criteria.
-    Returns a ranked list of stocks that can be passed to other agents for
-    deeper analysis.
+    Returns matching stocks in the provider's default order (no local ranking
+    is applied) that can be passed to other agents for deeper analysis.
 
     Args:
         market_cap_more_than: Minimum market cap
@@ -58,8 +58,10 @@ async def screen_stocks(
         volume_lower_than: Maximum volume
         beta_more_than: Minimum beta
         beta_lower_than: Maximum beta
-        dividend_more_than: Minimum dividend yield
-        dividend_lower_than: Maximum dividend yield
+        dividend_more_than: Minimum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
+        dividend_lower_than: Maximum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
         sector: Sector filter (e.g., "Technology", "Healthcare", "Financial Services")
         industry: Industry filter
         country: Country code (e.g., "US", "CN", "GB")
@@ -78,6 +80,11 @@ async def screen_stocks(
     """
     try:
         settings = get_settings()
+        # Over-fetch one row past the cap so truncation is detectable without a
+        # second request. The provider applies no documented ordering, so rows
+        # are returned in provider-default order (not a ranking).
+        capped_limit = min(limit, 100)
+        fetch_limit = min(capped_limit + 1, 100)
         async with FMPClient(settings) as client:
             data = await client.screen_stocks(
                 market_cap_more_than=market_cap_more_than,
@@ -98,10 +105,12 @@ async def screen_stocks(
                 is_fund=is_fund,
                 is_actively_trading=is_actively_trading,
                 include_all_share_classes=include_all_share_classes,
-                limit=limit,
+                limit=fetch_limit,
             )
 
             filtered_results = filter_screen_results(data)
+            has_more = len(filtered_results) > capped_limit
+            results = filtered_results[:capped_limit]
 
             # Build filters applied for response metadata
             filters_applied: dict[str, Any] = {}
@@ -152,11 +161,15 @@ async def screen_stocks(
                     "vendor": "FMP",
                     "endpoint": "/stable/company-screener",
                     "requested_at": datetime.now(timezone.utc).isoformat(),
-                    "row_count": len(filtered_results),
+                    "row_count": len(results),
+                    "returned": len(results),
+                    "limit": capped_limit,
+                    "has_more": has_more,
+                    "order": "provider_default",
                     "filters_applied": filters_applied,
                     "warning": warning,
                 },
-                "results": filtered_results,
+                "results": results,
             }
     except Exception as e:
         log_error(

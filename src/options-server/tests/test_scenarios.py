@@ -1,7 +1,17 @@
 """Tests for scenario analysis and position risk profiling."""
 
+import pytest
+
 from src.engine.pricing import bs_price
-from src.engine.scenarios import position_pnl_scenarios, position_risk_profile
+from src.engine.scenarios import (
+    _payoff_at_expiry,
+    position_pnl_scenarios,
+    position_risk_profile,
+)
+from src.server import options_compute_greeks_tool
+
+# A comfortably-future expiry so _years_to_expiry stays well above zero.
+_FUTURE_EXPIRY = "2027-01-15"
 
 
 class TestPnlScenarios:
@@ -93,6 +103,41 @@ class TestPnlScenarios:
                 assert isinstance(pnl_100x, float)
                 # Allow small rounding tolerance
                 assert abs(pnl_100x - pnl_1x * 100) < 1.0
+
+    def test_grid_honors_range_and_time(self) -> None:
+        """Grid must span the requested spot range and show time decay.
+
+        With spot_range_pct=25 the spot axis must reach ±25% (not a fixed
+        ±10%), and repricing at a forward horizon must move P&L for the same
+        spot/vol cell (theta effect on a long call).
+        """
+        result = position_pnl_scenarios(
+            current_price=100.0,
+            strike=100.0,
+            expiry_years=0.25,
+            option_type="call",
+            direction="long",
+            quantity=1,
+            entry_premium=self._fair_premium(),
+            iv=0.30,
+            spot_range_pct=25.0,
+            days_forward=[30],
+        )
+
+        spot_changes = result["spot_changes"]
+        assert isinstance(spot_changes, list)
+        assert max(spot_changes) == pytest.approx(25.0)
+        assert min(spot_changes) == pytest.approx(-25.0)
+
+        grid_t0 = result["pnl_grid"]
+        by_day = result["pnl_grid_by_day"]
+        assert isinstance(grid_t0, list)
+        assert isinstance(by_day, list)
+        grid_later = by_day[0]["pnl_grid"]
+        # Same ATM cell (0% spot idx 3, 0% vol idx 2): a long call bleeds theta,
+        # so its P&L at a later horizon must differ from (and sit below) t0.
+        assert grid_later[3][2] != grid_t0[3][2]
+        assert grid_later[3][2] < grid_t0[3][2]
 
 
 class TestRiskProfile:
@@ -234,3 +279,121 @@ class TestRiskProfile:
         # Strike=30 is far below the scan floor (50), so max loss is finite
         assert isinstance(result["max_loss"], float)
         assert result["max_loss"] != "unlimited"
+
+    def test_uppercase_call_payoff_matches_greeks(self) -> None:
+        """Uppercase 'CALL' legs must compute a CALL payoff, not a put payoff.
+
+        Greeks normalize case, so a 'CALL' leg gets call Greeks (positive
+        delta). The raw string compare in _payoff_at_expiry saw 'CALL' !=
+        'call' and computed the put payoff, contradicting those Greeks. The
+        payoff slope above the strike must be POSITIVE (call profile).
+        """
+        strike = 100.0
+        below = _payoff_at_expiry(strike + 5.0, strike, "CALL", "long", 1, 5.0)
+        above = _payoff_at_expiry(strike + 15.0, strike, "CALL", "long", 1, 5.0)
+        assert above > below  # long-call payoff rises as spot rises past strike
+
+        contract: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": strike,
+            "expiry_years": 0.25,
+            "option_type": "CALL",
+            "direction": "long",
+            "quantity": 1,
+            "entry_premium": 5.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        result = position_risk_profile([contract])
+        greeks = result["net_greeks"]
+        assert isinstance(greeks, dict)
+        assert greeks["delta"] > 0  # call Greeks
+        assert result["max_profit"] == "unlimited"  # call upside is unbounded
+        breakevens = result["breakevens"]
+        assert isinstance(breakevens, list)
+        assert breakevens[0] > strike  # call breakeven sits above the strike
+
+    def test_multi_expiry_rejected_or_modeled(self) -> None:
+        """A two-expiry calendar must be rejected, not silently collapsed.
+
+        Legs at different expiries cannot be modeled by the single-expiry
+        intrinsic payoff curve, so the engine must fail loud rather than
+        fabricate max_profit/max_loss/breakevens.
+        """
+        near_leg: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.08,
+            "option_type": "call",
+            "direction": "short",
+            "quantity": 1,
+            "entry_premium": 2.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        far_leg = {**near_leg, "expiry_years": 0.50, "direction": "long", "entry_premium": 4.0}
+        with pytest.raises(ValueError, match="multi-expiry"):
+            position_risk_profile([near_leg, far_leg])
+
+
+class TestComputeGreeksTool:
+    """Tool-level tests for options_compute_greeks_tool.
+
+    These exercise the dividend-yield threading and the implied-vol solver
+    at the product surface (the engine already supports both; the tool did
+    not reach them).
+    """
+
+    async def test_dividend_yield_changes_greeks(self) -> None:
+        """A nonzero dividend yield must lower a call's delta and price.
+
+        The exp(-qT) discount on spot (and the lower drift in d1) reduces
+        both call delta and call price versus q=0. The tool must thread the
+        dividend_yield through to bs_price/bs_greeks for this to show up.
+        """
+        base = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_FUTURE_EXPIRY,
+            option_type="call",
+            volatility=0.30,
+        )
+        with_div = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_FUTURE_EXPIRY,
+            option_type="call",
+            volatility=0.30,
+            dividend_yield=0.05,
+        )
+        assert with_div["greeks"]["delta"] < base["greeks"]["delta"]
+        assert with_div["price"] < base["price"]
+
+    async def test_compute_greeks_solves_iv_from_market_price(self) -> None:
+        """Supplying a market_price must yield a SOLVED IV, not the seed vol.
+
+        With a seed vol of 0.20 and a market price well above the seed's BS
+        value, the solved implied volatility must sit clearly above the seed;
+        without a market price the field falls back to the seed vol.
+        """
+        seed_vol = 0.20
+        echoed = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_FUTURE_EXPIRY,
+            option_type="call",
+            volatility=seed_vol,
+        )
+        assert echoed["implied_volatility"] == pytest.approx(seed_vol)
+
+        solved = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_FUTURE_EXPIRY,
+            option_type="call",
+            volatility=seed_vol,
+            market_price=15.0,
+        )
+        implied = solved["implied_volatility"]
+        assert implied != pytest.approx(seed_vol)
+        assert implied > seed_vol + 0.05

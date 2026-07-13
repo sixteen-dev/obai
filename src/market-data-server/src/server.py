@@ -210,15 +210,21 @@ async def market_data_get_candles_tool(
     limit: int = 30,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Get historical price candles (OHLCV data).
+    """Get historical price candles (OHLCV data), returned oldest-first.
+
+    Daily candles are split- and dividend-adjusted (total-return basis);
+    intraday candles are raw prices.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
         interval: Time interval (1min, 5min, 15min, 30min, 1hour, 4hour, daily)
         from_date: Start date in YYYY-MM-DD format (optional)
         to_date: End date in YYYY-MM-DD format (optional)
-        limit: Maximum number of candles to return (default: 100)
-        offset: Number of candles to skip (for pagination)
+        limit: Maximum number of candles to return (default: 30, max: 130).
+            Requests above 130 are clamped; pagination metadata echoes both
+            the requested and effective limit.
+        offset: Number of candles to skip. Candles are oldest-first, so a
+            higher offset pages forward in time.
 
     Returns:
         Historical OHLCV candle data with pagination metadata
@@ -242,17 +248,19 @@ async def market_data_get_candles_tool(
 )
 async def market_data_get_movers_tool(
     mover_type: Literal["gainers", "losers", "actives"] = "gainers",
-    index: Literal["sp500", "nasdaq", "dowjones"] | None = None,
+    index: Literal["sp500", "nasdaq100", "dowjones"] | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
     """Get market movers (top gainers, losers, or most active stocks).
 
     Args:
         mover_type: Type of movers to retrieve (gainers, losers, or actives)
-        index: Scope results to a specific index (sp500, nasdaq, dowjones).
-            When provided, batch-quotes all index constituents and returns
-            the top movers sorted by change % (or volume for actives).
-            Constituent lists are cached 24h. Omit for exchange-wide movers.
+        index: Scope results to a specific index (sp500, nasdaq100, dowjones).
+            nasdaq100 is the Nasdaq-100 index (~100 names), not the full
+            Nasdaq exchange or the Nasdaq Composite. When provided,
+            batch-quotes all index constituents and returns the top movers
+            sorted by change % (or volume for actives). Constituent lists are
+            cached 24h. Omit for exchange-wide movers.
         limit: Max results to return for index movers (default 20, ignored
             when index is omitted)
 

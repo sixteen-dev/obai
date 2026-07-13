@@ -6,8 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.clients.massive_client import MassiveAPIError, MassiveClient
+from src.clients.massive_client import (
+    CHAIN_SNAPSHOT_MAX_PAGES,
+    MassiveAPIError,
+    MassiveClient,
+)
 from src.config import Settings
+from src.tools.options import get_option_chain_snapshot
 
 
 class TestMassiveClientRetry:
@@ -29,7 +34,8 @@ class TestMassiveClientRetry:
             async with MassiveClient(mock_settings) as client:
                 result = await client.get_option_chain_snapshot(underlying_asset="AAPL", limit=10)
 
-            assert result == sample_option_chain_response
+            assert result["results"] == sample_option_chain_response["results"]
+            assert result["truncated"] is False
             assert mock_get.call_count == 1
 
     @pytest.mark.asyncio
@@ -52,7 +58,8 @@ class TestMassiveClientRetry:
                         underlying_asset="AAPL", limit=5
                     )
 
-            assert result == {"status": "OK", "results": []}
+            assert result["results"] == []
+            assert result["truncated"] is False
             assert mock_get.call_count == 2
 
     @pytest.mark.asyncio
@@ -79,7 +86,8 @@ class TestMassiveClientRetry:
                         underlying_asset="AAPL", limit=5
                     )
 
-            assert result == {"status": "OK", "results": []}
+            assert result["results"] == []
+            assert result["truncated"] is False
             assert mock_get.call_count == 2
 
     @pytest.mark.asyncio
@@ -126,7 +134,8 @@ class TestMassiveClientRetry:
                         underlying_asset="AAPL", limit=5
                     )
 
-            assert result == {"status": "OK", "results": []}
+            assert result["results"] == []
+            assert result["truncated"] is False
             assert mock_get.call_count == 2
 
     @pytest.mark.asyncio
@@ -170,8 +179,83 @@ class TestMassiveClientRetry:
                         underlying_asset="AAPL", limit=5
                     )
 
-            assert result == {"status": "OK", "results": []}
+            assert result["results"] == []
+            assert result["truncated"] is False
             assert mock_get.call_count == 2
+
+
+def _make_chain_page(index: int, has_next: bool) -> MagicMock:
+    """Build a mock Massive snapshot page with one contract and optional cursor."""
+    contract = {
+        "details": {
+            "ticker": f"O:SPY240119C{index:08d}",
+            "strike_price": 400.0 + index,
+            "expiration_date": "2024-01-19",
+            "contract_type": "call",
+        },
+        "open_interest": 1000 + index,
+        "implied_volatility": 0.2,
+    }
+    body: dict[str, Any] = {"status": "OK", "results": [contract]}
+    if has_next:
+        body["next_url"] = f"https://api.massive.com/v3/snapshot?cursor=CUR{index}"
+
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=body)
+    return response
+
+
+class TestOptionChainSnapshotPagination:
+    """Tests for chain-snapshot pagination and truncation flagging."""
+
+    @pytest.mark.asyncio
+    async def test_chain_snapshot_flags_truncation(self, mock_settings: Settings) -> None:
+        """Chain snapshot pages under a cap, aggregates all pages, and flags truncation."""
+        # Every page advertises a further cursor, so the page cap is hit.
+        pages = [_make_chain_page(i, has_next=True) for i in range(CHAIN_SNAPSHOT_MAX_PAGES)]
+
+        with (
+            patch("src.tools.options.get_settings", return_value=mock_settings),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = pages
+            result = await get_option_chain_snapshot(underlying_asset="SPY")
+
+        # Aggregated across every fetched page, not just the first slice.
+        assert mock_get.call_count == CHAIN_SNAPSHOT_MAX_PAGES
+        assert result["count"] == CHAIN_SNAPSHOT_MAX_PAGES
+        tickers = {c["ticker"] for c in result["contracts"]}
+        assert len(tickers) == CHAIN_SNAPSHOT_MAX_PAGES
+        # Truncation is surfaced so chain-wide stats are not silently biased.
+        assert result["truncated"] is True
+        assert result["pages_fetched"] == CHAIN_SNAPSHOT_MAX_PAGES
+        assert result["next_cursor"]
+        assert "warning" in result
+
+    @pytest.mark.asyncio
+    async def test_chain_snapshot_not_truncated_when_cursor_exhausted(
+        self, mock_settings: Settings
+    ) -> None:
+        """A chain that fits under the cap aggregates all pages without a truncation flag."""
+        pages = [
+            _make_chain_page(0, has_next=True),
+            _make_chain_page(1, has_next=False),
+        ]
+
+        with (
+            patch("src.tools.options.get_settings", return_value=mock_settings),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = pages
+            result = await get_option_chain_snapshot(underlying_asset="SPY")
+
+        assert mock_get.call_count == 2
+        assert result["count"] == 2
+        assert result["truncated"] is False
+        assert "warning" not in result
+        assert "next_cursor" not in result
 
 
 class TestMassiveClientHealthCheck:

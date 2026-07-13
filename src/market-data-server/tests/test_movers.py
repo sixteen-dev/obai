@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.clients.fmp_client import FMPClient
 from src.clients.index_cache import clear_cache
+from src.config import Settings
 from src.tools.movers import get_movers
 
 
@@ -126,7 +128,7 @@ class TestGetMovers:
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_movers("actives", index="nasdaq", limit=2)
+            result = await get_movers("actives", index="nasdaq100", limit=2)
 
         symbols = [m["symbol"] for m in result["data"]]
         assert symbols == ["B", "A"]
@@ -195,3 +197,114 @@ class TestGetMovers:
         assert result["data"] == []
         assert result["constituents_count"] == 0
         mock_client.batch_quote.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nasdaq_index_labeled_nasdaq100(self, mock_settings: Settings) -> None:
+        """The Nasdaq index key is 'nasdaq100' (the Nasdaq-100 index, not the exchange).
+
+        Guards accuracy.md §23: 'nasdaq-constituent' returns the Nasdaq-100 (~100
+        names), so the key must be labeled nasdaq100 and echoed as such; the bare
+        'nasdaq' key must be rejected, not silently aliased to the 100-name index.
+        """
+        constituents = [{"symbol": "AAPL"}, {"symbol": "MSFT"}]
+        quotes = [_make_quote("AAPL", 2.0), _make_quote("MSFT", 5.0)]
+
+        mock_client = AsyncMock()
+        mock_client.get_index_constituents = AsyncMock(return_value=constituents)
+        mock_client.batch_quote = AsyncMock(return_value=quotes)
+
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await get_movers("gainers", index="nasdaq100", limit=2)
+
+        # Accepted key/label and echoed index are both 'nasdaq100'.
+        assert result["index"] == "nasdaq100"
+        mock_client.get_index_constituents.assert_awaited_once_with("nasdaq100")
+
+        # 'nasdaq100' maps to FMP's nasdaq-constituent endpoint (the Nasdaq-100).
+        async with FMPClient(mock_settings) as client:
+            with patch.object(client, "_get", new=AsyncMock(return_value=[])) as mock_get:
+                await client.get_index_constituents("nasdaq100")
+            mock_get.assert_awaited_once_with("nasdaq-constituent")
+
+            # The old bare 'nasdaq' key is rejected, not aliased to the Nasdaq-100.
+            with pytest.raises(ValueError, match="nasdaq"):
+                await client.get_index_constituents("nasdaq")
+
+    @pytest.mark.asyncio
+    async def test_index_movers_null_change_no_crash(self) -> None:
+        """A null changesPercentage (common pre-market) must not crash the sort.
+
+        Guards accuracy.md §21 bug (1): q.get('changesPercentage') returns None
+        and list.sort comparing None to a float raises TypeError, so the tool
+        returns no mover data. The sort must be null-safe.
+        """
+        constituents = [{"symbol": "AAPL"}, {"symbol": "MSFT"}, {"symbol": "GOOG"}]
+        quotes = [
+            _make_quote("AAPL", 2.0),
+            {**_make_quote("MSFT", 0.0), "changesPercentage": None},
+            _make_quote("GOOG", 8.0),
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.get_index_constituents = AsyncMock(return_value=constituents)
+        mock_client.batch_quote = AsyncMock(return_value=quotes)
+
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+        ):
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await get_movers("gainers", index="sp500", limit=3)
+
+        # Normal result dict (not an error envelope) and no exception raised.
+        assert result["type"] == "gainers"
+        assert result["index"] == "sp500"
+        # Non-null gainers are ranked; the null-change quote is unrankable and
+        # sorts out of the leaderboard rather than crashing the comparison.
+        symbols = [m["symbol"] for m in result["data"]]
+        assert symbols == ["GOOG", "AAPL"]
+        assert "MSFT" not in symbols
+
+    @pytest.mark.asyncio
+    async def test_index_movers_reports_partial_coverage(self) -> None:
+        """A failed batch chunk must be disclosed, not silently absorbed.
+
+        Guards accuracy.md §21 bug (2): failed_chunks was incremented but never
+        read, so a partial constituent universe was presented as the complete
+        leaderboard. The response must carry a coverage signal and a warning.
+        """
+        constituents = [{"symbol": s} for s in ["A", "B", "C", "D"]]
+        first_chunk = [_make_quote("A", 2.0), _make_quote("B", 5.0)]
+
+        mock_client = AsyncMock()
+        mock_client.get_index_constituents = AsyncMock(return_value=constituents)
+        mock_client.batch_quote = AsyncMock(
+            side_effect=[first_chunk, RuntimeError("chunk 2 failed")]
+        )
+
+        with (
+            patch("src.tools.movers.get_settings"),
+            patch("src.tools.movers.FMPClient") as mock_cls,
+            patch("src.tools.movers._BATCH_SIZE", 2),
+        ):
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await get_movers("gainers", index="sp500", limit=10)
+
+        # Coverage is surfaced explicitly: 2 of 4 constituents priced, 1 chunk failed.
+        assert result["constituents_count"] == 4
+        assert result["quotes_received"] == 2
+        assert result["failed_chunks"] == 1
+        assert result["coverage_pct"] == 50.0
+        warnings = result["warnings"]
+        assert isinstance(warnings, list) and warnings
+        assert any("coverage" in w.lower() for w in warnings)

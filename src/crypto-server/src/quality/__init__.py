@@ -8,6 +8,7 @@ from .timeframes import (
     iter_candle_chunks,
     latest_observation,
     normalize_granularity,
+    open_interval_fetch_start,
     parse_time,
     snap_start_to_available,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "iter_candle_chunks",
     "latest_observation",
     "normalize_granularity",
+    "open_interval_fetch_start",
     "parse_time",
     "snap_start_to_available",
 ]

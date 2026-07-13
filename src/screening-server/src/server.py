@@ -176,7 +176,7 @@ async def screening_screen_stocks_tool(
     Common use cases:
     - "Find tech stocks under $50B market cap"
     - "Show me high-volume stocks with low beta"
-    - "Screen for dividend stocks yielding above 3%"
+    - "Screen for dividend stocks paying above a set amount per share"
 
     Args:
         market_cap_more_than: Minimum market cap (e.g., 10000000000 for $10B)
@@ -187,8 +187,10 @@ async def screening_screen_stocks_tool(
         volume_lower_than: Maximum daily volume
         beta_more_than: Minimum beta (volatility relative to market)
         beta_lower_than: Maximum beta
-        dividend_more_than: Minimum dividend yield (e.g., 0.5 for 0.5%)
-        dividend_lower_than: Maximum dividend yield
+        dividend_more_than: Minimum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
+        dividend_lower_than: Maximum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
         sector: Sector filter (Technology, Healthcare, Financial Services, etc.)
         industry: Industry filter (more specific than sector)
         country: Country code (US, CN, GB, etc.)

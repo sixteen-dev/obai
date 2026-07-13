@@ -138,7 +138,7 @@ class TavilyClient:
                 }
 
                 if time_range:
-                    search_params["days"] = self._time_range_to_days(time_range)
+                    search_params["time_range"] = self._time_range_to_tavily(time_range)
 
                 # Only restrict domains when the caller passed an explicit
                 # non-empty list. The old behavior always applied a curated
@@ -191,26 +191,30 @@ class TavilyClient:
         msg = "Request failed with no error recorded"
         raise RuntimeError(msg)
 
-    def _time_range_to_days(self, time_range: TimeRange) -> int:
-        """Convert time range string to days for Tavily API.
+    def _time_range_to_tavily(self, time_range: TimeRange) -> str:
+        """Map a requested recency window to Tavily's supported time_range token.
+
+        Tavily's ``/search`` filters recency for ``topic="finance"`` via the
+        ``time_range`` parameter (``d``/``w``/``m``/``y``). The legacy ``days``
+        parameter is ignored for the finance topic, so it is not used.
 
         Args:
-            time_range: Time range string
+            time_range: Requested recency window
 
         Returns:
-            Number of days to search
+            Tavily recency token: 'd', 'w', 'm', or 'y' (defaults to 'w')
         """
-        mapping: dict[TimeRange, int] = {
-            "day": 1,
-            "d": 1,
-            "week": 7,
-            "w": 7,
-            "month": 30,
-            "m": 30,
-            "year": 365,
-            "y": 365,
+        mapping: dict[TimeRange, str] = {
+            "day": "d",
+            "d": "d",
+            "week": "w",
+            "w": "w",
+            "month": "m",
+            "m": "m",
+            "year": "y",
+            "y": "y",
         }
-        return mapping.get(time_range, 7)
+        return mapping.get(time_range, "w")
 
     def _normalize_results(
         self,

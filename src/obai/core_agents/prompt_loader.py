@@ -5,9 +5,10 @@ markdown files on disk. Variable substitution is always applied locally.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from string import Template
+from zoneinfo import ZoneInfo
 
 from core_agents.prompt_manager import get_prompt_from_opik
 
@@ -48,8 +49,11 @@ def load_prompt(agent_name: str, *, commit: str | None = None, **variables: str)
         template_text = prompt_path.read_text()
         source = f"file ({prompt_path.name})"
 
-    # Always inject current date/time so agents know "today"
-    now = datetime.now(timezone.utc)
+    # Always inject current date/time so agents know "today". Use US market
+    # time (America/New_York) so "today" tracks the trading day, not UTC —
+    # UTC rolls to tomorrow during US evening hours. TODAY_DATETIME's isoformat
+    # carries the Eastern offset, labeling the zone explicitly.
+    now = datetime.now(ZoneInfo("America/New_York"))
     default_vars = {
         "TODAY_DATE": now.strftime("%Y-%m-%d"),
         "TODAY_DATETIME": now.isoformat(),

@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import polars as pl
 import pytest
 
+from src.clients.fmp_client import FMPClient
+from src.config import Settings
 from src.data.downloader import DataDownloader
 
 
@@ -42,6 +44,20 @@ def _make_parquet_df(start: date, days: int) -> pl.DataFrame:
         pl.col("date").str.to_date().alias("date"),
         pl.col("volume").cast(pl.Int64),
     )
+
+
+def _split_ohlcv(rows: list[dict[str, Any]], factor: float) -> list[dict[str, Any]]:
+    """Rebase OHLC prices by a split factor (post-split = pre-split / factor)."""
+    return [
+        {
+            **row,
+            "open": row["open"] / factor,
+            "high": row["high"] / factor,
+            "low": row["low"] / factor,
+            "close": row["close"] / factor,
+        }
+        for row in rows
+    ]
 
 
 @pytest.fixture()
@@ -107,12 +123,12 @@ class TestBackfill:
         dl = DataDownloader(mock_fmp, mock_store)
         result = await dl.download_symbol("AAPL", "2020-01-01", "2024-01-01")
 
-        # Should have called FMP for the backfill range
+        # A drift probe also fires (cache overlaps the request) and finds no
+        # drift; the backfill gap fetch must still be present with its range.
         calls = mock_fmp.get_historical_daily.call_args_list
-        assert len(calls) >= 1
-        first_call = calls[0]
-        assert first_call.kwargs["start_date"] == "2020-01-01"
-        assert first_call.kwargs["end_date"] == "2023-01-01"
+        backfill = [c for c in calls if c.kwargs["start_date"] == "2020-01-01"]
+        assert len(backfill) == 1
+        assert backfill[0].kwargs["end_date"] == "2023-01-01"
 
         # Result should include both old + new data
         assert len(result) > len(cached)
@@ -139,9 +155,12 @@ class TestForwardFill:
         # Request starts at cached start so only forward-fill is needed
         result = await dl.download_symbol("AAPL", "2023-01-02", "2024-12-31")
 
+        # One drift probe (no drift) + exactly one forward-fill gap, no backfill.
         calls = mock_fmp.get_historical_daily.call_args_list
-        assert len(calls) == 1
-        assert calls[0].kwargs["start_date"] == "2023-07-01"
+        assert mock_fmp.get_historical_daily.call_count == 2  # noqa: PLR2004
+        forward = [c for c in calls if c.kwargs["start_date"] == "2023-07-01"]
+        assert len(forward) == 1
+        assert forward[0].kwargs["end_date"] == "2024-12-31"
         assert len(result) > len(cached)
 
 
@@ -167,28 +186,35 @@ class TestBothGaps:
         dl = DataDownloader(mock_fmp, mock_store)
         await dl.download_symbol("AAPL", "2020-01-01", "2024-12-31")
 
-        # Should have 2 calls: backfill + forward-fill
-        assert mock_fmp.get_historical_daily.call_count == 2  # noqa: PLR2004
+        # 2 gap fetches (backfill + forward-fill) plus 1 drift probe (no drift).
+        calls = mock_fmp.get_historical_daily.call_args_list
+        gap_starts = {c.kwargs["start_date"] for c in calls}
+        assert "2020-01-01" in gap_starts  # backfill
+        assert "2022-12-31" in gap_starts  # forward-fill
+        assert mock_fmp.get_historical_daily.call_count == 3  # noqa: PLR2004
 
 
 class TestCacheCoversRange:
-    """Cached data fully covers the request — no FMP calls needed."""
+    """Cached data fully covers the request — only a bounded drift probe runs."""
 
     @pytest.mark.asyncio()
-    async def test_no_fetch_when_covered(
+    async def test_covered_range_runs_only_drift_probe(
         self,
         mock_fmp: AsyncMock,
         mock_store: MagicMock,
     ) -> None:
-        """If cache covers 2020-2024 and we request 2022-2023, skip FMP."""
+        """Covered request probes once for drift; matching closes skip the refetch."""
         cached = _make_parquet_df(date(2020, 1, 2), 1826)
         mock_store.read_ohlcv.return_value = cached
         mock_store.get_date_range.return_value = (date(2020, 1, 2), date(2024, 12, 31))
+        # Probe returns the same (unadjusted) closes as the cache → no drift.
+        mock_fmp.get_historical_daily.return_value = _make_ohlcv(date(2020, 1, 2), 1826)
 
         dl = DataDownloader(mock_fmp, mock_store)
         result = await dl.download_symbol("AAPL", "2022-01-01", "2023-01-01")
 
-        mock_fmp.get_historical_daily.assert_not_called()
+        # Exactly one call — the bounded drift probe — and no full-range refetch.
+        assert mock_fmp.get_historical_daily.call_count == 1
         assert len(result) > 0
 
 
@@ -248,3 +274,157 @@ class TestDedup:
 
         # No duplicate dates
         assert result["date"].is_duplicated().sum() == 0
+
+
+class TestSplitInvalidatesCache:
+    """A post-cache split rebases FMP prices; the covered cache must be re-fetched."""
+
+    @pytest.mark.asyncio()
+    async def test_split_invalidates_cache(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """Cached pre-split closes are replaced by post-split closes on drift."""
+        pre_split_rows = _make_ohlcv(date(2023, 1, 2), 365)
+        cached = _make_parquet_df(date(2023, 1, 2), 365)
+        cache_start = cached["date"].min()
+        cache_end = cached["date"].max()
+        mock_store.read_ohlcv.return_value = cached
+        mock_store.get_date_range.return_value = (cache_start, cache_end)
+
+        split_factor = 10.0
+        post_split_rows = _split_ohlcv(pre_split_rows, split_factor)
+        # Same rows serve both the drift probe and the full-range refetch.
+        mock_fmp.get_historical_daily.return_value = post_split_rows
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        result = await dl.download_symbol(
+            "NVDA",
+            cache_start.isoformat(),
+            cache_end.isoformat(),
+        )
+
+        result_close = dict(zip(result["date"].to_list(), result["close"].to_list(), strict=True))
+        pre_close = {date.fromisoformat(r["date"]): r["close"] for r in pre_split_rows}
+        post_close = {date.fromisoformat(r["date"]): r["close"] for r in post_split_rows}
+
+        # Every overlapping close is the post-split value, not the stale pre-split one.
+        for d, expected in post_close.items():
+            assert result_close[d] == pytest.approx(expected)
+        sample = next(iter(post_close))
+        assert result_close[sample] == pytest.approx(pre_close[sample] / split_factor)
+        assert result_close[sample] != pytest.approx(pre_close[sample])
+
+    @pytest.mark.asyncio()
+    async def test_split_invalidates_cache_partial_overlap(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """Split drift on a partially-covered request refetches the full range.
+
+        The cache holds pre-split closes for 2020-2022; the request extends to
+        2024. A split rebased the whole series. The overlapping (cached) portion
+        must come back post-split too, so there is no phantom gap between the
+        old-cached and newly-fetched portions.
+        """
+        pre_split_rows = _make_ohlcv(date(2020, 1, 2), 1095)  # 2020-01-02..2022-12-31
+        cached = _make_parquet_df(date(2020, 1, 2), 1095)
+        cache_start = cached["date"].min()
+        cache_end = cached["date"].max()
+        mock_store.read_ohlcv.return_value = cached
+        mock_store.get_date_range.return_value = (cache_start, cache_end)
+
+        split_factor = 10.0
+        # Provider rebased the whole series and now covers through the request end.
+        post_split_rows = _split_ohlcv(_make_ohlcv(date(2020, 1, 2), 1461), split_factor)
+        mock_fmp.get_historical_daily.return_value = post_split_rows
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        result = await dl.download_symbol("NVDA", "2020-01-01", "2024-01-01")
+
+        result_close = dict(zip(result["date"].to_list(), result["close"].to_list(), strict=True))
+        pre_close = {date.fromisoformat(r["date"]): r["close"] for r in pre_split_rows}
+        post_close = {date.fromisoformat(r["date"]): r["close"] for r in post_split_rows}
+
+        # The cached (overlapping) portion is now post-split — no phantom gap.
+        overlap_dates = [d for d in result_close if cache_start <= d <= cache_end]
+        assert overlap_dates
+        for d in overlap_dates:
+            assert result_close[d] == pytest.approx(post_close[d])
+        sample = overlap_dates[len(overlap_dates) // 2]
+        assert result_close[sample] == pytest.approx(pre_close[sample] / split_factor)
+        assert result_close[sample] != pytest.approx(pre_close[sample])
+
+
+class TestDividendAdjustedDaily:
+    """Daily fetch must be on a total-return (dividend-adjusted) basis."""
+
+    @pytest.mark.asyncio()
+    async def test_returns_are_dividend_inclusive(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """get_historical_daily hits the dividend-adjusted endpoint and folds adjClose.
+
+        FMP's dividend-adjusted endpoint returns adj-prefixed OHLC; the client must
+        surface the adjusted close under ``close`` so equity/returns are on a
+        total-return basis. Here the raw price is flat across the two bars but a
+        dividend lifts the adjusted close from 99 to 100, so the return computed over
+        the returned closes exceeds the (zero) price-only return by the dividend step.
+        """
+        raw_day1_close = 100.0
+        adj_day1_close = 99.0
+        day2_close = 100.0
+        raw_rows = [
+            {
+                "date": "2023-01-03",
+                "open": raw_day1_close,
+                "high": raw_day1_close,
+                "low": raw_day1_close,
+                "close": raw_day1_close,
+                "adjOpen": adj_day1_close,
+                "adjHigh": adj_day1_close,
+                "adjLow": adj_day1_close,
+                "adjClose": adj_day1_close,
+                "volume": 1_000_000,
+            },
+            {
+                "date": "2023-01-04",
+                "open": day2_close,
+                "high": day2_close,
+                "low": day2_close,
+                "close": day2_close,
+                "adjOpen": day2_close,
+                "adjHigh": day2_close,
+                "adjLow": day2_close,
+                "adjClose": day2_close,
+                "volume": 1_000_000,
+            },
+        ]
+        seen: dict[str, str] = {}
+
+        async def fake_request(endpoint: str, params: dict[str, str]) -> object:
+            seen["endpoint"] = endpoint
+            return raw_rows
+
+        client = FMPClient(settings=Settings(fmp_api_key="test-key"))
+        monkeypatch.setattr(client, "_request_with_retry", fake_request)
+        try:
+            rows = await client.get_historical_daily("KO", "2023-01-03", "2023-01-04")
+        finally:
+            await client.close()
+
+        # Total-return endpoint, not the price-only "full" endpoint.
+        assert seen["endpoint"] == "historical-price-eod/dividend-adjusted"
+
+        # adjClose is folded onto close (not the raw, price-only close).
+        assert rows[0]["close"] == pytest.approx(adj_day1_close)
+        assert rows[1]["close"] == pytest.approx(day2_close)
+
+        total_return = rows[1]["close"] / rows[0]["close"] - 1.0
+        price_only_return = day2_close / raw_day1_close - 1.0
+        assert price_only_return == pytest.approx(0.0)
+        assert total_return == pytest.approx(day2_close / adj_day1_close - 1.0)
+        assert total_return > price_only_return

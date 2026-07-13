@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -27,6 +28,7 @@ from .quality import (
     compute_coverage,
     freshness_seconds,
     normalize_granularity,
+    open_interval_fetch_start,
     parse_time,
     snap_start_to_available,
 )
@@ -424,6 +426,7 @@ async def _load_candles(
 ) -> tuple[list[Candle], SourceQuality]:
     product = product_id.upper()
     store: CryptoStore = _state.require("store")
+    now = datetime.now(UTC)
     start_ts = int(start.timestamp())
     end_ts = int(end.timestamp())
     cached = await store.get_candles(product, granularity, start_ts, end_ts)
@@ -432,14 +435,18 @@ async def _load_candles(
         requested_start=start,
         requested_end=end,
         granularity=granularity,
+        now=now,
     )
     settings: Settings = _state.require("settings")
+    # The trailing open bar is always re-fetched so a partial candle is never frozen.
+    open_start = open_interval_fetch_start(start, end, granularity, now)
     fetch_failed = False
-    if coverage.missing_intervals > 0:
+    if coverage.missing_intervals > 0 or open_start is not None:
+        fetch_start = start if coverage.missing_intervals > 0 else open_start
         try:
             fetched = await _state.require("coinbase").get_historical_candles(
                 product,
-                start=start,
+                start=fetch_start,
                 end=end,
                 granularity=granularity,
             )
@@ -450,6 +457,7 @@ async def _load_candles(
                 requested_start=start,
                 requested_end=end,
                 granularity=granularity,
+                now=now,
             )
         except (httpx.HTTPError, ValueError):
             fetch_failed = True
@@ -466,6 +474,7 @@ async def _load_candles(
             requested_start=start,
             requested_end=end,
             granularity=granularity,
+            now=now,
         )
         cached = [c for c in cached if int(start.timestamp()) <= c.start_ts < int(end.timestamp())]
 

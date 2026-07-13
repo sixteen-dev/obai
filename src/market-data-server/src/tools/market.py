@@ -9,6 +9,10 @@ from ..response_filters import filter_market_open, filter_sector_performance
 
 logger = get_logger(__name__)
 
+# US equity venues relevant to this product; foreign exchanges are dropped
+# so callers see only the sessions that govern US ticker quotes.
+_US_EXCHANGES = frozenset({"NASDAQ", "NYSE"})
+
 
 async def get_market_snapshot() -> dict[str, Any]:
     """Get market sector performance overview.
@@ -32,12 +36,14 @@ async def get_market_snapshot() -> dict[str, Any]:
 
 
 async def is_market_open() -> dict[str, Any]:
-    """Check if the market is currently open.
+    """Check if the US market is currently open.
 
-    Returns all exchange market hours with open/closed status.
+    Returns market hours and open/closed status for the US equity venues
+    (NASDAQ, NYSE); foreign exchanges are dropped to avoid dumping every
+    global exchange into context.
 
     Returns:
-        Market hours and open status for all exchanges.
+        Market hours and open status for the US exchanges.
 
     Raises:
         Exception: If market status fetch fails.
@@ -46,7 +52,8 @@ async def is_market_open() -> dict[str, Any]:
         settings = get_settings()
         async with FMPClient(settings) as client:
             data = await client.is_market_open()
-            filtered_data = filter_market_open(data)
+            us_data = [row for row in data if row.get("exchange") in _US_EXCHANGES]
+            filtered_data = filter_market_open(us_data)
             return {"data": filtered_data}
     except Exception as e:
         log_error(logger, e, context={"tool": "is_market_open"})

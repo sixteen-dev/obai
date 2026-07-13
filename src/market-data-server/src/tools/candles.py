@@ -17,8 +17,9 @@ MAX_LIMIT = 130
 def _extract_candles_list(raw_data: Any) -> list[dict[str, Any]]:
     """Extract the candles list from FMP daily endpoint response.
 
-    FMP's historical-price-eod/full returns {"symbol": "...", "historical": [...]}.
-    This extracts the list so pagination and filtering work consistently.
+    FMP's daily EOD endpoint returns either a flat list (stable API) or a
+    legacy {"symbol": "...", "historical": [...]} dict. This extracts the
+    list so pagination and filtering work consistently.
 
     Args:
         raw_data: Raw response from FMP daily endpoint.
@@ -44,15 +45,22 @@ async def get_candles(
     limit: int = 30,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Get historical price candles (OHLCV data).
+    """Get historical price candles (OHLCV data), returned oldest-first.
+
+    Daily candles are split- and dividend-adjusted (total-return basis) so
+    long-horizon returns include reinvested dividends; intraday candles are
+    raw prices.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
         interval: Time interval (1min, 5min, 15min, 30min, 1hour, 4hour, daily)
         from_date: Start date in YYYY-MM-DD format (optional)
         to_date: End date in YYYY-MM-DD format (optional)
-        limit: Maximum number of candles to return (default: 100)
-        offset: Number of candles to skip (for pagination)
+        limit: Maximum number of candles to return (default: 30, max: 130).
+            Requests above 130 are clamped; pagination metadata echoes both
+            the requested and effective limit.
+        offset: Number of candles to skip. Candles are oldest-first, so a
+            higher offset pages forward in time.
 
     Returns:
         Historical OHLCV candle data with pagination metadata
@@ -74,6 +82,11 @@ async def get_candles(
                 candles = _extract_candles_list(raw_data)
             else:
                 candles = await client.get_historical_intraday(symbol, interval, from_date, to_date)
+
+            # FMP returns candles newest-first, so raw slicing would page
+            # `offset` backward in time. Normalize to oldest-first so `offset`
+            # pages forward and the returned order matches the documented contract.
+            candles = sorted(candles, key=lambda row: row.get("date", ""))
 
             # Apply pagination
             total_count = len(candles)

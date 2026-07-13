@@ -206,6 +206,39 @@ class FMPClient:
         self._earnings_cache[cache_key] = data
         return data
 
+    async def get_earnings_calendar(
+        self,
+        from_date: str,
+        to_date: str,
+    ) -> list[dict[str, Any]]:
+        """Get the market-wide earnings calendar for a date range.
+
+        Unlike ``get_earnings`` (single ticker), this returns every company
+        reporting between ``from_date`` and ``to_date``, each with estimate
+        and (once reported) actual EPS/revenue.
+
+        Args:
+            from_date: Start date in YYYY-MM-DD format
+            to_date: End date in YYYY-MM-DD format
+
+        Returns:
+            List of earnings-calendar records across all reporting companies
+        """
+        cache_key = f"earnings-calendar:{from_date}:{to_date}"
+        if cache_key in self._earnings_cache:
+            logger.debug(
+                "cache_hit",
+                endpoint="earnings-calendar",
+                from_date=from_date,
+                to_date=to_date,
+            )
+            return self._earnings_cache[cache_key]
+
+        params: dict[str, Any] = {"from": from_date, "to": to_date}
+        data: list[dict[str, Any]] = await self._get("earnings-calendar", params)
+        self._earnings_cache[cache_key] = data
+        return data
+
     async def get_dividends(
         self,
         symbol: str,

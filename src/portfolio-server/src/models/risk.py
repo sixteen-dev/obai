@@ -62,6 +62,10 @@ class RiskMetrics:
     var_95: Decimal | None = None  # 5th percentile daily return (Value at Risk)
     calmar_ratio: Decimal | None = None  # annualized_return / abs(max_drawdown)
 
+    # Coverage: True when unpriceable holdings were dropped and the remaining
+    # priced weights renormalized — metrics reflect the priced sub-portfolio only.
+    coverage_incomplete: bool = False
+
     # Warnings
     warnings: list[str] = field(default_factory=list)
 
@@ -82,6 +86,7 @@ class RiskMetrics:
             "sortino_ratio": float(self.sortino_ratio) if self.sortino_ratio is not None else None,
             "var_95": float(self.var_95) if self.var_95 is not None else None,
             "calmar_ratio": float(self.calmar_ratio) if self.calmar_ratio is not None else None,
+            "coverage_incomplete": self.coverage_incomplete,
             "lookback_days": self.lookback_days,
             "data_start": self.data_start,
             "data_end": self.data_end,

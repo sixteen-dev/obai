@@ -17,6 +17,14 @@ from .store import DataStore
 
 logger = get_logger(__name__)
 
+# A provider re-adjustment (e.g. a post-cache split) that rebases the whole
+# split-adjusted series shifts every cached close by the split factor. A shared
+# date whose close moves more than this fraction is treated as drifted.
+_ADJUSTMENT_DRIFT_TOLERANCE = 0.005
+# Calendar days probed back from the cache's most recent covered date so the
+# single bounded probe request reliably overlaps at least one cached trading bar.
+_DRIFT_PROBE_WINDOW_DAYS = 7
+
 
 class DataDownloader:
     """Download OHLCV data from FMP and store via DuckDB."""
@@ -107,32 +115,27 @@ class DataDownloader:
         req_start = date.fromisoformat(start_date)
         req_end = date.fromisoformat(end_date)
 
-        # Determine which gaps need fetching
-        fetches: list[tuple[str, str]] = []
-        if existing is not None and not existing.is_empty() and existing_range:
-            cached_start = _to_date(existing_range[0])
-            cached_end = _to_date(existing_range[1])
-            if req_start < cached_start:
-                fetches.append((start_date, str(cached_start - timedelta(days=1))))
-            if req_end > cached_end:
-                fetches.append((str(cached_end + timedelta(days=1)), end_date))
-        else:
-            fetches.append((start_date, end_date))
+        fetches, anchor = _plan_cache_fetches(existing, existing_range, req_start, req_end)
+
+        # Cache overlaps the request: probe once for a provider re-adjustment
+        # (e.g. a post-cache split) that rebased the whole cached series. On
+        # drift the full range is re-fetched and freshly fetched rows win the
+        # merge, so the overlap is not a stale pre-split / post-split mix.
+        drift = False
+        if anchor is not None and existing is not None:
+            drift = await self._detect_adjustment_drift(existing, symbol, timeframe, anchor)
+            if drift:
+                fetches = [(start_date, end_date)]
 
         if not fetches:
             if existing is not None:
                 return existing
             return _empty_df(timeframe)
 
-        # Fetch all gaps from FMP
+        # Fetch all gaps (or the full range on drift) from FMP
         new_frames: list[pl.DataFrame] = []
         for fetch_start, fetch_end in fetches:
-            raw_data = await self._fetch_from_fmp(
-                symbol,
-                fetch_start,
-                fetch_end,
-                timeframe,
-            )
+            raw_data = await self._fetch_from_fmp(symbol, fetch_start, fetch_end, timeframe)
             if raw_data:
                 new_frames.append(_parse_fmp_response(raw_data, timeframe))
 
@@ -142,14 +145,7 @@ class DataDownloader:
             return _empty_df(timeframe)
 
         new_df = pl.concat(new_frames)
-
-        # Merge with existing data
-        if existing is not None and not existing.is_empty():
-            combined = pl.concat([existing, new_df]).unique(subset=["date"])
-        else:
-            combined = new_df
-
-        combined = combined.sort("date")
+        combined = _merge_frames(existing, new_df, drift=drift).sort("date")
         await self.data_store.write_ohlcv_async(symbol, combined, timeframe=timeframe)
 
         logger.info(
@@ -161,6 +157,54 @@ class DataDownloader:
         )
 
         return combined
+
+    async def _detect_adjustment_drift(
+        self,
+        existing: pl.DataFrame,
+        symbol: str,
+        timeframe: str,
+        anchor_date: date,
+    ) -> bool:
+        """Probe once for a provider re-adjustment of the cached series.
+
+        A corporate action that retroactively rebased FMP's split-adjusted
+        prices (e.g. a post-cache split) shifts every cached close by the split
+        factor, so a gap-only fetch would leave the overlapping cached rows on
+        a different scale from the freshly fetched rows (a phantom gap). This
+        fetches one small recent window (bounded to ``_DRIFT_PROBE_WINDOW_DAYS``
+        ending at ``anchor_date``, the most recent cached date overlapping the
+        request) and compares the provider's current close to the cached close
+        on the most recent shared date.
+
+        Only daily bars are probed: the rebasing affects the daily
+        split-adjusted EOD series, and the probe uses the daily endpoint.
+
+        Args:
+            existing: Cached OHLCV frame (non-empty, overlaps the request).
+            symbol: Stock ticker symbol.
+            timeframe: Bar timeframe.
+            anchor_date: Most recent cached date overlapping the request; the
+                probe window ends here so it lands on cached bars.
+
+        Returns:
+            True when cached and freshly fetched closes diverge beyond
+            ``_ADJUSTMENT_DRIFT_TOLERANCE`` on a shared date; False when there is
+            no shared date to compare (drift cannot be proven).
+
+        """
+        if timeframe != "daily":
+            return False
+
+        probe_start = anchor_date - timedelta(days=_DRIFT_PROBE_WINDOW_DAYS)
+        raw = await self.fmp_client.get_historical_daily(
+            symbol=symbol,
+            start_date=probe_start.isoformat(),
+            end_date=anchor_date.isoformat(),
+        )
+        if not raw:
+            return False
+        fresh = _parse_fmp_response(raw, timeframe)
+        return _closes_diverge(existing, fresh, _ADJUSTMENT_DRIFT_TOLERANCE)
 
     def count_stale(
         self,
@@ -262,6 +306,108 @@ def _to_date(val: date | datetime) -> date:
     if isinstance(val, datetime):
         return val.date()
     return val
+
+
+def _plan_cache_fetches(
+    existing: pl.DataFrame | None,
+    existing_range: tuple[date, date] | tuple[datetime, datetime] | None,
+    req_start: date,
+    req_end: date,
+) -> tuple[list[tuple[str, str]], date | None]:
+    """Plan the gap fetches and the drift-probe anchor for a request.
+
+    Args:
+        existing: Cached OHLCV frame, or None when absent.
+        existing_range: Cached (start, end) range, or None when absent.
+        req_start: Requested start date (inclusive).
+        req_end: Requested end date (inclusive).
+
+    Returns:
+        A ``(fetches, anchor)`` pair. ``fetches`` is the full requested range
+        when there is no usable cache, otherwise only the missing head/tail
+        segments (ISO date strings), empty when the cache fully covers the
+        request. ``anchor`` is the most recent cached date that overlaps the
+        request (always a cached date), or None when the cache does not overlap
+        the request — the fast path that skips the probe.
+
+    """
+    if existing is None or existing.is_empty() or existing_range is None:
+        return [(req_start.isoformat(), req_end.isoformat())], None
+
+    cached_start = _to_date(existing_range[0])
+    cached_end = _to_date(existing_range[1])
+    fetches: list[tuple[str, str]] = []
+    if req_start < cached_start:
+        fetches.append((req_start.isoformat(), (cached_start - timedelta(days=1)).isoformat()))
+    if req_end > cached_end:
+        fetches.append(((cached_end + timedelta(days=1)).isoformat(), req_end.isoformat()))
+
+    anchor = None
+    if cached_start <= req_end and cached_end >= req_start:
+        anchor = min(cached_end, req_end)
+    return fetches, anchor
+
+
+def _merge_frames(
+    existing: pl.DataFrame | None,
+    new_df: pl.DataFrame,
+    *,
+    drift: bool,
+) -> pl.DataFrame:
+    """Merge cached and freshly fetched rows, deduplicating by date.
+
+    On adjustment drift the freshly fetched rows are concatenated last and win
+    every date collision (``keep="last"``) so the rebased series replaces the
+    stale cache. Otherwise the original dedup (existing rows retained) is kept.
+
+    Args:
+        existing: Cached OHLCV frame, or None when absent.
+        new_df: Freshly fetched rows.
+        drift: True when the cached series was re-adjusted and must be replaced.
+
+    Returns:
+        Deduplicated combined DataFrame (unsorted).
+
+    """
+    if existing is None or existing.is_empty():
+        return new_df
+    if drift:
+        return pl.concat([existing, new_df]).unique(subset=["date"], keep="last")
+    return pl.concat([existing, new_df]).unique(subset=["date"])
+
+
+def _closes_diverge(
+    cached: pl.DataFrame,
+    fresh: pl.DataFrame,
+    tolerance: float,
+) -> bool:
+    """Compare cached vs fresh closes on the most recent shared date.
+
+    Args:
+        cached: Existing cached OHLCV frame.
+        fresh: Freshly fetched probe frame.
+        tolerance: Max allowed relative close difference before flagging drift.
+
+    Returns:
+        True when a shared date exists and its cached/fresh closes differ by
+        more than ``tolerance`` (relative); False otherwise.
+
+    """
+    shared = cached.join(
+        fresh.select(["date", "close"]),
+        on="date",
+        how="inner",
+        suffix="_fresh",
+    )
+    if shared.is_empty():
+        return False
+
+    latest = shared.sort("date").tail(1)
+    cached_close = float(latest["close"][0])
+    fresh_close = float(latest["close_fresh"][0])
+    if cached_close == 0.0:
+        return False
+    return abs(fresh_close - cached_close) / abs(cached_close) > tolerance
 
 
 def _parse_fmp_response(

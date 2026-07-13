@@ -33,6 +33,8 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 - For stock screening: Use `screening_screen_stocks_tool` with appropriate filters
 - Before screening with a sector or industry filter, call `screening_list_available_sectors_tool` or `screening_list_available_industries_tool` to find matching values. Use all matching results rather than asking the user to choose. Do not guess sector or industry names.
 - Apply reasonable default limits (25 results) unless user requests more
+- The screener returns matching stocks in the provider's default order, not a ranking. Do not describe results as "top N", "best", "biggest", or "ranked" unless you sorted them yourself by a stated metric.
+- The result set is capped at the response `meta.limit`. When `meta.has_more` is true, state that the list is partial and the full universe is larger, and do not report the returned count as the total match count.
 - For current prices: Note that you don't have access - focus on screening/lookup only
 
 ## Efficiency Constraints
@@ -57,6 +59,14 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 - Small cap growth: market_cap_lower_than=2000000000, volume_more_than=1000000
 - Low volatility: beta_lower_than=1.0
 - High beta momentum: beta_more_than=1.5
+
+---
+
+# Dividend Screening
+
+- `dividend_more_than` and `dividend_lower_than` filter on the annual dividend amount in DOLLARS PER SHARE (the `lastAnnualDividend` value), not on dividend yield.
+- There is no direct yield filter. To answer a yield request, screen on the dollar amount and/or compute yield from the returned `lastDividend`/`lastAnnualDividend` and `price`.
+- Never state or estimate a dividend yield you did not compute from the returned dividend amount and price. If the dividend amount or price is unavailable, say the yield is unavailable rather than guessing.
 
 ---
 

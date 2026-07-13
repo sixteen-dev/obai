@@ -78,6 +78,31 @@ class TestCandlesLimit:
         assert pagination["requested_limit"] == 30
         assert pagination["returned"] == 30
 
+    @pytest.mark.asyncio
+    async def test_candles_default_limit_is_30(self) -> None:
+        """Default limit is 30 and cap is 130 — in behavior and in the docstring."""
+        assert CANDLE_MAX == 130
+        doc = get_candles.__doc__ or ""
+        assert "default: 100" not in doc
+        assert "default: 30" in doc
+        assert "130" in doc
+
+        mock_client = AsyncMock()
+        mock_client.get_historical_daily = AsyncMock(return_value={"historical": _candle_rows(200)})
+        with (
+            patch("src.tools.candles.get_settings"),
+            patch("src.tools.candles.FMPClient") as mock_cls,
+        ):
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await get_candles("AAPL", "daily")  # no limit -> default
+
+        pagination = result["pagination"]
+        assert pagination["requested_limit"] == 30
+        assert pagination["limit"] == 30
+        assert pagination["returned"] == 30
+
 
 class TestIndicatorLimit:
     """Indicator tool clamps `limit` to MAX_LIMIT and exposes requested_limit."""

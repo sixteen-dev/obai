@@ -117,7 +117,7 @@ def _trade_metrics(
     traded_notional = sum(float(t.get("notional", 0.0)) for t in trades)
     mean_equity = float(np.mean(equity))
     turnover = _safe_ratio(traded_notional, mean_equity, "zero_mean_equity", warnings)
-    trade_count = len(trades)
+    trade_count = sum(1 for t in trades if _is_closed_leg(t))
     return {
         "profit_factor": profit_factor,
         "turnover": turnover,
@@ -126,6 +126,19 @@ def _trade_metrics(
         "gross_profit": gross_profit,
         "gross_loss": gross_loss,
     }
+
+
+def _is_closed_leg(trade: dict[str, Any]) -> bool:
+    """Return True when a leg closes a round-trip.
+
+    An explicit ``side == "SELL"`` marks the exit leg (a breakeven SELL still
+    closes a trade). When no ``side`` field is present, fall back to nonzero
+    realized P&L, since only exit legs carry round-trip P&L.
+    """
+    side = trade.get("side")
+    if side is not None:
+        return str(side) == "SELL"
+    return float(trade.get("realized_pnl", 0.0)) != 0.0
 
 
 def _parse_dt(value: str) -> datetime:

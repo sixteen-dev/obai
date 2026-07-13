@@ -265,6 +265,24 @@ def _process_day(  # noqa: PLR0913
         spread_estimates=spread_estimates,
     )
 
+    # Step 3: Re-check exits so a stop/TP pierced on the entry bar binds that
+    # same bar. Freshly-opened lots were not exit-checked in Step 1 (they did
+    # not exist yet). Re-running is idempotent for positions already evaluated
+    # in Step 1 — the bar's low/high and prior-bar exit signal are unchanged,
+    # so only newly-opened lots can close here.
+    _check_all_exits(
+        current_date=current_date,
+        symbol_arrays=symbol_arrays,
+        state=state,
+        trades=trades,
+        slippage_pct=slippage_pct,
+        commission_pct=commission_pct,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        volume_scaled_slippage=volume_scaled_slippage,
+        spread_estimates=spread_estimates,
+    )
+
 
 def _check_all_exits(  # noqa: PLR0913
     current_date: date,

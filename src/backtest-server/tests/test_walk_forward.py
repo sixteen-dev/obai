@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
+import polars as pl
 import pytest
 
+from src import server
 from src.engine.walk_forward import (
     _compute_aggregates,
     _extract_metrics,
     generate_windows,
     walk_forward_validate,
 )
-from src.models.strategy import WalkForwardResult, WindowResult
+from src.models.strategy import StrategyDefinition, WalkForwardResult, WindowResult
 
 
 class TestGenerateWindows:
@@ -675,3 +678,120 @@ class TestFailedWindowHandling:
         assert result.failed_windows == 1
         # Aggregates should only be from 2 valid windows
         assert result.mean_test_sharpe == 1.0
+
+
+class _StubDownloader:
+    """Serves synthetic OHLCV slices for any requested range and symbol."""
+
+    def __init__(self, series: pl.DataFrame) -> None:
+        """Store the backing series and record requested fetch starts."""
+        self._series = series
+        self.requested_starts: list[str] = []
+
+    async def ensure_data(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        timeframe: str = "daily",
+    ) -> dict[str, pl.DataFrame]:
+        """Return the backing series sliced to [start_date, end_date] per symbol."""
+        self.requested_starts.append(start_date)
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        window = self._series.filter(pl.col("date").is_between(start, end))
+        return {symbol: window for symbol in symbols}
+
+
+class TestTestWindowWarmup:
+    """Indicator warm-up guards walk-forward test windows from being signal-dead.
+
+    Regression for accuracy.md §8: a short window with a long-lookback indicator
+    must fetch a pre-roll before its start so the indicator is live across the
+    whole window, instead of null for its first ``lookback`` bars.
+    """
+
+    _WINDOW_DAYS = 250
+    _SMA_LENGTH = 200
+
+    def _uptrend_series(self, series_start: date, end: date) -> pl.DataFrame:
+        """Strictly increasing daily OHLCV so close > SMA on every live bar."""
+        total = (end - series_start).days + 1
+        dates = [series_start + timedelta(days=i) for i in range(total)]
+        closes = [100.0 + i * 0.1 for i in range(total)]
+        return pl.DataFrame(
+            {
+                "date": dates,
+                "open": closes,
+                "high": [c + 1.0 for c in closes],
+                "low": [c - 1.0 for c in closes],
+                "close": closes,
+                "volume": [1_000_000] * total,
+            }
+        )
+
+    def _strategy_json(self, start: str, end: str) -> str:
+        """Long-lookback SMA strategy: enter while close > SMA, exit when below."""
+        return json.dumps(
+            {
+                "name": "Warmup Window Test",
+                "universe": {"symbols": ["TEST"], "benchmark": "SPY"},
+                "data_config": {"start_date": start, "end_date": end},
+                "indicators": [
+                    {
+                        "id": "sma_slow",
+                        "type": "SMA",
+                        "params": {"length": self._SMA_LENGTH},
+                        "source": "close",
+                    },
+                ],
+                "entry_rules": {
+                    "logic": "AND",
+                    "conditions": [
+                        {
+                            "left": {"indicator": "close"},
+                            "operator": "greater_than",
+                            "right": {"indicator": "sma_slow"},
+                        },
+                    ],
+                },
+                "exit_rules": {
+                    "logic": "OR",
+                    "conditions": [
+                        {
+                            "left": {"indicator": "close"},
+                            "operator": "less_than",
+                            "right": {"indicator": "sma_slow"},
+                        },
+                    ],
+                },
+            }
+        )
+
+    async def test_test_window_not_signal_dead(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A short window with SMA-200 must be live (in-market) for ~every bar."""
+        requested_start = date(2021, 1, 1)
+        requested_end = requested_start + timedelta(days=self._WINDOW_DAYS - 1)
+        series = self._uptrend_series(requested_start - timedelta(days=500), requested_end)
+        stub = _StubDownloader(series)
+        monkeypatch.setattr(server._state, "downloader", stub)
+
+        strategy = StrategyDefinition.from_dict(
+            json.loads(self._strategy_json(requested_start.isoformat(), requested_end.isoformat()))
+        )
+        exec_result = await server._execute_strategy(strategy)
+
+        equity = exec_result.equity_df["equity"].to_list()
+        window_len = len(equity)
+        # Out-of-position bars copy the prior equity exactly, so the bars that
+        # moved are precisely the live (in-market) bars.
+        active_bars = sum(1 for i in range(1, window_len) if equity[i] != equity[i - 1])
+
+        assert window_len == self._WINDOW_DAYS
+        # Warm-up primes SMA across the whole window → live for ~every bar.
+        # Without it SMA is null for the first ~SMA_LENGTH bars, collapsing
+        # active_bars to ~window_len - SMA_LENGTH (~50) — the signal-dead failure.
+        assert active_bars >= 0.9 * window_len

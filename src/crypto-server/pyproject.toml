@@ -57,6 +57,7 @@ ignore = [
 "src/clients/coinbase_client.py" = ["PLR0913", "S311"]
 "src/engine/backtester.py" = ["PLR0913"]
 "src/quality/source_quality.py" = ["PLR0913"]
+"src/quality/timeframes.py" = ["PLR0913"]
 "src/server.py" = ["PLR0913"]
 
 [tool.uv]

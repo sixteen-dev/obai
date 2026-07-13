@@ -7,9 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
+from src.clients.fmp_client import FMPClient
+from src.config import Settings
 from src.engine.risk import (
     MIN_DATA_POINTS,
+    TRADING_DAYS_PER_YEAR,
     _align_price_series,
+    _build_risk_metrics,
     _compute_max_drawdown,
     _compute_returns,
     _resolve_weights,
@@ -129,6 +133,51 @@ class TestComputeMaxDrawdown:
 
         assert max_dd == 0.0
         assert current_dd == 0.0
+
+
+class TestSortino:
+    """Tests for the Sortino downside-deviation computation."""
+
+    def test_sortino_full_series_semideviation(self) -> None:
+        """Sortino uses full-series downside semideviation, not std of only negatives.
+
+        The buggy implementation took np.std of only the negative returns about
+        THEIR OWN mean, discarding zero/positive observations and the MAR target.
+        For a rare-but-severe loss profile (two nearly-equal large negatives among
+        many small positives) that overstates Sortino by an order of magnitude.
+        The correct downside is sqrt(mean(min(r - daily_rf, 0)^2)) over the FULL
+        series, annualized by sqrt(TRADING_DAYS_PER_YEAR).
+        """
+        # 40 small positives + two nearly-equal large negatives.
+        port_returns = np.array([0.005] * 40 + [-0.08, -0.082], dtype=np.float64)
+        bench_returns = port_returns.copy()  # Irrelevant to Sortino; keeps shapes valid.
+        aligned_dates = _generate_dates(len(port_returns) + 1)
+        risk_free_rate = 0.045
+
+        # Golden Sortino: full-series downside semideviation against per-period MAR.
+        daily_rf = risk_free_rate / TRADING_DAYS_PER_YEAR
+        annualized_mean = float(np.mean(port_returns)) * TRADING_DAYS_PER_YEAR
+        shortfall = np.minimum(port_returns - daily_rf, 0.0)
+        downside = float(np.sqrt(np.mean(np.square(shortfall)))) * np.sqrt(TRADING_DAYS_PER_YEAR)
+        expected_sortino = (annualized_mean - risk_free_rate) / downside
+
+        result = _build_risk_metrics(
+            port_returns=port_returns,
+            bench_returns=bench_returns,
+            risk_free_rate=risk_free_rate,
+            lookback_days=TRADING_DAYS_PER_YEAR,
+            aligned_dates=aligned_dates,
+            warnings=[],
+        )
+
+        assert float(result.sortino_ratio) == pytest.approx(expected_sortino, abs=1e-4)
+
+        # Contrast: the old std-of-only-negatives-about-own-mean value is ~12x
+        # larger here, confirming the fix materially lowers (corrects) Sortino.
+        negatives = port_returns[port_returns < 0]
+        buggy_downside = float(np.std(negatives, ddof=1)) * np.sqrt(TRADING_DAYS_PER_YEAR)
+        buggy_sortino = (annualized_mean - risk_free_rate) / buggy_downside
+        assert float(result.sortino_ratio) < buggy_sortino
 
 
 class TestResolveWeights:
@@ -478,3 +527,162 @@ class TestComputeCorrelationMatrix:
 
         assert result["matrix"] == []
         assert len(result["warnings"]) > 0
+
+
+class TestDividendAdjustedPrices:
+    """Historical prices must be on a total-return (dividend-adjusted) basis."""
+
+    @pytest.mark.asyncio
+    async def test_total_return_includes_dividends(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """get_historical_prices hits the dividend-adjusted endpoint and folds adjClose.
+
+        FMP's dividend-adjusted endpoint returns an adjusted close that reinvests
+        dividends. Here the raw price is flat across the two bars but a dividend lifts
+        the adjusted close from 99 to 100, so _compute_returns over the folded closes
+        exceeds the (zero) price-only return by the dividend step.
+        """
+        raw_close = 100.0
+        adj_close_day1 = 99.0
+        raw_rows = [
+            {"date": "2025-01-02", "close": raw_close, "adjClose": adj_close_day1},
+            {"date": "2025-01-03", "close": raw_close, "adjClose": raw_close},
+        ]
+        seen: dict[str, str] = {}
+
+        async def fake_get(endpoint: str, params: dict[str, Any]) -> object:
+            seen["endpoint"] = endpoint
+            return [dict(row) for row in raw_rows]
+
+        client = FMPClient(settings=Settings(fmp_api_key="test-key"))
+        monkeypatch.setattr(client, "_get", fake_get)
+        try:
+            rows = await client.get_historical_prices("KO", "2025-01-02", "2025-01-03")
+        finally:
+            await client.close()
+
+        # Total-return endpoint, not the price-only "full" endpoint.
+        assert seen["endpoint"] == "historical-price-eod/dividend-adjusted"
+
+        # adjClose is folded onto close (not the raw, price-only close).
+        assert rows[0]["close"] == pytest.approx(adj_close_day1)
+
+        closes = np.array([float(r["close"]) for r in rows], dtype=np.float64)
+        total_return = float(_compute_returns(closes)[0])
+        price_only = np.array([raw_close, raw_close], dtype=np.float64)
+        price_only_return = float(_compute_returns(price_only)[0])
+
+        assert price_only_return == pytest.approx(0.0)
+        assert total_return == pytest.approx(raw_close / adj_close_day1 - 1.0)
+        assert total_return > price_only_return
+
+
+class TestCoverageDisclosure:
+    """Tests for unpriceable-symbol renormalization and window-truncation disclosure."""
+
+    @pytest.mark.asyncio
+    async def test_unpriceable_weight_not_treated_as_cash(self) -> None:
+        """A 30%-weight unpriceable ticker must be renormalized out, not dampen risk.
+
+        An equity with no price data contributes zero return every day, which is
+        mathematically identical to holding that weight in cash. Leaving its weight
+        in the denominator drags volatility toward zero. The engine must renormalize
+        over the priced holdings and disclose the dropped symbol, so a 70% AAPL +
+        30% ZZZZ book reports the SAME vol as 100% AAPL, not 0.70x of it.
+        """
+        dates = _generate_dates(60)
+        np.random.seed(7)
+        closes = [100.0]
+        for _ in range(59):
+            closes.append(closes[-1] * (1 + np.random.normal(0.001, 0.02)))
+        bench_closes = [400.0 * (1.0005**i) for i in range(60)]
+
+        client = _make_fmp_client()
+        client.get_historical_prices_multi = AsyncMock(
+            return_value={
+                "AAPL": _make_price_data(dates, closes),
+                "SPY": _make_price_data(dates, bench_closes),
+            }
+        )
+
+        # Baseline: 100% AAPL — the priced sub-portfolio.
+        full_result = await compute_portfolio_risk(
+            positions=[_make_position("AAPL", "1.0")],
+            fmp_client=client,
+            benchmark="SPY",
+            risk_free_rate=0.045,
+        )
+
+        client.get_historical_prices_multi = AsyncMock(
+            return_value={
+                "AAPL": _make_price_data(dates, closes),
+                "SPY": _make_price_data(dates, bench_closes),
+            }
+        )
+
+        # 70% AAPL + 30% ZZZZ (unpriceable typo — no price data returned for it).
+        mixed_result = await compute_portfolio_risk(
+            positions=[
+                _make_position("AAPL", "0.7"),
+                _make_position("ZZZZ", "0.3"),
+            ],
+            fmp_client=client,
+            benchmark="SPY",
+            risk_free_rate=0.045,
+        )
+
+        full_vol = float(full_result.annualized_volatility)
+        mixed_vol = float(mixed_result.annualized_volatility)
+        diluted_vol = 0.7 * full_vol  # What zero-return-cash treatment would give.
+
+        # Renormalized: the reported vol equals the priced sub-portfolio vol, NOT
+        # the diluted value that masquerading ZZZZ as cash would produce.
+        assert mixed_vol == pytest.approx(full_vol, rel=1e-6)
+        assert mixed_vol > diluted_vol
+        assert mixed_result.coverage_incomplete is True
+        assert any("ZZZZ" in w for w in mixed_result.warnings), (
+            f"No warning named the unpriceable symbol: {mixed_result.warnings}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_young_holding_does_not_truncate_window(self) -> None:
+        """A recently-listed holding must not silently shrink the whole window.
+
+        Inner-join alignment truncates every symbol's series to the common dates,
+        so one short-history holding cuts the sample for the whole portfolio. The
+        engine must disclose the truncation: name the limiting (shortest-history)
+        symbol and the effective window, rather than absorbing it silently.
+        """
+        long_dates = _generate_dates(90)
+        short_dates = long_dates[50:]  # NVDA only trades the last 40 sessions.
+        long_closes = [100.0 + i * 0.4 for i in range(90)]
+        short_closes = [50.0 + i * 0.3 for i in range(40)]
+        bench_closes = [400.0 + i * 0.5 for i in range(90)]
+
+        client = _make_fmp_client()
+        client.get_historical_prices_multi = AsyncMock(
+            return_value={
+                "AAPL": _make_price_data(long_dates, long_closes),
+                "NVDA": _make_price_data(short_dates, short_closes),
+                "SPY": _make_price_data(long_dates, bench_closes),
+            }
+        )
+
+        result = await compute_portfolio_risk(
+            positions=[
+                _make_position("AAPL", "0.5"),
+                _make_position("NVDA", "0.5"),
+            ],
+            fmp_client=client,
+            benchmark="SPY",
+            risk_free_rate=0.045,
+        )
+
+        # The common window collapses to NVDA's 40 sessions; that truncation must
+        # be disclosed and must name NVDA as the limiting holding.
+        truncation = [w for w in result.warnings if "NVDA" in w and "truncat" in w.lower()]
+        assert truncation, f"No truncation disclosure naming NVDA: {result.warnings}"
+        assert result.data_start == short_dates[0]
+        assert result.data_end == short_dates[-1]

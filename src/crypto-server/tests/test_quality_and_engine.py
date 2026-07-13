@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+from src import server
+from src.config import Settings
 from src.engine import artifact_fingerprint, export_artifact, run_bar_backtest, validate_artifact
 from src.engine.metrics import compute_metrics
 from src.json_utils import canonical_json
@@ -16,6 +19,7 @@ from src.quality import (
     iter_candle_chunks,
     snap_start_to_available,
 )
+from src.storage import CryptoStore
 
 
 def _candle(idx: int, close: float | None = None, volume: float = 10.0) -> Candle:
@@ -55,6 +59,7 @@ def test_compute_coverage_reports_missing_gap_ranges() -> None:
         requested_start=start,
         requested_end=end,
         granularity="ONE_DAY",
+        now=end,
     )
 
     assert coverage.expected_intervals == 5
@@ -75,7 +80,7 @@ def test_snap_start_advances_past_leading_gap() -> None:
     end = start + timedelta(days=5)
     candles = [_candle(1), _candle(2), _candle(3), _candle(4)]  # day 0 missing
     coverage = compute_coverage(
-        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY", now=end
     )
     assert coverage.missing_intervals == 1
 
@@ -85,6 +90,7 @@ def test_snap_start_advances_past_leading_gap() -> None:
         requested_start=start,
         requested_end=end,
         granularity="ONE_DAY",
+        now=end,
     )
 
     assert effective_start == start + timedelta(days=1)
@@ -98,7 +104,7 @@ def test_snap_start_leaves_interior_gap_blocking() -> None:
     end = start + timedelta(days=5)
     candles = [_candle(0), _candle(1), _candle(3), _candle(4)]  # day 2 missing (interior)
     coverage = compute_coverage(
-        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY", now=end
     )
 
     effective_start, returned = snap_start_to_available(
@@ -107,6 +113,7 @@ def test_snap_start_leaves_interior_gap_blocking() -> None:
         requested_start=start,
         requested_end=end,
         granularity="ONE_DAY",
+        now=end,
     )
 
     assert effective_start == start
@@ -119,7 +126,7 @@ def test_snap_start_noop_when_complete() -> None:
     end = start + timedelta(days=3)
     candles = [_candle(0), _candle(1), _candle(2)]
     coverage = compute_coverage(
-        candles, requested_start=start, requested_end=end, granularity="ONE_DAY"
+        candles, requested_start=start, requested_end=end, granularity="ONE_DAY", now=end
     )
 
     effective_start, returned = snap_start_to_available(
@@ -128,6 +135,7 @@ def test_snap_start_noop_when_complete() -> None:
         requested_start=start,
         requested_end=end,
         granularity="ONE_DAY",
+        now=end,
     )
 
     assert effective_start == start
@@ -143,6 +151,7 @@ def test_execution_grade_quality_blocks_when_coinbase_fetch_fails() -> None:
         requested_start=start,
         requested_end=end,
         granularity="ONE_DAY",
+        now=end,
     )
 
     quality = build_candle_source_quality(
@@ -161,6 +170,60 @@ def test_execution_grade_quality_blocks_when_coinbase_fetch_fails() -> None:
         "coinbase_fetch_failed",
         "blocking_missing_candles",
     ]
+
+
+async def test_partial_bar_refetched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The still-open trailing candle is re-fetched, overwriting a stale partial."""
+    now = datetime.now(UTC)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_end = day_start + timedelta(days=1)  # today's bar is still open (start + 1d > now)
+    partial = Candle(
+        "BTC-USD", day_start, low=99.0, high=101.0, open=100.0, close=100.0, volume=5.0
+    )
+    completed = Candle(
+        "BTC-USD", day_start, low=95.0, high=120.0, open=100.0, close=118.0, volume=50.0
+    )
+
+    class _FakeCoinbase:
+        """Returns the completed candle for any historical fetch."""
+
+        async def get_historical_candles(
+            self,
+            product_id: str,
+            *,
+            start: datetime,
+            end: datetime,
+            granularity: str,
+        ) -> list[Candle]:
+            del product_id, start, end, granularity
+            return [completed]
+
+    store = CryptoStore(str(tmp_path / "crypto.duckdb"))
+    await store.upsert_candles([partial], "ONE_DAY")
+    monkeypatch.setattr(server._state, "store", store)
+    monkeypatch.setattr(server._state, "coinbase", _FakeCoinbase())
+    monkeypatch.setattr(server._state, "settings", Settings())
+    try:
+        candles, quality = await server._load_candles(
+            product_id="BTC-USD",
+            timeframe="1d",
+            granularity="ONE_DAY",
+            start=day_start,
+            end=window_end,
+            execution_grade_required=False,
+        )
+    finally:
+        store.close()
+
+    assert len(candles) == 1
+    assert candles[0].close == pytest.approx(118.0)
+    assert candles[0].high == pytest.approx(120.0)
+    assert quality.coverage is not None
+    assert quality.coverage.expected_intervals == 0  # open bar excluded from expected
+    assert quality.coverage.missing_intervals == 0
 
 
 def test_backtest_normalizes_percent_position_cap() -> None:
@@ -295,6 +358,26 @@ def test_metric_golden_fixture() -> None:
     assert metrics["calmar"] == pytest.approx(96059745990.62515)
     assert metrics["profit_factor"] == pytest.approx(8 / 3)
     assert metrics["turnover"] == pytest.approx(1.9310344827586208)
+
+
+def test_hit_rate_counts_closed_trades_only() -> None:
+    """Hit rate and trade count use closed SELL legs, not every BUY+SELL leg."""
+    equity_curve = [
+        {"timestamp": "2026-01-01T00:00:00+00:00", "equity": 100.0},
+        {"timestamp": "2026-01-02T00:00:00+00:00", "equity": 110.0},
+    ]
+    trades = [
+        {"side": "BUY", "realized_pnl": 0.0, "notional": 100.0},
+        {"side": "SELL", "realized_pnl": 10.0, "notional": 110.0},
+        {"side": "BUY", "realized_pnl": 0.0, "notional": 110.0},
+        {"side": "SELL", "realized_pnl": -5.0, "notional": 105.0},
+    ]
+
+    result = compute_metrics(equity_curve, trades)
+    metrics = result.metrics
+
+    assert metrics["trade_count"] == 2
+    assert metrics["hit_rate"] == pytest.approx(0.5)
 
 
 def test_canonical_json_pins_float_formatting() -> None:

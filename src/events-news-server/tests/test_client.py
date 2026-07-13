@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from src.clients.fmp_client import FMPClient
+from src.clients.tavily_client import TavilyClient
 from src.config import Settings
 
 
@@ -202,3 +203,153 @@ class TestFMPClientHealthCheck:
                 result = await client.health_check()
 
             assert result is False
+
+
+class TestTavilyRecencyFilter:
+    """Tests for Tavily recency window mapping (guards accuracy.md §29)."""
+
+    @pytest.mark.asyncio
+    async def test_recency_uses_time_range(self, mock_settings: Settings) -> None:
+        """Recency window is passed via Tavily's time_range param, not the ignored days."""
+        async with TavilyClient(mock_settings) as client:
+            with patch.object(client.client, "search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {"results": []}
+
+                await client.search_market_news(
+                    query="latest news",
+                    ticker="NVDA",
+                    time_range="day",
+                )
+
+            mock_search.assert_called_once()
+            params = mock_search.call_args.kwargs
+            assert params["topic"] == "finance"
+            assert params["time_range"] == "d"
+            assert "days" not in params
+
+
+class TestEarningsReportedBeforeEstimated:
+    """Earnings tool sorts reported rows first (guards accuracy.md §30)."""
+
+    @pytest.mark.asyncio
+    async def test_earnings_reported_before_estimated(self, mock_settings: Settings) -> None:
+        """A small limit returns reported actuals first, date-desc, not FMP's raw order."""
+        from src.tools.earnings import get_earnings
+
+        # FMP raw order: estimated/upcoming rows first, reported rows scrambled.
+        raw_earnings: list[dict[str, Any]] = [
+            {
+                "date": "2024-06-01",
+                "symbol": "AAPL",
+                "epsActual": None,
+                "epsEstimated": 2.15,
+                "revenueActual": None,
+                "revenueEstimated": 118000000000,
+            },
+            {
+                "date": "2023-10-20",
+                "symbol": "AAPL",
+                "epsActual": 1.46,
+                "epsEstimated": 1.39,
+                "revenueActual": 89500000000,
+                "revenueEstimated": 88000000000,
+            },
+            {
+                "date": "2024-09-01",
+                "symbol": "AAPL",
+                "epsActual": None,
+                "epsEstimated": 2.20,
+                "revenueActual": None,
+                "revenueEstimated": 120000000000,
+            },
+            {
+                "date": "2024-01-25",
+                "symbol": "AAPL",
+                "epsActual": 2.10,
+                "epsEstimated": 2.05,
+                "revenueActual": 117500000000,
+                "revenueEstimated": 115000000000,
+            },
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.get_earnings = AsyncMock(return_value=raw_earnings)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.tools.earnings.get_settings", return_value=mock_settings),
+            patch("src.tools.earnings.FMPClient", return_value=mock_client),
+        ):
+            result = await get_earnings("AAPL", limit=2)
+
+        earnings = result["earnings"]
+        assert result["count"] == 2
+        # Reported rows (actual EPS present) lead the prefix.
+        assert earnings[0]["epsActual"] is not None
+        assert earnings[1]["epsActual"] is not None
+        # Within the reported group, most-recent date first.
+        assert earnings[0]["date"] == "2024-01-25"
+        assert earnings[1]["date"] == "2023-10-20"
+
+
+class TestEarningsCalendarTool:
+    """Market-wide earnings-calendar tool (guards accuracy.md §28)."""
+
+    @pytest.mark.asyncio
+    async def test_earnings_calendar_tool_returns_date_range(self, mock_settings: Settings) -> None:
+        """A from/to query hits FMP earnings-calendar and returns multiple companies."""
+        calendar_rows: list[dict[str, Any]] = [
+            {
+                "symbol": "AAPL",
+                "date": "2024-07-25",
+                "epsActual": None,
+                "epsEstimated": 1.35,
+                "revenueActual": None,
+                "revenueEstimated": 84000000000,
+                "lastUpdated": "2024-07-01",
+            },
+            {
+                "symbol": "MSFT",
+                "date": "2024-07-23",
+                "epsActual": None,
+                "epsEstimated": 2.93,
+                "revenueActual": None,
+                "revenueEstimated": 64000000000,
+                "lastUpdated": "2024-07-01",
+            },
+            {
+                "symbol": "TSLA",
+                "date": "2024-07-24",
+                "epsActual": None,
+                "epsEstimated": 0.60,
+                "revenueActual": None,
+                "revenueEstimated": 24000000000,
+                "lastUpdated": "2024-07-01",
+            },
+        ]
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value=calendar_rows)
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_response
+
+            async with FMPClient(mock_settings) as client:
+                result = await client.get_earnings_calendar(
+                    from_date="2024-07-22", to_date="2024-07-26"
+                )
+
+        # Multiple companies reporting across the range, not a single ticker.
+        assert len(result) == 3
+        assert {row["symbol"] for row in result} == {"AAPL", "MSFT", "TSLA"}
+
+        # Client requested the earnings-calendar endpoint with the from/to params.
+        mock_get.assert_called_once()
+        called_url = mock_get.call_args.args[0]
+        called_params = mock_get.call_args.kwargs["params"]
+        assert called_url.endswith("/earnings-calendar")
+        assert called_params["from"] == "2024-07-22"
+        assert called_params["to"] == "2024-07-26"

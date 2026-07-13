@@ -144,6 +144,7 @@ The parse tool understands these formats:
 
 # Output Guidelines
 
+- Returns and risk metrics are computed on total returns (dividends reinvested; split- and dividend-adjusted prices). Do not add a separate dividend-yield adjustment on top of them.
 - Include (Source: <tool_name>, $TODAY_DATE) for all data
 - For simple ETF-holdings or Treasury-rate requests, answer the requested fact or list first, then add only the minimum useful context.
 - Format weights as percentages (e.g., 40.0%)

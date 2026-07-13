@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients.massive_client import MassiveClient
 from .config import Settings, get_settings, load_settings
-from .engine.pricing import breakeven_at_expiry, bs_greeks, bs_price
+from .engine.pricing import breakeven_at_expiry, bs_greeks, bs_price, implied_vol
 from .engine.scenarios import position_pnl_scenarios, position_risk_profile
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
@@ -534,6 +534,39 @@ def _years_to_expiry(expiry_date: str) -> float:
     return max(seconds / (_HOURS_PER_YEAR * 3600), 0.0)
 
 
+def _resolve_iv(
+    volatility: float,
+    market_price: float | None,
+    underlying_price: float,
+    strike: float,
+    time_to_expiry: float,
+    risk_free_rate: float,
+    option_type: str,
+    dividend_yield: float,
+) -> float:
+    """Solve implied volatility from a market price, else echo the seed.
+
+    When ``market_price`` is given, invoke the engine's Newton+bisection
+    solver so the reported IV is genuine. When absent, fall back to the
+    caller-supplied ``volatility`` seed.
+
+    Returns:
+        Solved implied volatility (rounded), or the volatility seed.
+    """
+    if market_price is None:
+        return volatility
+    solved = implied_vol(
+        market_price,
+        underlying_price,
+        strike,
+        time_to_expiry,
+        risk_free_rate,
+        option_type,
+        dividend_yield=dividend_yield,
+    )
+    return round(solved, 6)
+
+
 @mcp.tool(
     annotations={
         "title": "Compute Option Greeks",
@@ -550,6 +583,8 @@ async def options_compute_greeks_tool(
     option_type: str,
     volatility: float,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
+    market_price: float | None = None,
 ) -> dict[str, Any]:
     """Compute Black-Scholes price, Greeks, and breakeven for an option.
 
@@ -561,27 +596,59 @@ async def options_compute_greeks_tool(
         strike: Option strike price.
         expiry_date: Expiration date (YYYY-MM-DD).
         option_type: 'call' or 'put'.
-        volatility: Implied volatility (annualized, e.g. 0.30 for 30%).
+        volatility: Implied volatility seed (annualized, e.g. 0.30 for 30%).
+            Used to price/Greek the contract and as the fallback IV when no
+            market_price is given.
         risk_free_rate: Risk-free interest rate (default 4.5%).
+        dividend_yield: Continuous dividend yield of the underlying
+            (annualized, e.g. 0.03 for 3%). Set for dividend payers and
+            indices; 0.0 (default) for non-dividend-paying underlyings.
+        market_price: Observed option price. When supplied, implied_volatility
+            is solved from it; when omitted, implied_volatility echoes the
+            volatility seed.
 
     Returns:
-        Dict with price, greeks, breakeven, and implied_volatility.
+        Dict with price, greeks, breakeven, and implied_volatility. The
+        implied_volatility is solved from market_price when given, else the
+        volatility seed.
     """
     try:
         time_to_expiry = _years_to_expiry(expiry_date)
         price = bs_price(
-            underlying_price, strike, time_to_expiry, risk_free_rate, volatility, option_type
+            underlying_price,
+            strike,
+            time_to_expiry,
+            risk_free_rate,
+            volatility,
+            option_type,
+            dividend_yield,
         )
         greeks = bs_greeks(
-            underlying_price, strike, time_to_expiry, risk_free_rate, volatility, option_type
+            underlying_price,
+            strike,
+            time_to_expiry,
+            risk_free_rate,
+            volatility,
+            option_type,
+            dividend_yield,
         )
         be = breakeven_at_expiry(strike, price, option_type, "long")
+        iv = _resolve_iv(
+            volatility,
+            market_price,
+            underlying_price,
+            strike,
+            time_to_expiry,
+            risk_free_rate,
+            option_type,
+            dividend_yield,
+        )
 
         return {
             "price": round(price, 4),
             "greeks": {k: round(v, 6) for k, v in greeks.items()},
             "breakeven": round(be, 4),
-            "implied_volatility": volatility,
+            "implied_volatility": iv,
         }
     except Exception as e:
         log_error(
@@ -616,12 +683,19 @@ async def options_scenario_analysis_tool(
     entry_premium: float,
     implied_volatility: float,
     risk_free_rate: float = 0.045,
+    dividend_yield: float = 0.0,
     contract_multiplier: int = 100,
+    spot_range_pct: float = 10.0,
+    vol_shift_range: float = 20.0,
+    days_forward: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Run P&L scenario analysis across spot-price and volatility changes.
+    """Run P&L scenario analysis across spot-price, volatility, and time.
 
     Use when a user asks "what happens if price drops 5%" or wants to see
-    P&L scenarios across different price and volatility movements.
+    P&L scenarios across different price and volatility movements. Set
+    spot_range_pct/vol_shift_range so the grid spans the move size the user
+    asked about, and pass days_forward to fold in time decay over a holding
+    period. Bad ranges (non-positive or beyond sane caps) return an error.
 
     Args:
         underlying_price: Current price of the underlying asset.
@@ -633,10 +707,19 @@ async def options_scenario_analysis_tool(
         entry_premium: Premium paid (long) or received (short) per share.
         implied_volatility: Current IV (annualized, e.g. 0.30 for 30%).
         risk_free_rate: Risk-free interest rate (default 4.5%).
+        dividend_yield: Continuous dividend yield of the underlying
+            (annualized). Set for dividend payers and indices; 0.0 (default)
+            for non-dividend-paying underlyings.
         contract_multiplier: Shares per contract (default 100 for equity options).
+        spot_range_pct: Symmetric spot-move half-width in percent for the grid.
+        vol_shift_range: Symmetric vol-shift half-width in percent for the grid.
+        days_forward: Optional calendar-day horizons at which to reprice the
+            grid for time decay. Omit for a single present-time grid.
 
     Returns:
         Dict with spot_changes, vol_changes, pnl_grid, max_profit, max_loss.
+        When days_forward is given, also includes pnl_grid_by_day (one repriced
+        grid per horizon).
     """
     try:
         time_to_expiry = _years_to_expiry(expiry_date)
@@ -650,7 +733,11 @@ async def options_scenario_analysis_tool(
             entry_premium=entry_premium,
             iv=implied_volatility,
             risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            spot_range_pct=spot_range_pct,
+            vol_shift_range=vol_shift_range,
             contract_multiplier=contract_multiplier,
+            days_forward=days_forward,
         )
         return dict(result)
     except Exception as e:
@@ -678,6 +765,7 @@ async def options_scenario_analysis_tool(
 )
 async def options_position_risk_profile_tool(
     contracts_json: str,
+    dividend_yield: float = 0.0,
 ) -> dict[str, Any]:
     """Compute aggregate risk profile for a multi-leg options position.
 
@@ -690,6 +778,10 @@ async def options_position_risk_profile_tool(
 
     Args:
         contracts_json: JSON string encoding a list of contract dicts.
+        dividend_yield: Continuous dividend yield of the underlying
+            (annualized), applied to every leg's Greeks (all legs share one
+            underlying). Set for dividend payers and indices; 0.0 (default)
+            for non-dividend-paying underlyings.
 
     Returns:
         Dict with net_greeks, max_profit, max_loss, breakevens.
@@ -716,7 +808,7 @@ async def options_position_risk_profile_tool(
                 }
             )
 
-        result = position_risk_profile(contracts)
+        result = position_risk_profile(contracts, dividend_yield=dividend_yield)
         return dict(result)
     except json.JSONDecodeError as e:
         return {
