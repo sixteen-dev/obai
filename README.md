@@ -76,18 +76,27 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 
 ## Install
 
+### One-line install
+
 ```bash
 curl -fsSL https://openbell.ai/install.sh | bash
 ```
 
-This single command checks prerequisites, clones the repo, prompts for API keys, starts all services, and installs the `obai` CLI. Once complete:
+Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services, and installs the `obai` CLI. Then start chatting:
 
 ```bash
 obai chat
 ```
 
-<details>
-<summary>Manual setup</summary>
+**Stop or restart later** — run the scripts from the install directory:
+
+```bash
+cd ~/.local/share/obai
+./teardown.sh      # stop everything (your data is preserved)
+./setup.sh         # start it back up
+```
+
+### Install from source
 
 ```bash
 git clone https://github.com/sixteen-dev/obai.git
@@ -100,13 +109,16 @@ export MASSIVE_API_KEY=...     # optional
 export TAVILY_API_KEY=...      # optional
 export EXA_API_KEY=...         # optional
 
-# One-shot setup: checks prereqs, starts Docker services, installs CLI
-./setup.sh
-
-# Start chatting
-obai chat
+./setup.sh         # one-shot setup: prereqs, Docker services, CLI
+obai chat          # start chatting
 ```
-</details>
+
+**Stop or restart** — from the repo root:
+
+```bash
+./teardown.sh      # stop everything
+./setup.sh         # start it back up
+```
 
 The setup script:
 1. Checks prerequisites (Docker, Python 3.12+, uv, git)
@@ -130,11 +142,37 @@ The setup script:
 OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
 
 ```bash
-git checkout v0.9.0
+git checkout v1.5.3
 ./setup.sh
 ```
 
 To update to latest: `git checkout main && git pull && ./setup.sh`
+
+---
+
+## Running the System
+
+Start and stop are handled by the two scripts from [Install](#install) — `./setup.sh` to start, `./teardown.sh` to stop (your data is preserved). To check that all ten servers are healthy:
+
+```bash
+obai status
+```
+
+The `obai` CLI only *connects* to the servers — it does not start them. If a query fails with a connection error, run `obai status`, then `./setup.sh` to bring anything back up.
+
+<details>
+<summary>Advanced: manage individual Docker services</summary>
+
+The MCP servers run under the Docker Compose project `obai` (Opik under `obai-opik`). From the repo root:
+
+```bash
+docker compose -p obai ps                                           # list running servers
+docker compose -p obai logs -f market-data-server                   # tail one server's logs
+docker compose -p obai restart                                      # restart all MCP servers
+docker compose -p obai up -d                                        # start just the MCP servers
+docker compose -p obai-opik -f infra/opik/docker-compose.yml up -d  # start just Opik
+```
+</details>
 
 ---
 

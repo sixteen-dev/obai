@@ -7,12 +7,13 @@
 #
 # What this script does:
 #   1. Checks prerequisites (Docker, Python 3.12+, uv, git)
-#   2. Clones OBaI to ~/.obai/src (or updates if already installed)
+#   2. Clones OBaI to ~/.local/share/obai (or updates if already installed)
 #   3. Prompts for API keys and saves to ~/.obai/.env
 #   4. Runs the full setup (pulls pre-built images, installs CLI, starts services)
 #
 # Environment:
-#   OBAI_HOME   — base directory (default: ~/.obai)
+#   OBAI_HOME   — base directory for config/.env (default: ~/.obai)
+#   OBAI_SRC    — clone directory for the repo (default: ~/.local/share/obai)
 #   OBAI_BRANCH — git branch to install (default: main)
 # =============================================================================
 
