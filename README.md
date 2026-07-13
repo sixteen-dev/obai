@@ -82,11 +82,10 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 curl -fsSL https://openbell.ai/install.sh | bash
 ```
 
-Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services, and installs the `obai` CLI. Then start chatting:
+Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services (including the web UI), and installs the `obai` CLI. Then chat with OBaI:
 
-```bash
-obai chat
-```
+- **Web UI (recommended):** open **http://127.0.0.1:8090** in your browser
+- **Terminal:** run `obai chat`
 
 **Stop or restart later** — run the scripts from the install directory:
 
@@ -109,9 +108,13 @@ export MASSIVE_API_KEY=...     # optional
 export TAVILY_API_KEY=...      # optional
 export EXA_API_KEY=...         # optional
 
-./setup.sh         # one-shot setup: prereqs, Docker services, CLI
-obai chat          # start chatting
+./setup.sh         # one-shot setup: prereqs, Docker services, CLI, web UI
 ```
+
+Then chat with OBaI:
+
+- **Web UI (recommended):** open **http://127.0.0.1:8090** in your browser
+- **Terminal:** run `obai chat`
 
 **Stop or restart** — from the repo root:
 
