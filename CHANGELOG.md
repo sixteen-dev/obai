@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-07-13
+
+Adds first-class lifecycle commands to the `obai` CLI so start, stop, restart,
+and upgrade no longer require running the shell scripts by hand.
+
+### Added
+
+- **`obai start` / `obai stop` / `obai restart`** drive the Docker services
+  (MCP + Opik) and the web UI by delegating to `setup.sh` / `teardown.sh` (the
+  single source of truth). `stop` preserves Docker images and data volumes.
+- **`obai upgrade`** pulls the latest version, re-pulls the version-tagged
+  images, and restarts — prompting first (`-y`/`--yes` skips it). Managed
+  one-liner installs fast-forward the release branch; **source checkouts are
+  never reset, recloned, or stashed** — only a clean, strictly-behind current
+  branch is fast-forwarded, and dirty / diverged / detached-HEAD states refuse
+  with guidance. Install mode is recorded in `~/.obai/install-manifest.json`.
+
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.5.3 → 1.5.4`.
+
 ## [1.5.3] - 2026-07-11
 
 Security patch release. Closes a cross-site WebSocket hijacking gap in the web
@@ -503,6 +524,6 @@ only after beta validation completes; do not move the beta tag.
 - Research agent with Exa semantic search
 - Automated setup/teardown scripts
 
-[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.4.0b1...HEAD
+[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.5.4...HEAD
 [1.4.0b1]: https://github.com/sixteen-dev/obai/releases/tag/v1.4.0b1
 [0.9.0]: https://github.com/sixteen-dev/obai/releases/tag/v0.9.0

@@ -87,13 +87,16 @@ Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys
 - **Web UI (recommended):** open **http://127.0.0.1:8090** in your browser
 - **Terminal:** run `obai chat`
 
-**Stop or restart later** — run the scripts from the install directory:
+**Stop, restart, or upgrade later** — the `obai` CLI now drives its own lifecycle, from any directory:
 
 ```bash
-cd ~/.local/share/obai
-./teardown.sh      # stop everything (your data is preserved)
-./setup.sh         # start it back up
+obai stop          # stop everything (Docker images and your data are preserved)
+obai start         # bring it back up
+obai restart       # stop, then start
+obai upgrade       # pull the latest version and restart on it (prompts first; -y to skip)
 ```
+
+`obai upgrade` fetches the latest release, re-pulls the versioned Docker images, and restarts the services and web UI automatically. The underlying `./setup.sh` / `./teardown.sh` scripts still work if you prefer running them from `~/.local/share/obai`.
 
 ### Install from source
 
@@ -116,12 +119,16 @@ Then chat with OBaI:
 - **Web UI (recommended):** open **http://127.0.0.1:8090** in your browser
 - **Terminal:** run `obai chat`
 
-**Stop or restart** — from the repo root:
+**Stop, restart, or upgrade** — use the `obai` CLI (or the `./teardown.sh` / `./setup.sh` scripts from the repo root):
 
 ```bash
-./teardown.sh      # stop everything
-./setup.sh         # start it back up
+obai stop          # stop everything (data preserved)
+obai start         # start it back up
+obai restart       # stop, then start
+obai upgrade       # fast-forward your current branch and restart on it
 ```
+
+> **Source checkouts are never reset.** `obai upgrade` only fast-forwards your *current* branch when it is clean and strictly behind origin; if you have local commits or uncommitted changes it refuses and tells you what to do, so it will never clobber your work. (One-liner installs at `~/.local/share/obai` track the release branch and upgrade turnkey.)
 
 The setup script:
 1. Checks prerequisites (Docker, Python 3.12+, uv, git)
@@ -145,23 +152,23 @@ The setup script:
 OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
 
 ```bash
-git checkout v1.5.3
+git checkout v1.5.4
 ./setup.sh
 ```
 
-To update to latest: `git checkout main && git pull && ./setup.sh`
+To update to latest: `obai upgrade` (or `git checkout main && git pull && ./setup.sh`).
 
 ---
 
 ## Running the System
 
-Start and stop are handled by the two scripts from [Install](#install) — `./setup.sh` to start, `./teardown.sh` to stop (your data is preserved). To check that all ten servers are healthy:
+Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that all ten servers are healthy:
 
 ```bash
 obai status
 ```
 
-The `obai` CLI only *connects* to the servers — it does not start them. If a query fails with a connection error, run `obai status`, then `./setup.sh` to bring anything back up.
+If a query fails with a connection error, run `obai status`, then `obai start` to bring anything back up.
 
 <details>
 <summary>Advanced: manage individual Docker services</summary>

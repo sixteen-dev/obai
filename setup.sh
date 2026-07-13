@@ -314,6 +314,22 @@ else
     ok "Preferences file exists"
 fi
 
+# Record how this checkout was installed so `obai upgrade` can tell a managed
+# one-liner install (OBAI_MANAGED=1, set by install.sh) from a developer's
+# source clone. The CLI never resets/reclones a source checkout.
+INSTALL_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+MANAGED_FLAG="false"
+[ "${OBAI_MANAGED:-0}" = "1" ] && MANAGED_FLAG="true"
+cat > "$OBAI_DIR/install-manifest.json" <<MANIFESTEOF
+{
+  "managed": $MANAGED_FLAG,
+  "repo": "$REPO_ROOT",
+  "branch": "$INSTALL_BRANCH",
+  "version": "$OBAI_VERSION"
+}
+MANIFESTEOF
+ok "Recorded install manifest ($([ "$MANAGED_FLAG" = "true" ] && echo managed || echo source))"
+
 # =============================================================================
 # Step 4: Opik tracing stack
 # =============================================================================
