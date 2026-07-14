@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-07-14
+
+Patch: keep the install-manifest's `managed` flag stable across `setup.sh`
+re-runs.
+
+### Fixed
+
+- `obai start` / `obai upgrade` re-run `setup.sh` without `OBAI_MANAGED`, which
+  previously rewrote `~/.obai/install-manifest.json` to `managed: false` —
+  silently downgrading a managed (one-liner) install to `source` after the first
+  start/upgrade. `setup.sh` now preserves an existing `managed: true` unless
+  `OBAI_MANAGED` is explicitly set, so managed installs stay managed. (Upgrade
+  behavior was unaffected either way; this corrects the mode label, messaging,
+  and force-push recovery guidance.)
+
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.5.4 → 1.5.5`.
+
 ## [1.5.4] - 2026-07-13
 
 Adds first-class lifecycle commands to the `obai` CLI so start, stop, restart,
@@ -534,6 +553,6 @@ only after beta validation completes; do not move the beta tag.
 - Research agent with Exa semantic search
 - Automated setup/teardown scripts
 
-[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.5.4...HEAD
+[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.5.5...HEAD
 [1.4.0b1]: https://github.com/sixteen-dev/obai/releases/tag/v1.4.0b1
 [0.9.0]: https://github.com/sixteen-dev/obai/releases/tag/v0.9.0
