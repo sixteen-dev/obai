@@ -19,7 +19,7 @@ exclude = [
 
 [project]
 name = "obai"
-version = "1.5.3"
+version = "1.5.5"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -87,6 +87,7 @@ ignore = [
 "tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102"]
 "core_agents/tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102"]
 "clients/web/tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102"]
+"clients/cli/tests/*" = ["S101", "ANN", "ANN003", "ANN202", "D102", "S603", "S607"]
 # Evaluation module has CLI and may use assert for validation
 "evaluation/*" = ["S101", "ANN401"]
 # CLI needs sys.path modification before local imports
@@ -108,7 +109,7 @@ disallow_any_unimported = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["core_agents/tests", "clients/web/tests"]
+testpaths = ["core_agents/tests", "clients/web/tests", "clients/cli/tests"]
 
 [tool.uv]
 exclude-newer = "7 days"

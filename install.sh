@@ -330,4 +330,6 @@ cd "$OBAI_SRC"
 # Source env file so setup.sh sees the keys
 load_env_file "$OBAI_ENV_FILE"
 
-./setup.sh
+# Mark this as a managed install so `obai upgrade` may fast-forward it to the
+# release branch (a developer's source clone is left untouched by comparison).
+OBAI_MANAGED=1 ./setup.sh

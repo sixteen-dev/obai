@@ -1,6 +1,6 @@
 [project]
 name = "crypto-server"
-version = "1.5.3"
+version = "1.5.5"
 description = "MCP server for Coinbase spot crypto research, backtesting, and strategy artifacts"
 requires-python = ">=3.12"
 dependencies = [

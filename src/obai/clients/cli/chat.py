@@ -760,6 +760,71 @@ def web(
     run_server(host=host, port=port)
 
 
+# --- Lifecycle subcommands ---
+
+
+@cli.command()
+def start() -> None:
+    """Start OBaI: Docker services (MCP + Opik) and the web UI. Preserves data."""
+    from clients.cli.lifecycle import run_start
+
+    run_start()
+
+
+@cli.command()
+def stop() -> None:
+    """Stop all OBaI services. Docker images and data volumes are preserved."""
+    from clients.cli.lifecycle import run_stop
+
+    run_stop()
+
+
+@cli.command("teardown", hidden=True)
+def teardown() -> None:
+    """Alias for `stop`."""
+    from clients.cli.lifecycle import run_stop
+
+    run_stop()
+
+
+@cli.command()
+def restart() -> None:
+    """Restart OBaI: stop everything, then bring it back up."""
+    from clients.cli.lifecycle import run_restart
+
+    run_restart()
+
+
+@cli.command()
+def upgrade(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt (for scripts/CI).",
+    ),
+) -> None:
+    """Pull the latest version and restart on it. Prompts before changing anything."""
+    from clients.cli.lifecycle import run_upgrade
+
+    run_upgrade(assume_yes=yes)
+
+
+@cli.command("update", hidden=True)
+def update(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt (for scripts/CI).",
+    ),
+) -> None:
+    """Alias for `upgrade`."""
+    from clients.cli.lifecycle import run_upgrade
+
+    run_upgrade(assume_yes=yes)
+
+
 # --- Config subcommands ---
 
 _KNOWN_KEYS = [
