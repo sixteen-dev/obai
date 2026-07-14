@@ -318,9 +318,17 @@ fi
 # one-liner install (OBAI_MANAGED=1, set by install.sh) from a developer's
 # source clone. The CLI never resets/reclones a source checkout.
 INSTALL_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+MANIFEST_FILE="$OBAI_DIR/install-manifest.json"
+# An explicit OBAI_MANAGED=1 (set by install.sh) wins; otherwise preserve the
+# existing manifest's flag so re-running setup.sh via `obai start`/`obai upgrade`
+# never downgrades a managed install to source.
 MANAGED_FLAG="false"
-[ "${OBAI_MANAGED:-0}" = "1" ] && MANAGED_FLAG="true"
-cat > "$OBAI_DIR/install-manifest.json" <<MANIFESTEOF
+if [ "${OBAI_MANAGED:-0}" = "1" ]; then
+    MANAGED_FLAG="true"
+elif [ -f "$MANIFEST_FILE" ] && grep -qE '"managed"[[:space:]]*:[[:space:]]*true' "$MANIFEST_FILE"; then
+    MANAGED_FLAG="true"
+fi
+cat > "$MANIFEST_FILE" <<MANIFESTEOF
 {
   "managed": $MANAGED_FLAG,
   "repo": "$REPO_ROOT",
