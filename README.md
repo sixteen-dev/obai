@@ -32,7 +32,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.5` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.6-sol` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
 ---
 
@@ -360,7 +360,7 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-5.5` | Model for the Central Hub (needs strong reasoning) |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Model for the Central Hub (needs strong reasoning) |
 | `SPECIALIST_MODEL` | `gpt-5-mini` | Model for specialist agents |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `true` | Run faithfulness/completeness scoring on every query |
