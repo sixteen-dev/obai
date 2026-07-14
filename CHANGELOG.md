@@ -23,6 +23,16 @@ and upgrade no longer require running the shell scripts by hand.
   branch is fast-forwarded, and dirty / diverged / detached-HEAD states refuse
   with guidance. Install mode is recorded in `~/.obai/install-manifest.json`.
 
+### Security
+
+- Pinned `click>=8.3.3` (PYSEC-2026-2132) and `pillow>=12.3.0`
+  (PYSEC-2026-2253/2254/2255/2256/2257) in the root lock; `uv audit` is clean.
+
+### Fixed
+
+- README hub/orchestrator model reference corrected `gpt-5.5` → `gpt-5.6-sol`
+  (the actual default since 1.5.3).
+
 ### Package versions
 
 - Product line (root, `obai`, `crypto-server`): `1.5.3 → 1.5.4`.
