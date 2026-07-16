@@ -3,26 +3,26 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-07-04T03:58:53.468994172Z"
+exclude-newer = "2026-07-09T22:55:19.697405152Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-openai-agents = { timestamp = "2026-07-11T03:58:53.469016053Z", span = "PT0S" }
-pytest = { timestamp = "2026-07-11T03:58:53.469015061Z", span = "PT0S" }
-pillow = { timestamp = "2026-07-11T03:58:53.469015372Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-07-11T03:58:53.469016524Z", span = "PT0S" }
-opik = { timestamp = "2026-07-11T03:58:53.469016264Z", span = "PT0S" }
-starlette = { timestamp = "2026-07-11T03:58:53.469016755Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-07-11T03:58:53.469014029Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-07-11T03:58:53.469013799Z", span = "PT0S" }
-litellm = { timestamp = "2026-07-11T03:58:53.469013539Z", span = "PT0S" }
-cryptography = { timestamp = "2026-07-11T03:58:53.469014601Z", span = "PT0S" }
-authlib = { timestamp = "2026-07-11T03:58:53.469015823Z", span = "PT0S" }
-idna = { timestamp = "2026-07-11T03:58:53.469017145Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-07-11T03:58:53.469015612Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-07-11T03:58:53.46900391Z", span = "PT0S" }
-pygments = { timestamp = "2026-07-11T03:58:53.46901435Z", span = "PT0S" }
-requests = { timestamp = "2026-07-11T03:58:53.469014831Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-07-16T22:55:19.697421773Z", span = "PT0S" }
+pytest = { timestamp = "2026-07-16T22:55:19.697420601Z", span = "PT0S" }
+pillow = { timestamp = "2026-07-16T22:55:19.697420982Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-07-16T22:55:19.697422334Z", span = "PT0S" }
+opik = { timestamp = "2026-07-16T22:55:19.697422023Z", span = "PT0S" }
+starlette = { timestamp = "2026-07-16T22:55:19.697422605Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-07-16T22:55:19.697419368Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-07-16T22:55:19.697419128Z", span = "PT0S" }
+litellm = { timestamp = "2026-07-16T22:55:19.697418827Z", span = "PT0S" }
+cryptography = { timestamp = "2026-07-16T22:55:19.69742002Z", span = "PT0S" }
+authlib = { timestamp = "2026-07-16T22:55:19.697421513Z", span = "PT0S" }
+idna = { timestamp = "2026-07-16T22:55:19.697423055Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-07-16T22:55:19.697421262Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-07-16T22:55:19.69741469Z", span = "PT0S" }
+pygments = { timestamp = "2026-07-16T22:55:19.697419739Z", span = "PT0S" }
+requests = { timestamp = "2026-07-16T22:55:19.6974203Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1788,7 +1788,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "openai", specifier = ">=2.15.0" },
     { name = "openai-agents", specifier = ">=0.17.3" },
-    { name = "opik", specifier = ">=2.0.23" },
+    { name = "opik", specifier = ">=2.1.31" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
@@ -1905,7 +1905,7 @@ wheels = [
 
 [[package]]
 name = "opik"
-version = "2.0.23"
+version = "2.1.31"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
@@ -1928,9 +1928,9 @@ dependencies = [
     { name = "uuid6" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/da/f1/80f3612239f7fbf4214b75cd01a55388067276630ed3ad6d01e75bdf8ada/opik-2.0.23.tar.gz", hash = "sha256:4afafe4f6576bdd25f4781e7c2fba69ba58a352d91d54912a75820dd78d3656f", size = 917074, upload-time = "2026-05-06T14:04:38.406Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/ea/1fe4df8ee36165a5dd5493635b198c3630f36218a533ae7fe5dd13524320/opik-2.1.31.tar.gz", hash = "sha256:e50c845fa8cf5b1d8fce09d4d2a545aba5699532483943eff72b9bebb46cf6e3", size = 1177089, upload-time = "2026-07-16T11:22:30.019Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/2e/9fafa8b519bcb2a78486fc9bebcb5b08f0997668bbd93b71d36d5e0214f1/opik-2.0.23-py3-none-any.whl", hash = "sha256:0580513743e0fe266766391ec299fd1f8a2d9bf95e5b362decd0d62d4644c362", size = 1516731, upload-time = "2026-05-06T14:04:36.362Z" },
+    { url = "https://files.pythonhosted.org/packages/16/6b/4cd777ba7e7ff96d44e09ec2e79fa1406cdc5aec849f8ca70c913d8f9366/opik-2.1.31-py3-none-any.whl", hash = "sha256:829f5d96a31affa7a527d954d8a7757aeb9cf069e21bda9fc9c26ae719fb1578", size = 1865088, upload-time = "2026-07-16T11:22:28.184Z" },
 ]
 
 [[package]]
