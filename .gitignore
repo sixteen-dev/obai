@@ -98,3 +98,22 @@ scripts/*
 # E2E regression run outputs
 .claude/skills/obai-e2e-regression/runs/
 .claude/skills/obai-e2e-regression-workspace/
+
+# Track the canonical OBaI E2E regression skill while keeping all other
+# machine-local Claude state ignored. Runtime outputs and legacy ad-hoc
+# backups remain excluded.
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/obai-e2e-regression/
+!.claude/skills/obai-e2e-regression/SKILL.md
+!.claude/skills/obai-e2e-regression/cases/
+!.claude/skills/obai-e2e-regression/cases/*.yaml
+!.claude/skills/obai-e2e-regression/scripts/
+!.claude/skills/obai-e2e-regression/scripts/*.py
+!.claude/skills/obai-e2e-regression/tests/
+!.claude/skills/obai-e2e-regression/tests/*.py
+.claude/skills/obai-e2e-regression/runs/
+.claude/skills/obai-e2e-regression/backup/
+.claude/skills/obai-e2e-regression/**/__pycache__/
