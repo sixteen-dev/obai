@@ -6,6 +6,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-18
+
+Minor: cost-aware evaluation suite with deterministic outcome contracts, plus a
+regression gate that no longer false-fails correct answers.
+
+### Added
+
+- Cost-aware evaluation corpus: 210 cases across 8 categories (185 default + 25
+  opt-in `extended_only`). New `--include-extended`, `--ids`, and `--limit`
+  options allow surgical, cost-capped paid suite runs.
+- New scorers: `OutcomeContractScorer` (deterministically classifies success,
+  data-unavailable, specialist-error, partial-refusal, and hub-reject from trace
+  evidence), `DatePolicyScorer` (freshness / as-of SLA disclosure), and
+  `PartialRefusalSemanticScorer` (verifies scoped refusals are complete and free
+  of fabricated results or side effects).
+- Fail-fast preflight before any paid query: suite, selection, scorer,
+  `ANTHROPIC_API_KEY`, and export/report-destination checks. Suite runs return
+  defined exit codes (0 pass, 1 contract failure, 2 invalid config, 3 incomplete
+  scoring).
+- `forbidden_tools` support in tool-orchestration scoring.
+
+### Changed
+
+- Faithfulness scoring now labels financial figures (strike, spot, bid/ask,
+  greeks, premium) and fails outright on a labeled-number contradiction the
+  semantic judge can no longer override; numeric parsing handles signed,
+  scientific-notation, and accounting-negative values.
+- `EfficiencyScorer` measures redundancy by identical route+argument signature,
+  so reusing a specialist with different arguments is no longer penalized.
+- Opik dataset names carry a per-selection fingerprint, preventing stale rows in
+  a reused base dataset from leaking into a filtered run.
+- E2E regression gate: accept a synchronous walk-forward completion instead of
+  aborting the suite, normalize typographic hyphens/dashes before text
+  assertions, broaden refusal detection to inflected forms, and re-baseline
+  specialist-call ceilings to observed multi-step counts (core planning budget
+  157 -> 181).
+- **Breaking:** the suite loader now raises on malformed YAML, unknown fields,
+  duplicate IDs, or multi-turn rows (previously warn-and-skip). Suite exit codes
+  were remapped (`2` = invalid config/selection, `3` = incomplete/errored
+  scoring), and `evaluate --suite` no longer silently falls back to built-in
+  cases when the YAML suite file is missing.
+
+### Fixed
+
+- Continuous experiment metrics (efficiency, answer-relevance, LLM-judge rubric
+  average) are recorded correctly; the extractor previously read result keys that
+  never matched and silently dropped these values.
+- Scorers that do not apply to a row no longer record false-zero scores in Opik
+  aggregates; N/A rows are omitted with an explicit applicability flag.
+
 ## [1.5.5] - 2026-07-14
 
 Patch: keep the install-manifest's `managed` flag stable across `setup.sh`
