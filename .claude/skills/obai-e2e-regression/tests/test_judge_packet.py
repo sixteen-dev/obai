@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from judge_packet import PROVIDER_FAILURE_RE, _skill_name_from_call, judge_packet
+from judge_packet import PROVIDER_FAILURE_RE, REFUSAL_RE, _skill_name_from_call, judge_packet
 
 
 @pytest.mark.parametrize(
@@ -138,6 +138,37 @@ def test_skill_name_read_from_double_encoded_span() -> None:
     assert _skill_name_from_call(span) == "obai-research-routing"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A refusal is recognized regardless of the verb's inflection. The
+        # product opens a graceful in-band refusal with "Refused:", so matching
+        # only the bare stem "refuse" would misread it as an ordinary success.
+        "Refused: the legs have different expirations.",
+        "I am refusing that invalid aggregate.",
+        "The specialist refuses to model both legs at one expiry.",
+        "This is a refusal, not a computed payoff.",
+        "I cannot compute a shared-expiry profile.",
+        "That request is unsupported for mixed expirations.",
+    ],
+)
+def test_refusal_re_matches_refusal_inflections(text: str) -> None:
+    assert REFUSAL_RE.search(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Ordinary financial prose that merely contains the substring must not
+        # be read as a refusal.
+        "The fund is diversified across sectors.",
+        "Confused signals aside, the trend is up.",
+    ],
+)
+def test_refusal_re_ignores_non_refusal_prose(text: str) -> None:
+    assert REFUSAL_RE.search(text) is None
+
+
 def _case(**overrides: object) -> dict:
     return {
         "id": "T1",
@@ -238,6 +269,68 @@ def test_expected_partial_refusal_can_pass_degraded() -> None:
 
     result = judge_packet(case, packet)
 
+    assert result.verdict == "pass_degraded"
+
+
+def test_typographic_hyphen_does_not_break_required_text() -> None:
+    # The product renders markdown with non-breaking hyphens (U+2011). An
+    # assertion written with an ASCII hyphen must still match "warm-up",
+    # "out-of-sample" and similar terms so a correct answer is not false-failed.
+    case = _case(
+        expected_tools=[],
+        expected_skills=[],
+        assertions={
+            "required_text": [
+                {"regex": r"\bwarm[- ]?up\b"},
+                {"regex": r"\bout[- ]of[- ]sample\b"},
+            ]
+        },
+    )
+    packet = _packet(
+        "Each test fold uses a fully warm‑up 200-day SMA; out‑of‑sample Sharpe is positive.",
+        tools=[],
+    )
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "pass"
+    assert not any("required_text missing" in failure for failure in result.checks_failed)
+
+
+def test_typographic_dash_still_triggers_forbidden_text() -> None:
+    # Dash folding must not let a forbidden payoff number hide behind a
+    # non-breaking hyphen.
+    case = _case(
+        expected_tools=[],
+        expected_skills=[],
+        assertions={"forbidden_text": [{"regex": r"\bmax[- ]profit\b[^.\n]{0,10}\$?\d"}]},
+    )
+    packet = _packet("The max‑profit is $250 at expiry.", tools=[])
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "fail_product"
+    assert any("forbidden_text present" in failure for failure in result.checks_failed)
+
+
+def test_inflected_refusal_is_degraded_not_success() -> None:
+    # The product opens its graceful refusal with "Refused:"; the observed
+    # outcome must be partial_refusal, not a silent success.
+    case = _case(
+        expected_outcome="partial_refusal",
+        acceptable_outcomes=["specialist_error"],
+        expected_tools=[],
+        expected_skills=[],
+        assertions={"required_text": ["different expir"]},
+    )
+    packet = _packet(
+        "Refused: the legs have different expirations, so a shared-expiry profile is invalid.",
+        tools=[],
+    )
+
+    result = judge_packet(case, packet)
+
+    assert result.observed_outcome == "partial_refusal"
     assert result.verdict == "pass_degraded"
 
 
@@ -493,6 +586,39 @@ def test_timeout_is_harness_inconclusive() -> None:
     result = judge_packet(_case(), packet)
 
     assert result.verdict == "inconclusive_harness"
+
+
+def test_async_case_without_follow_up_is_inconclusive_by_default() -> None:
+    # An async-required case with no follow-up evidence must never be scored as
+    # a pass: the initial stub is not an answer.
+    case = _case(
+        expect_async_job=True,
+        expected_tools=[],
+        expected_skills=[],
+        assertions={"required_text": ["walk-forward"]},
+    )
+
+    result = judge_packet(case, _packet("Synchronous walk-forward result.", tools=[]))
+
+    assert result.verdict == "inconclusive_harness"
+
+
+def test_async_job_optional_accepts_synchronous_completion() -> None:
+    # When a job may complete synchronously, a complete in-band answer is a real
+    # result and is judged against the response, not treated as missing async
+    # evidence.
+    case = _case(
+        expect_async_job=True,
+        async_job_optional=True,
+        expected_tools=[],
+        expected_skills=[],
+        assertions={"required_text": ["walk-forward"]},
+    )
+
+    result = judge_packet(case, _packet("Synchronous walk-forward result.", tools=[]))
+
+    assert result.verdict != "inconclusive_harness"
+    assert result.observed_outcome == "success"
 
 
 def test_forbidden_skill_is_product_failure() -> None:

@@ -929,6 +929,48 @@ def test_build_packet_copies_full_final_response() -> None:
     assert packet["manifest_sha256"] == "2" * 64
 
 
+def test_build_packet_flags_missing_async_job_when_not_optional() -> None:
+    packet = run_one.build_packet(
+        case={"id": "T1", "query": "query", "expect_async_job": True},
+        cli=_cli_result("stub without a job id"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup=None,
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "async_followup_failed"
+
+
+def test_build_packet_accepts_synchronous_completion_when_async_job_optional() -> None:
+    packet = run_one.build_packet(
+        case={
+            "id": "T1",
+            "query": "query",
+            "expect_async_job": True,
+            "async_job_optional": True,
+        },
+        cli=_cli_result("complete synchronous walk-forward result"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup=None,
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "completed"
+    assert packet["harness_exit_code"] == 0
+
+
 def test_build_packet_rejects_terminal_cli_session_mismatch() -> None:
     packet = run_one.build_packet(
         case={"id": "CHILD", "query": "follow up", "chain_from": "PARENT"},

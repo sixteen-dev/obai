@@ -63,7 +63,8 @@ PROVIDER_FAILURE_RE = re.compile(
     re.IGNORECASE,
 )
 REFUSAL_RE = re.compile(
-    r"\b(?:cannot|can't|unable to|unsupported|not supported|refuse|won't|will not)\b",
+    r"\b(?:cannot|can't|unable to|unsupported|not supported|"
+    r"refus(?:e|es|ed|ing|al)|won't|will not)\b",
     re.IGNORECASE,
 )
 DATA_UNAVAILABLE_RE = re.compile(
@@ -300,6 +301,28 @@ def _response_text(packet: dict[str, Any]) -> str:
         if isinstance(candidate, str) and candidate.strip():
             return candidate
     return ""
+
+
+_DASH_TRANSLATION = {
+    0x2010: "-",  # hyphen
+    0x2011: "-",  # non-breaking hyphen
+    0x2012: "-",  # figure dash
+    0x2013: "-",  # en dash
+    0x2014: "-",  # em dash
+    0x2212: "-",  # minus sign
+}
+
+
+def _normalize_dashes(text: str) -> str:
+    """Fold typographic hyphens and dashes to ASCII '-' for text assertions.
+
+    The product renders markdown with non-breaking hyphens (U+2011) and en
+    dashes, so assertions written with an ASCII '-' would otherwise miss
+    ``warm-up``, ``as-of``, ``pre-market`` and similar terms in an otherwise
+    correct answer. Folding only affects response text matching; span, numeric,
+    and evidence extraction keep their raw bytes.
+    """
+    return text.translate(_DASH_TRANSLATION)
 
 
 def _authoritative_spans(packet: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
@@ -647,6 +670,11 @@ def _async_context(case: dict[str, Any], packet: dict[str, Any]) -> AsyncContext
 
     followup = packet.get("followup")
     if not isinstance(followup, dict):
+        if case.get("async_job_optional") is True:
+            # The product answered synchronously instead of dispatching a job.
+            # A complete in-band answer is a real result, so judge the initial
+            # response exactly like a non-async case.
+            return AsyncContext(packet=packet)
         return AsyncContext(
             packet=packet,
             early_verdict="inconclusive_harness",
@@ -1079,7 +1107,7 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
     packet = async_context.packet
     case_id = str(case.get("id") or packet.get("id") or "unknown")
     expected_outcome = str(case.get("expected_outcome", "success"))
-    response = _response_text(packet)
+    response = _normalize_dashes(_response_text(packet))
     observed_outcome = async_context.forced_outcome or _observed_outcome(case, packet, response)
     tools, tool_evidence = _observed_tools(packet)
     skills, skill_evidence = _observed_skills(packet)

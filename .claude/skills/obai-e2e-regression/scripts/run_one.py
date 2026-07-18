@@ -1209,7 +1209,7 @@ def build_packet(
         harness_status = "trace_lookup_failed"
     elif trace_evidence_error or raw_trace_evidence is None:
         harness_status = "trace_evidence_failed"
-    elif case.get("expect_async_job") and not followup:
+    elif case.get("expect_async_job") and not followup and not case.get("async_job_optional"):
         harness_status = "async_followup_failed"
     elif followup and (
         followup.get("timed_out")
@@ -1639,6 +1639,10 @@ def main() -> int:
                     poll_prompt=poll_prompt,
                     authorization_check=revalidate_paid_authorization,
                 )
+        elif case.get("async_job_optional"):
+            # The product completed synchronously and never dispatched a job.
+            # Leave follow-up empty so the initial response is judged directly.
+            followup = None
         else:
             followup = {
                 "job_id": None,

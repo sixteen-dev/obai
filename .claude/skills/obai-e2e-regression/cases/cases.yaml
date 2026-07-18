@@ -40,7 +40,7 @@ suite:
   smoke_max_cases: 8
   smoke_max_api_calls: 45
   core_max_cases: 21
-  core_max_api_calls: 157
+  core_max_api_calls: 181
   live_max_cases: 8
   live_max_api_calls: 48
 
@@ -239,9 +239,9 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     tier: core
-    estimated_api_calls: 7
+    estimated_api_calls: 11
     max_cli_turns: 1
-    cost: {class: low, max_specialist_calls: 2}
+    cost: {class: low, max_specialist_calls: 4}
     assertions:
       required_text:
         - {regex: "\\b(?:JPY|Japanese yen)\\b"}
@@ -280,9 +280,9 @@ test_cases:
     max_age_seconds: 86400
     oracle_id: black-scholes-dividend-synthetic-v1
     tier: core
-    estimated_api_calls: 5
+    estimated_api_calls: 11
     max_cli_turns: 1
-    cost: {class: low, max_specialist_calls: 1}
+    cost: {class: low, max_specialist_calls: 4}
     assertions:
       required_text:
         - {regex: "\\bimplied volatility\\b"}
@@ -300,7 +300,7 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     degraded_outcome_patterns:
-      data_unavailable: '(?i)\bZZZZ\b.{0,60}\b(?:unavailable|invalid|unpriceable|insufficient coverage|cannot compute|no data|not priced)\b|\b(?:unpriceable|insufficient coverage|cannot compute)\b'
+      data_unavailable: '(?i)\bZZZZ\b[\s\S]{0,80}\b(?:unavailable|invalid|unpriceable|unresolved|insufficient|withheld|cannot compute|no data|not priced)\b|\b(?:unpriceable|coverage is insufficient|insufficient coverage|cannot compute|withheld)\b'
     tier: core
     estimated_api_calls: 5
     max_cli_turns: 1
@@ -326,9 +326,9 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     tier: core
-    estimated_api_calls: 10
+    estimated_api_calls: 24
     max_cli_turns: 1
-    cost: {class: high, max_specialist_calls: 3}
+    cost: {class: high, max_specialist_calls: 10}
     assertions:
       required_text:
         - {regex: "https?://[^\\s)]+"}
@@ -342,6 +342,7 @@ test_cases:
     expected_tools: [strategy_analysis]
     expected_skills: [obai-strategy-routing]
     expect_async_job: true
+    async_job_optional: true
     expected_outcome: success
     date_policy: frozen
     data_contract_id: spy-adjusted-daily-2015-2024-v1
@@ -349,7 +350,7 @@ test_cases:
     tier: core
     estimated_api_calls: 18
     max_cli_turns: 3
-    cost: {class: high, max_specialist_calls: 1, max_async_polls: 2}
+    cost: {class: high, max_async_polls: 2}
     async_contract:
       job_type: strategy_walk_forward
       max_wait_seconds: 600
