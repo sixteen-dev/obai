@@ -37,6 +37,22 @@ for svc in "${services[@]}"; do
     fi
 done
 
+# These suites live outside their owning pytest testpaths, so invoke them
+# explicitly while preserving each environment's import isolation.
+echo
+echo "=== canonical OBaI regression harness ==="
+if ! uv run pytest -q ".claude/skills/obai-e2e-regression/tests" "$@"; then
+    fail_count=$((fail_count + 1))
+    echo "FAIL: canonical OBaI regression harness"
+fi
+
+echo
+echo "=== OBaI broader evaluation contracts ==="
+if ! (cd "src/obai" && uv run pytest -q "evaluation/tests" "$@"); then
+    fail_count=$((fail_count + 1))
+    echo "FAIL: OBaI broader evaluation contracts"
+fi
+
 if [ "$fail_count" -gt 0 ]; then
     echo
     echo "FAIL: $fail_count service(s) had failing tests"

@@ -164,6 +164,13 @@ class TestExtractNumbers:
         assert 2.3 in values
         assert 45000000.0 in values
 
+    def test_signed_general_number_preserves_delta_direction(self) -> None:
+        """A leading sign on a non-price/non-percent number is load-bearing."""
+        nums = _extract_numbers("Delta is -0.25.")
+
+        assert len(nums) == 1
+        assert nums[0].value == -0.25
+
 
 # ---------------------------------------------------------------------------
 # Tool response number extraction tests
@@ -326,6 +333,225 @@ class TestScoreNumeric:
         assert result.accuracy < 1.0
         assert result.unmatched_numbers > 0
 
+    def test_labeled_numbers_cannot_swap_spot_and_strike(self) -> None:
+        """Matching values in the wrong financial fields are not faithful."""
+        result = _score_numeric(
+            "Spot is $105 and strike is $100.",
+            [
+                {
+                    "tool_name": "options",
+                    "response": {"spot": 100, "strike": 105},
+                }
+            ],
+        )
+
+        assert result.accuracy == 0.0
+        assert all(detail.field_constrained for detail in result.details)
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "Spot and strike, respectively, are $105 and $100.",
+            "| Spot | Strike |\n| $105 | $100 |",
+            "| Spot | Strike |\n| --- | --- |\n| $105 | $100 |",
+        ],
+    )
+    def test_ordered_pair_formats_cannot_hide_swapped_spot_and_strike(self, response: str) -> None:
+        result = _score_numeric(
+            response,
+            [{"tool_name": "options", "response": {"spot": 100, "strike": 105}}],
+        )
+
+        assert result.accuracy == 0.0
+        assert all(detail.field_constrained for detail in result.details)
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "Spot and strike, respectively, are $100 and $105.",
+            "| Spot | Strike |\n| $100 | $105 |",
+            "| Spot | Strike |\n| --- | --- |\n| $100 | $105 |",
+        ],
+    )
+    def test_ordered_pair_formats_accept_correct_spot_and_strike(self, response: str) -> None:
+        result = _score_numeric(
+            response,
+            [{"tool_name": "options", "response": {"spot": 100, "strike": 105}}],
+        )
+
+        assert result.accuracy == 1.0
+        assert all(detail.field_constrained for detail in result.details)
+
+    @pytest.mark.parametrize(
+        ("response", "tool_response"),
+        [
+            ("Spot and strike are $100 and $105.", {"spot": 100, "strike": 105}),
+            ("Spot/strike: USD 100/USD 105.", {"spot": 100, "strike": 105}),
+            ("Spot/strike ($100/$105).", {"spot": 100, "strike": 105}),
+            (
+                "Spot and strike are approximately $100 and $105.",
+                {"spot": 100, "strike": 105},
+            ),
+            ("Bid/ask: $1.00/$1.10.", {"bid": 1.0, "ask": 1.1}),
+            ("The $100 spot and $105 strike.", {"spot": 100, "strike": 105}),
+            (
+                "Maximum profit and loss are $500 and $200.",
+                {"maximum_profit": 500, "maximum_loss": -200},
+            ),
+            (
+                "Max profit/loss: $500/$200.",
+                {"maximum_profit": 500, "maximum_loss": -200},
+            ),
+        ],
+    )
+    def test_common_paired_numeric_phrasing_is_not_a_false_negative(
+        self,
+        response: str,
+        tool_response: dict[str, float],
+    ) -> None:
+        result = _score_numeric(
+            response,
+            [{"tool_name": "financial_tool", "response": tool_response}],
+        )
+
+        assert result.accuracy == 1.0
+
+    @pytest.mark.parametrize(
+        ("response", "tool_response"),
+        [
+            (
+                "AAPL at $182.50, up 2.3%, volume 45000000",
+                {"price": 182.50, "change_percent": 2.3, "volume": 45000000},
+            ),
+            ("Spot is $100, strike is $105.", {"spot": 100, "strike": 105}),
+            ("Bid is $1.00, ask is $1.10.", {"bid": 1.0, "ask": 1.1}),
+            ("Price is $100, up 2%.", {"price": 100, "change_percent": 2}),
+            ("Price is $100 up 2%.", {"price": 100, "change_percent": 2}),
+            ("AAPL at $100 up 2%.", {"price": 100, "change_percent": 2}),
+            ("AAPL $100 up 2%.", {"price": 100, "change_percent": 2}),
+            ("AAPL closed at $100 up 2%.", {"price": 100, "change_percent": 2}),
+            ("Revenue is $1B. Price is $100.", {"revenue": 1e9, "price": 100}),
+            ("Price is $100; market cap is $1B.", {"price": 100, "market_cap": 1e9}),
+            ("Price is $100; P/E is 20.", {"price": 100, "pe_ratio": 20}),
+            ("Spot is $100; IV is 25%.", {"spot": 100, "iv": 25}),
+            (
+                "Maximum profit is $500, maximum loss is $200.",
+                {"maximum_profit": 500, "maximum_loss": -200},
+            ),
+        ],
+    )
+    def test_clause_local_labels_do_not_false_fail_supported_metrics(
+        self,
+        response: str,
+        tool_response: dict[str, float],
+    ) -> None:
+        """A nearby later metric label cannot steal the preceding value."""
+        result = _score_numeric(
+            response,
+            [{"tool_name": "financial_tool", "response": tool_response}],
+        )
+
+        assert result.accuracy == 1.0
+
+    def test_opposite_sign_does_not_match_without_directional_magnitude_prose(self) -> None:
+        source = [{"tool_name": "quote", "response": {"change": -5.95}}]
+
+        incorrect = _score_numeric("Change is $5.95.", source)
+        directional = _score_numeric("Change is down $5.95.", source)
+
+        assert incorrect.accuracy == 0.0
+        assert directional.accuracy == 1.0
+
+    def test_signed_delta_cannot_flip_sign(self) -> None:
+        source = [{"tool_name": "options", "response": {"delta": -0.25}}]
+
+        assert _score_numeric("Delta is -0.25.", source).accuracy == 1.0
+        assert _score_numeric("Delta is −0.25.", source).accuracy == 1.0
+        assert _score_numeric("Delta is +0.25.", source).accuracy == 0.0
+
+    def test_scientific_notation_preserves_sign_and_exponent(self) -> None:
+        source = [{"tool_name": "options", "response": {"gamma": -0.0025}}]
+
+        assert _score_numeric("Gamma is -2.5e-3.", source).accuracy == 1.0
+
+    def test_direction_words_from_prior_clause_do_not_flip_delta(self) -> None:
+        source = [
+            {
+                "tool_name": "options",
+                "response": {"price_change": -5, "delta": -0.25},
+            }
+        ]
+
+        result = _score_numeric("Price fell $5; delta is +0.25.", source)
+
+        assert result.accuracy == 0.5
+        delta = next(
+            detail for detail in result.details if detail.extracted.semantic_label == "delta"
+        )
+        assert delta.matched is False
+
+    def test_numeric_strike_cannot_satisfy_unlimited_max_loss(self) -> None:
+        """A strike value cannot be relabeled as a finite maximum loss."""
+        result = _score_numeric(
+            "Maximum loss is $900.",
+            [
+                {
+                    "tool_name": "options",
+                    "response": {"strike": 900, "maximum_loss": "unlimited"},
+                }
+            ],
+        )
+
+        assert result.accuracy == 0.0
+        assert result.details[0].field_constrained is True
+
+    def test_capped_loss_cannot_match_an_unrelated_strike(self) -> None:
+        result = _score_numeric(
+            "Loss is capped at $900.",
+            [
+                {
+                    "tool_name": "options",
+                    "response": {"strike": 900, "maximum_loss": "unlimited"},
+                }
+            ],
+        )
+
+        assert result.accuracy == 0.0
+        assert result.details[0].field_constrained is True
+
+    def test_capped_loss_accepts_the_declared_maximum_loss_magnitude(self) -> None:
+        result = _score_numeric(
+            "Loss is capped at $900.",
+            [{"tool_name": "options", "response": {"maximum_loss": -900}}],
+        )
+
+        assert result.accuracy == 1.0
+        assert result.details[0].field_constrained is True
+
+    def test_accounting_parentheses_preserve_negative_pnl(self) -> None:
+        result = _score_numeric(
+            "P&L: ($200)",
+            [{"tool_name": "portfolio", "response": {"pnl": -200}}],
+        )
+
+        assert result.accuracy == 1.0
+
+    def test_accounting_parentheses_do_not_match_positive_pnl(self) -> None:
+        result = _score_numeric(
+            "P&L: ($200)",
+            [{"tool_name": "portfolio", "response": {"pnl": 200}}],
+        )
+
+        assert result.accuracy == 0.0
+
+    def test_plain_positive_pnl_remains_positive(self) -> None:
+        result = _score_numeric(
+            "P&L: $200",
+            [{"tool_name": "portfolio", "response": {"pnl": 200}}],
+        )
+
+        assert result.accuracy == 1.0
+
     def test_no_numbers_in_response(self) -> None:
         """Response with no numbers gets perfect accuracy (nothing to check)."""
         result = _score_numeric(
@@ -378,12 +604,8 @@ class TestFaithfulnessScorerAsync:
         assert result["semantic_faithful"] is True
 
     @pytest.mark.asyncio
-    async def test_numeric_only_fail(self) -> None:
-        """Numeric fails but semantic passes -> faithfulness_pass=True.
-
-        Semantic judge is authoritative for pass/fail (it can handle derived
-        values that deterministic numeric matching can't).
-        """
+    async def test_direct_numeric_conflict_cannot_be_overridden_by_judge(self) -> None:
+        """A semantic green cannot override a labeled source-data contradiction."""
         judgment = FaithfulnessJudgment(
             faithful=True,
             unfaithful_claims=[],
@@ -402,8 +624,8 @@ class TestFaithfulnessScorerAsync:
             result = await scorer.score(output=bad_output, query="AAPL price?")
 
         assert result["numeric_pass"] is False
-        # Semantic judge is authoritative — it says faithful, so pass
-        assert result["faithfulness_pass"] is True
+        assert result["numeric_critical_pass"] is False
+        assert result["faithfulness_pass"] is False
 
     @pytest.mark.asyncio
     async def test_semantic_only_fail(self) -> None:

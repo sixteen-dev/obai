@@ -33,7 +33,7 @@ OBaI/
 │   ├── cli.py                   # Typer CLI (query, evaluate, list-tests)
 │   ├── eval_runner.py           # Evaluation orchestration + YAML loader
 │   ├── test_cases/
-│   │   └── suite.yaml           # 139 test cases (categories A-E, G)
+│   │   └── suite.yaml           # 210 test cases (185 default, 25 extended)
 │   ├── trace/                   # Trace capture
 │   │   ├── capture.py           # TraceCapture class
 │   │   └── types.py             # Pydantic trace models
@@ -252,14 +252,17 @@ uv run python -m evaluation query "What is AAPL trading at?" --verbose
 # Evaluate with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite (139 cases from YAML)
+# Run the default suite (185 billable cases; use --ids/--limit when possible)
 uv run python -m evaluation evaluate --suite
 
 # Run a single category
 uv run python -m evaluation evaluate --suite --category A
 
-# Run guardrail tests only
-uv run python -m evaluation evaluate --suite --category C --no-builtin
+# Run the deterministic guardrail-rejection rows only
+uv run python -m evaluation evaluate --suite --ids C1,C2,C3,C7 --no-builtin
+
+# Surgical paid selection (recommended)
+uv run python -m evaluation evaluate --suite --ids A1,B3 --limit 2
 
 # Custom YAML test file
 uv run python -m evaluation evaluate --suite --file custom.yaml
@@ -286,19 +289,22 @@ uv run python -m evaluation list-tests --category B
 
 ### Test Suite
 
-Test cases are defined in `evaluation/test_cases/suite.yaml` (176 cases across 7 categories):
+Test cases are defined in `evaluation/test_cases/suite.yaml` (210 cases across 8 active categories; 185 default and 25 extended-only):
 
 | Category | Count | Description |
 |----------|-------|-------------|
 | A | 31 | Single-agent queries (price, fundamentals, news, options, portfolio, strategy) |
 | B | 28 | Multi-agent with sequencing (ticker→price, screen→analyze, backtest flows) |
-| C | 9 | Guardrail tests (reject non-financial, accept valid) |
+| C | 9 | Guardrail tests (reject non-financial, accept valid; 1 extended duplicate) |
 | D | 10 | Error handling (invalid symbol, timeout, malformed) |
 | E | 34 | Strategy & backtesting (intraday, daily, multi-indicator, optimization) |
-| G | 42 | Advanced capabilities (portfolio risk, options analytics, prediction markets) |
+| G | 56 | Advanced capabilities (portfolio risk, options analytics, prediction markets; 4 exact fixtures extended-only) |
 | H | 22 | Deep company research (Exa-powered semantic search, synthesis) |
+| I | 20 | Extended-only accuracy, crypto-depth, and expensive strategy cases |
 
-Suite runs print an aggregate summary with per-category pass/fail stats and failure details.
+Suite runs print an aggregate summary with per-category pass/fail stats and failure details. Every expected-success and partial-refusal row requires semantic scoring; `--no-builtin` is only valid for selected deterministic rejection, no-data, or specialist-error contracts. Extended rows require `--include-extended`.
+
+The paid suite validates case IDs, selection/cost fields, scorer contracts, and export/report destinations before starting Opik. Remote dataset rows are checked against the exact locally selected query contract before a query runs. A row is green only when the complete locally computed scorer set is present and the mandatory outcome verdict is a literal boolean; missing or crashed scoring exits `3` rather than silently dropping the row. Exit `1` is reserved for captured product-contract failures and exit `2` for invalid selection/configuration.
 
 ### Scorers
 
@@ -309,6 +315,9 @@ Suite runs print an aggregate summary with per-category pass/fail stats and fail
 - `ToolCorrectnessScorer` - Assesses whether tools were used correctly
 
 **Custom OBaI Scorers:**
+- `OutcomeContractScorer` - Validates success, rejection, no-data, scoped refusal, and specialist-error outcomes
+- `PartialRefusalSemanticScorer` - Verifies complete scoped refusal, no fabricated refused-scope results, blocked side effects, and supported alternatives
+- `DatePolicyScorer` - Validates mechanically supported frozen/live freshness contracts
 - `ToolOrchestrationScorer` - Validates correct specialist agents were called
 - `SequenceScorer` - Validates agent call order for dependency queries
 - `ResponseQualityScorer` - Basic quality checks (length, numbers, ticker mentions)
@@ -338,7 +347,7 @@ opik configure --use_local
 
 View traces at [http://localhost:5173](http://localhost:5173).
 
-Requires `ANTHROPIC_API_KEY` for LLM-judge scorers (uses Claude as cross-family judge).
+Requires `ANTHROPIC_API_KEY` for LLM-judge scorers (uses Claude as cross-family judge); paid suites that select those scorers validate the key before sending any OBaI query.
 
 ### MCP Inspector
 

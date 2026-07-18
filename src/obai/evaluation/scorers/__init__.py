@@ -9,6 +9,9 @@ Built-in scorers (from Opik):
     - ToolCorrectnessScorer: Assesses whether tools were used correctly
 
 Custom scorers (OBaI-specific):
+    - OutcomeContractScorer: Validates declared high-level result outcome
+    - PartialRefusalSemanticScorer: Semantically validates scoped refusals
+    - DatePolicyScorer: Validates explicit as-of disclosure for current cases
     - ToolOrchestrationScorer: Validates correct specialist agents called
     - SequenceScorer: Validates agent call order for dependency queries
     - StrategyContractScorer: Validates final strategy artifact structure
@@ -29,6 +32,9 @@ from evaluation.scorers.builtin import (
     ToolCorrectnessScorer,
 )
 from evaluation.scorers.custom import (
+    DatePolicyScorer,
+    OutcomeContractScorer,
+    PartialRefusalSemanticScorer,
     SequenceScorer,
     StrategyContractScorer,
     StrategyDecisionScorer,
@@ -47,6 +53,9 @@ __all__ = [
     "TaskCompletionScorer",
     "ToolCorrectnessScorer",
     # Custom OBaI scorers
+    "OutcomeContractScorer",
+    "DatePolicyScorer",
+    "PartialRefusalSemanticScorer",
     "ToolOrchestrationScorer",
     "SequenceScorer",
     "StrategyContractScorer",

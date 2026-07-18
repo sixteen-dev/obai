@@ -98,7 +98,7 @@ constraint-dependencies = [
 # Each service has its own pyproject.toml with its own "src" package
 # layout, so root-level pytest cannot resolve service-internal imports
 # (multiple services share the package name "src"). Root pytest collects
-# only the smoke test in tests/ so CI / local `uv run pytest` exits 0;
+# only lightweight tests in tests/ so CI / local `uv run pytest` exits 0;
 # the real per-service suites are aggregated by scripts/run-all-tests.sh.
 testpaths = ["tests"]
 asyncio_mode = "auto"
