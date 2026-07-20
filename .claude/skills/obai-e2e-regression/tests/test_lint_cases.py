@@ -277,6 +277,26 @@ def test_canonical_suite_rejects_deleted_core_case() -> None:
     assert {"tier-case-count-mismatch", "tier-budget-mismatch"} <= codes(issues)
 
 
+def test_canonical_walkforward_asserts_completed_verdict_deliverable() -> None:
+    """CORE-WALKFORWARD must assert the completed deliverable carries a verdict.
+
+    Regression guard for the 1.6.0 deterministic-relay change: a completed
+    async job-status poll that returns fold metrics without the verdict
+    contract is dropped by the runtime relay. The gate must require the verdict
+    deliverable so a metrics-only ad-hoc summary fails instead of passing on
+    the fold/warm-up/OOS text alone.
+    """
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    raw = yaml.safe_load(cases_path.read_text())
+    case = next(c for c in raw["test_cases"] if c.get("id") == "CORE-WALKFORWARD")
+
+    regexes = [spec["regex"] for spec in case["assertions"]["required_text"]]
+    assert any("verdict" in rx.lower() for rx in regexes)
+    assert any(
+        "accept" in rx and "reject" in rx and "needs" in rx.lower() for rx in regexes
+    )
+
+
 def test_unknown_assertion_key_is_an_error_not_silently_ignored() -> None:
     issues = lint_suite(_suite(_case("A1", assertions={"magic_financial_check": ["x"]})))
 

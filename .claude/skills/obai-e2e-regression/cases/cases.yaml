@@ -361,6 +361,12 @@ test_cases:
         - {regex: "\\b(?:warm[- ]?up|pre[- ]roll)\\b"}
         - {regex: "\\b(?:out[- ]of[- ]sample|OOS|test period)\\b"}
         - {regex: "\\b(?:slippage|commission|transaction costs?)\\b"}
+        # Completed deliverable must carry the verdict contract even when the
+        # async job-status poll only asks for fold metrics. Guards the 1.6.0
+        # deterministic-relay regression where a completed poll surfaced an
+        # ad-hoc summary (no verdict) that the relay dropped to an empty reply.
+        - {regex: "(?i)\\bverdict\\b"}
+        - {regex: "(?i)\\b(?:accept|paper[_ ]trade|needs[_ ]more[_ ]research|reject)\\b"}
       manual_assertions:
         - "Verify all five fold boundaries, at least 250 pre-start trading days per test fold, next-open execution, no look-ahead, and strictly separated train/OOS metrics."
 
