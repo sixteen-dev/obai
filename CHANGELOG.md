@@ -50,6 +50,11 @@ regression gate that no longer false-fails correct answers.
 
 ### Fixed
 
+- Strategy specialist now formats a **completed** async job-status poll as the
+  full Completed Strategy Response (`#### 1. Verdict` contract). Previously a
+  completed walk-forward follow-up emitted an ad-hoc summary that the new
+  deterministic relay did not recognize, dropping it to an empty UI reply. The
+  e2e gate's `CORE-WALKFORWARD` case now requires the verdict deliverable.
 - Continuous experiment metrics (efficiency, answer-relevance, LLM-judge rubric
   average) are recorded correctly; the extractor previously read result keys that
   never matched and silently dropped these values.
