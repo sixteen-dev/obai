@@ -61,6 +61,10 @@ regression gate that no longer false-fails correct answers.
 - Scorers that do not apply to a row no longer record false-zero scores in Opik
   aggregates; N/A rows are omitted with an explicit applicability flag.
 
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.5.5 → 1.6.0`.
+
 ## [1.5.5] - 2026-07-14
 
 Patch: keep the install-manifest's `managed` flag stable across `setup.sh`
