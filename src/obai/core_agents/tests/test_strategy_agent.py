@@ -84,6 +84,26 @@ class TestStrategyPrompt:
         assert '"drops below X"' in prompt and "`less_than`" in prompt
         assert "Threshold rule (load-bearing)" in prompt
 
+    def test_prompt_completed_async_poll_uses_full_deliverable(self) -> None:
+        """Completed async poll must use the full Completed Strategy Response.
+
+        The `#### 1. Verdict` nine-section deliverable is required, not an
+        ad-hoc summary.
+
+        Regression guard for the 1.6.0 deterministic-relay change: the runtime
+        relay only recognizes the completed-deliverable format. An ad-hoc
+        "job completed, here are the folds" summary is not detected, so it is
+        dropped and the hub emits nothing (empty UI reply).
+
+        Reads the prompt markdown directly (not ``load_prompt``) so the guard
+        stays deterministic even when a local Opik server is serving a
+        previously synced prompt version.
+        """
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+        prompt = prompt_path.read_text()
+        assert "completed job-status follow-up" in prompt
+        assert "Format the stored results as a full Completed Strategy Response" in prompt
+
 
 class TestStrategyAgentProperties:
     """Test StrategyAgent class properties."""
