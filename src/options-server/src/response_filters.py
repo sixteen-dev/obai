@@ -153,8 +153,11 @@ def filter_option_chain_snapshot(data: list[dict[str, Any]]) -> list[dict[str, A
         filtered_contract["open_interest"] = contract.get("open_interest")
         filtered_contract["break_even_price"] = contract.get("break_even_price")
 
-        # Surface daily volume (nested under "day") for liquidity assessment
-        filtered_contract["volume"] = contract.get("day", {}).get("volume")
+        # Surface daily volume (nested under "day") for liquidity assessment.
+        # The provider sends an explicit null for contracts with no daily bar,
+        # so default the block rather than chaining off the raw value.
+        day = contract.get("day") or {}
+        filtered_contract["volume"] = day.get("volume")
 
         # Extract underlying asset price context and freshness
         underlying = contract.get("underlying_asset", {})

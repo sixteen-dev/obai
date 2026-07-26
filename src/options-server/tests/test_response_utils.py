@@ -133,3 +133,21 @@ class TestFilterOptionChainSnapshot:
         assert contract["volume"] == 4200
         assert contract["last_quote"]["last_updated"] == 1705600000000000000
         assert contract["underlying_last_updated"] == 1705600000000000000
+
+    def test_chain_snapshot_handles_null_day_block(self) -> None:
+        """A null ``day`` block yields volume=None instead of raising.
+
+        The provider sends ``"day": null`` for contracts with no daily bar
+        (e.g. not yet traded today). Chaining ``.get("day", {}).get(...)``
+        only defaults when the key is absent, so an explicit null raised
+        ``AttributeError`` and failed the whole chain request.
+        """
+        raw_contract: dict[str, Any] = {
+            "day": None,
+            "details": {"ticker": "O:AAPL240119C00175000"},
+        }
+
+        result = filter_option_chain_snapshot([raw_contract])
+
+        assert len(result) == 1
+        assert result[0]["volume"] is None
