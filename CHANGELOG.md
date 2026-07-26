@@ -48,6 +48,15 @@ regression gate that no longer false-fails correct answers.
   scoring), and `evaluate --suite` no longer silently falls back to built-in
   cases when the YAML suite file is missing.
 
+### Security
+
+- `mcp` raised to 1.28.1 across every service lock (CVE-2026-52869 principal
+  verification, CVE-2026-52870 task-handler isolation, CVE-2026-59950 WebSocket
+  Host/Origin validation).
+- `options-server` lock moved to `click` 8.4.2, clearing PYSEC-2026-2132; the
+  1.5.4 pin covered the root lock only. `uv audit` is clean for that server.
+  The remaining per-service locks still resolve `click` below 8.3.3.
+
 ### Fixed
 
 - Strategy specialist now formats a **completed** async job-status poll as the
