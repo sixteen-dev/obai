@@ -55,6 +55,10 @@ regression gate that no longer false-fails correct answers.
   completed walk-forward follow-up emitted an ad-hoc summary that the new
   deterministic relay did not recognize, dropping it to an empty UI reply. The
   e2e gate's `CORE-WALKFORWARD` case now requires the verdict deliverable.
+- Options chain snapshots no longer fail on a null `day` block. The provider
+  sends `"day": null` for contracts with no daily bar, which raised
+  `AttributeError` while surfacing daily volume and failed the whole chain
+  request (and the single-contract path that reuses the same filter).
 - Continuous experiment metrics (efficiency, answer-relevance, LLM-judge rubric
   average) are recorded correctly; the extractor previously read result keys that
   never matched and silently dropped these values.
