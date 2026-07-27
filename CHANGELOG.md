@@ -53,9 +53,12 @@ regression gate that no longer false-fails correct answers.
 - `mcp` raised to 1.28.1 across every service lock (CVE-2026-52869 principal
   verification, CVE-2026-52870 task-handler isolation, CVE-2026-59950 WebSocket
   Host/Origin validation).
-- `options-server` lock moved to `click` 8.4.2, clearing PYSEC-2026-2132; the
-  1.5.4 pin covered the root lock only. `uv audit` is clean for that server.
-  The remaining per-service locks still resolve `click` below 8.3.3.
+- `click` raised past PYSEC-2026-2132 in every per-service lock (`obai` to
+  8.3.3, the ten service locks to 8.4.2). The 1.5.4 pin covered the root lock
+  only, so each service still resolved a vulnerable `click`. `uv audit` now
+  reports no known vulnerabilities for the root and every service except
+  `obai`, which still carries `setuptools` 82.0.1 (GHSA-h35f-9h28-mq5c /
+  PYSEC-2026-3447, fixed in 83.0.0).
 
 ### Fixed
 
