@@ -1140,6 +1140,23 @@ def test_async_job_parser_accepts_markdown_label_form() -> None:
     assert run_one.extract_async_job_ids(response) == ["bt_3c133f5d"]
 
 
+def test_async_job_parser_accepts_emphasized_label() -> None:
+    # The crypto backtest emits a bolded label ("- **job_id**: `<id>`"). Markdown
+    # emphasis sits between the label and its colon, which previously broke
+    # extraction and aborted the whole suite with 'job_id_missing'.
+    response = (
+        "Backtest completed on Coinbase BTC-USD daily bars.\n"
+        "- **job_id**: `crypto_bt_285d03572fe9556a`  \n"
+        "- **closed round-trip trade count**: 3\n"
+    )
+    assert run_one.extract_async_job_ids(response) == ["crypto_bt_285d03572fe9556a"]
+
+
+def test_async_job_parser_accepts_emphasis_around_label_and_value() -> None:
+    # The colon may also sit inside the emphasis ("**Job ID:** `<id>`").
+    assert run_one.extract_async_job_ids("**Job ID:** `bt_9f2a10`\n") == ["bt_9f2a10"]
+
+
 def test_async_job_parser_rejects_label_without_value() -> None:
     # A bare label followed by prose (no colon, no next-line value) is not an id.
     assert run_one.extract_async_job_ids("Job ID is running; no id assigned yet") == []

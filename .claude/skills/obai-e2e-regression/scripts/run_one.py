@@ -48,8 +48,10 @@ ASYNC_JOB_ID_RE = re.compile(
     # markdown-style label whose value sits on the next line ("Job ID\n<id>").
     # Requiring at least a colon/equals or a newline keeps prose such as
     # "Job ID is running" from being mistaken for an id.
-    r"\bjob[_ ]?id\b[ \t]*"
-    r"(?:[:=][ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
+    # Markdown emphasis may wrap the label ("**job_id**:") or enclose the colon
+    # ("**Job ID:**"), so allow emphasis runs on either side of the separator.
+    r"\bjob[_ ]?id\b[*_`]{0,2}[ \t]*"
+    r"(?:[:=][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
     r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
     re.IGNORECASE,
 )

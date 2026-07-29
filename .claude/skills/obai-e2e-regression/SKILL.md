@@ -22,7 +22,7 @@ or reducing its estimate fails lint just as an overrun does.
 | Tier | Cases | Minimum planning estimate | Selection |
 |---|---:|---:|---|
 | `smoke` | 8 | 45 | Explicit cheaper route check |
-| `core` | 21 | 181 | Exact default release gate |
+| `core` | 21 | 183 | Exact default release gate |
 | `live` | 8 | 48 | Explicit provider/freshness canary |
 
 The legacy YAML/CLI field is named `estimated_api_calls`, but it is only a minimum planning estimate for billable model requests, including guardrail, hub, skill-load continuation, and specialist turns. `--max-api-calls` is a **between-case start limit**, not a hard cap: one already-started hub or specialist agent can exceed its estimate before control returns to the runner. The runner counts actual Opik `llm` spans after every case and refuses to start another case when accounting is unavailable or the next estimate would cross the limit. Use an OpenAI project budget/rate limit as the hard external spending backstop.
@@ -54,7 +54,7 @@ Core gate:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-e2e-regression/scripts/run_suite.py \
-  --execute --max-api-calls 181 --run-dir <new-run-dir>
+  --execute --max-api-calls 183 --run-dir <new-run-dir>
 ```
 
 Smoke gate, only when the user asks for smoke/cheaper coverage:
