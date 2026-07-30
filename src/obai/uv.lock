@@ -9,26 +9,26 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-20T00:56:55.888654622Z"
+exclude-newer = "2026-07-23T01:43:44.197379109Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-openai-agents = { timestamp = "2026-07-27T00:56:55.88868026Z", span = "PT0S" }
-pytest = { timestamp = "2026-07-27T00:56:55.888678086Z", span = "PT0S" }
-pillow = { timestamp = "2026-07-27T00:56:55.888678707Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-07-27T00:56:55.888681342Z", span = "PT0S" }
-opik = { timestamp = "2026-07-27T00:56:55.888680771Z", span = "PT0S" }
-starlette = { timestamp = "2026-07-27T00:56:55.888681823Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-07-27T00:56:55.888675922Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-07-27T00:56:55.888675431Z", span = "PT0S" }
-litellm = { timestamp = "2026-07-27T00:56:55.8886749Z", span = "PT0S" }
-cryptography = { timestamp = "2026-07-27T00:56:55.888677134Z", span = "PT0S" }
-authlib = { timestamp = "2026-07-27T00:56:55.888679759Z", span = "PT0S" }
-idna = { timestamp = "2026-07-27T00:56:55.888682614Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-07-27T00:56:55.888679238Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-07-27T00:56:55.888669209Z", span = "PT0S" }
-pygments = { timestamp = "2026-07-27T00:56:55.888676633Z", span = "PT0S" }
-requests = { timestamp = "2026-07-27T00:56:55.888677615Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-07-30T01:43:44.197396432Z", span = "PT0S" }
+pytest = { timestamp = "2026-07-30T01:43:44.19739538Z", span = "PT0S" }
+pillow = { timestamp = "2026-07-30T01:43:44.197395711Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-07-30T01:43:44.197396913Z", span = "PT0S" }
+opik = { timestamp = "2026-07-30T01:43:44.197396642Z", span = "PT0S" }
+starlette = { timestamp = "2026-07-30T01:43:44.197397173Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-07-30T01:43:44.197394388Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-07-30T01:43:44.197394168Z", span = "PT0S" }
+litellm = { timestamp = "2026-07-30T01:43:44.197393927Z", span = "PT0S" }
+cryptography = { timestamp = "2026-07-30T01:43:44.197394939Z", span = "PT0S" }
+authlib = { timestamp = "2026-07-30T01:43:44.197396192Z", span = "PT0S" }
+idna = { timestamp = "2026-07-30T01:43:44.197397574Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-07-30T01:43:44.197395961Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-07-30T01:43:44.197388066Z", span = "PT0S" }
+pygments = { timestamp = "2026-07-30T01:43:44.197394689Z", span = "PT0S" }
+requests = { timestamp = "2026-07-30T01:43:44.19739516Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1792,8 +1792,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langcache", marker = "extra == 'caching'", specifier = ">=0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "openai", specifier = ">=2.15.0" },
-    { name = "openai-agents", specifier = ">=0.17.3" },
+    { name = "openai", specifier = ">=2.42.0" },
+    { name = "openai-agents", specifier = ">=0.19.1" },
     { name = "opik", specifier = ">=2.1.31" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
@@ -1821,7 +1821,7 @@ dev = [
 
 [[package]]
 name = "openai"
-version = "2.30.0"
+version = "2.47.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1833,14 +1833,14 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/15/52580c8fbc16d0675d516e8749806eda679b16de1e4434ea06fb6feaa610/openai-2.30.0.tar.gz", hash = "sha256:92f7661c990bda4b22a941806c83eabe4896c3094465030dd882a71abe80c885", size = 676084, upload-time = "2026-03-25T22:08:59.96Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/61/9aeef14de759306e85175126d3d6d56ee4f5072a9512c6c171d58d02a62d/openai-2.47.0.tar.gz", hash = "sha256:4e205548acd4304f235b86202269912e55bc88270b15d2a051fa2b53b90343a6", size = 1089906, upload-time = "2026-07-22T17:47:29.723Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/9e/5bfa2270f902d5b92ab7d41ce0475b8630572e71e349b2a4996d14bdda93/openai-2.30.0-py3-none-any.whl", hash = "sha256:9a5ae616888eb2748ec5e0c5b955a51592e0b201a11f4262db920f2a78c5231d", size = 1146656, upload-time = "2026-03-25T22:08:58.2Z" },
+    { url = "https://files.pythonhosted.org/packages/41/69/26b032059273ad798d18fbcdbe369e871181841fd8bcb5caee32b7510039/openai-2.47.0-py3-none-any.whl", hash = "sha256:b3a1a7ad974092427ccb46d89f8852bdb67866680bcabeecc3ff5a3fdd71b15b", size = 1639987, upload-time = "2026-07-22T17:47:27.873Z" },
 ]
 
 [[package]]
 name = "openai-agents"
-version = "0.17.3"
+version = "0.19.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffelib" },
@@ -1848,13 +1848,12 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "requests" },
-    { name = "types-requests" },
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/16/b79c1849125eb6d19cae98c21ff35caa2e55b5ec8d7a02b354b711917ef7/openai_agents-0.17.3.tar.gz", hash = "sha256:63b6dda6bd4fb51169e2a2cbd5d187a4e5ce823bbd15f965c8ed1d3b89072eec", size = 5406135, upload-time = "2026-05-19T01:28:15.971Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/67/2131cf2b1c2064564af8b59a90fb3cf538da6ae66782dc4292f68c488ee7/openai_agents-0.19.1.tar.gz", hash = "sha256:fb608e69d0aba3b82cf7d9c5fa91d2669bc4cc365c134ee03d0dda3fd338fe54", size = 5652571, upload-time = "2026-07-29T07:44:58.905Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/ec/775a14cfd5f12f4ffe458c7ac9527831093c72e8c1aef682898fc6394106/openai_agents-0.17.3-py3-none-any.whl", hash = "sha256:a048bb0752d40913d18bccf6562f56260b603bb57c972597b6da58f60123f4bd", size = 841541, upload-time = "2026-05-19T01:28:13.334Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/f7/2fd25a652c7794c65e5624a46efebb2a06a499281921975e0cbf1373e271/openai_agents-0.19.1-py3-none-any.whl", hash = "sha256:cfaa200c7aef0ad19d063ca983aafbcbbdb1f0874789323febba9265d5070e92", size = 933710, upload-time = "2026-07-29T07:44:57.018Z" },
 ]
 
 [[package]]
@@ -3078,18 +3077,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7e/69/3c51b36d04da19b92f9e815be12753125bd8bc247ba0470a982e6979e71c/types_pyyaml-6.0.12.20250915.tar.gz", hash = "sha256:0f8b54a528c303f0e6f7165687dd33fafa81c807fcac23f632b63aa624ced1d3", size = 17522, upload-time = "2025-09-15T03:01:00.728Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/e0/1eed384f02555dde685fff1a1ac805c1c7dcb6dd019c916fe659b1c1f9ec/types_pyyaml-6.0.12.20250915-py3-none-any.whl", hash = "sha256:e7d4d9e064e89a3b3cae120b4990cd370874d2bf12fa5f46c97018dd5d3c9ab6", size = 20338, upload-time = "2025-09-15T03:00:59.218Z" },
-]
-
-[[package]]
-name = "types-requests"
-version = "2.32.4.20260107"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/f3/a0663907082280664d745929205a89d41dffb29e89a50f753af7d57d0a96/types_requests-2.32.4.20260107.tar.gz", hash = "sha256:018a11ac158f801bfa84857ddec1650750e393df8a004a8a9ae2a9bec6fcb24f", size = 23165, upload-time = "2026-01-07T03:20:54.091Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/12/709ea261f2bf91ef0a26a9eed20f2623227a8ed85610c1e54c5805692ecb/types_requests-2.32.4.20260107-py3-none-any.whl", hash = "sha256:b703fe72f8ce5b31ef031264fe9395cac8f46a04661a79f7ed31a80fb308730d", size = 20676, upload-time = "2026-01-07T03:20:52.929Z" },
 ]
 
 [[package]]

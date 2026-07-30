@@ -42,11 +42,13 @@ from agents.items import ItemHelpers, MessageOutputItem
 from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
 from agents.sandbox import Manifest, SandboxAgent, SandboxPathGrant, SandboxRunConfig
+from agents.sandbox.capabilities import CompactionModelInfo
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 from agents.sandbox.entries import LocalDir
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import ResponseTextDeltaEvent
+from openai.types.responses.response_create_params import ContextManagement
 from openai.types.shared import Reasoning
 
 if TYPE_CHECKING:
@@ -911,6 +913,47 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
+def _hub_context_management(
+    *,
+    model: str,
+    compact_ratio: float | None,
+) -> list[ContextManagement] | None:
+    """Derive the hub's server-side compaction entry from its model window.
+
+    Args:
+        model: Hub model name.
+        compact_ratio: Fraction of the model's context window at which to
+            compact, or None to disable compaction.
+
+    Returns:
+        A single-entry ``context_management`` list, or None to leave the
+        field unset.
+    """
+    if compact_ratio is None:
+        return None
+
+    model_info = CompactionModelInfo.maybe_for_model(model)
+    if model_info is None:
+        # No window means no defensible threshold. Skipping compaction only
+        # costs us the optimisation; guessing a token count could compact a
+        # 1M-token window at 20% and shred context every turn.
+        logger.warning(
+            "No known context window for hub model %s - server-side compaction disabled",
+            model,
+        )
+        return None
+
+    threshold = int(model_info.context_window * compact_ratio)
+    logger.info(
+        "Hub compaction at %d tokens (%.0f%% of %s's %d-token window)",
+        threshold,
+        compact_ratio * 100,
+        model,
+        model_info.context_window,
+    )
+    return [ContextManagement(type="compaction", compact_threshold=threshold)]
+
+
 def _build_hub_agent(
     *,
     instructions: str,
@@ -919,6 +962,7 @@ def _build_hub_agent(
     guardrails: list[InputGuardrail[Any]],
     reasoning_effort: ReasoningEffort,
     verbosity: Verbosity,
+    compact_ratio: float | None,
 ) -> Agent[None]:
     """Build the SandboxAgent Central Hub with lazy hub_skills.
 
@@ -937,14 +981,27 @@ def _build_hub_agent(
       via ``extra_args``, which collides with the first-class
       ``ModelSettings.context_management`` field that openai-agents
       0.16+ adds to every Responses API call (the duplicate-key guard in
-      ``openai_responses.py`` raises ``TypeError``). If server-side
-      compaction is wanted later, pass ``context_management=[...]`` on
-      ``ModelSettings`` directly instead of using the Compaction
-      capability.
+      ``openai_responses.py`` raises ``TypeError``). Server-side
+      compaction is configured through ``compact_ratio`` below, which
+      sets ``ModelSettings.context_management`` directly.
+
+    Args:
+        instructions: Rendered hub prompt.
+        model: Hub model name.
+        specialist_tools: Specialist agents exposed as tools.
+        guardrails: Input guardrails run before the hub sees a query.
+        reasoning_effort: Hub reasoning effort tier.
+        verbosity: Hub output verbosity tier.
+        compact_ratio: Fraction of the model's context window at which to
+            compact, or None to leave ``context_management`` unset.
+
+    Returns:
+        The configured hub ``SandboxAgent``.
     """
     skills_capability = Skills(
         lazy_from=LocalDirLazySkillSource(source=LocalDir(src=HUB_SKILLS_DIR)),
     )
+    context_management = _hub_context_management(model=model, compact_ratio=compact_ratio)
     return SandboxAgent(
         name="central_hub",
         instructions=instructions,
@@ -962,8 +1019,12 @@ def _build_hub_agent(
         model_settings=ModelSettings(
             parallel_tool_calls=True,
             tool_choice="auto",
-            reasoning=Reasoning(effort=reasoning_effort),
+            # context="all_turns" keeps reasoning from earlier turns in the
+            # rendered context. GPT-5.6 already defaults to this; pinning it
+            # keeps the behaviour from moving under us on a model change.
+            reasoning=Reasoning(effort=reasoning_effort, context="all_turns"),
             verbosity=verbosity,
+            context_management=context_management,
         ),
     )
 
@@ -1220,6 +1281,7 @@ class CentralHubAgent:
                 guardrails=guardrails,
                 reasoning_effort=self.config.orchestrator_reasoning_effort,
                 verbosity=self.config.orchestrator_verbosity,
+                compact_ratio=self.config.orchestrator_compact_ratio,
             )
             self._run_config = RunConfig(
                 sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),

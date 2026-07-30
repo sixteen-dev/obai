@@ -6,6 +6,7 @@ Tests config loading, validation, and the reset function.
 import os
 
 import pytest
+from pydantic import ValidationError
 
 from core_agents.config import AgentConfig, get_config, reset_config
 
@@ -57,6 +58,23 @@ class TestAgentConfig:
         assert config.strategy_reasoning_effort == "high"
         assert config.crypto_reasoning_effort == "high"
         assert config.prediction_markets_reasoning_effort == "high"
+
+    def test_default_compact_ratio(self) -> None:
+        """Hub compaction is on by default at 90% of the model window."""
+        config = AgentConfig()
+        assert config.orchestrator_compact_ratio == 0.9
+
+    def test_compact_ratio_disabled_when_none(self) -> None:
+        """Setting the ratio to None is the documented off switch."""
+        config = AgentConfig(orchestrator_compact_ratio=None)
+        assert config.orchestrator_compact_ratio is None
+
+    def test_compact_ratio_rejects_out_of_range(self) -> None:
+        """A ratio above 1.0 would put the threshold past the context window."""
+        with pytest.raises(ValidationError):
+            AgentConfig(orchestrator_compact_ratio=1.5)
+        with pytest.raises(ValidationError):
+            AgentConfig(orchestrator_compact_ratio=0.0)
 
     def test_get_agent_reasoning_effort_default(self) -> None:
         """Specialists without an override fall back to the specialist tier."""

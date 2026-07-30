@@ -26,9 +26,21 @@ regression gate that no longer false-fails correct answers.
   defined exit codes (0 pass, 1 contract failure, 2 invalid config, 3 incomplete
   scoring).
 - `forbidden_tools` support in tool-orchestration scoring.
+- Hub context retention for long sessions, per OpenAI's ARC-AGI-3 finding that
+  retained reasoning plus compaction tripled scores on that benchmark. The hub
+  now sends `reasoning.context="all_turns"` and server-side
+  `context_management` compaction. New `ORCHESTRATOR_COMPACT_RATIO` (default
+  `0.9`, `None` disables) sets the threshold as a fraction of the hub model's
+  context window rather than a fixed token count, so it tracks the model:
+  942,818 tokens on `gpt-5.6-sol` (~1.05M window), 360,000 on `gpt-5.1` (400k).
+  An unrecognized model logs a warning and leaves compaction off rather than
+  guessing a threshold. Hub-only — specialists carry no `Session`.
 
 ### Changed
 
+- `openai-agents` `0.17.3 → 0.19.1` and `openai` `2.15.0 → 2.42.0` floors in the
+  `obai` service. `Reasoning.context` landed in `openai` 2.42.0, so the older
+  floor could not express retained reasoning under `mypy --strict`.
 - Faithfulness scoring now labels financial figures (strike, spot, bid/ask,
   greeks, premium) and fails outright on a labeled-number contradiction the
   semantic judge can no longer override; numeric parsing handles signed,

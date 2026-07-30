@@ -188,6 +188,25 @@ class AgentConfig(BaseSettings):
         description="Specialist output verbosity: low|medium|high",
     )
 
+    # Server-side context compaction for the hub. The hub is the only agent
+    # that carries a Session, so it is the only one whose context grows
+    # across turns; specialists are re-primed per call. At the threshold the
+    # Responses API compacts the rendered context in place, which preserves
+    # what the hub learned earlier in the session instead of truncating it
+    # off the front.
+    #
+    # Expressed as a fraction of the hub model's context window rather than a
+    # token count: the window varies by an order of magnitude across models we
+    # actually run (gpt-5.6-sol is ~1.05M, gpt-5.1 is 400k), so a fixed count
+    # would compact far too eagerly on the larger ones. 0.9 matches the SDK's
+    # own DynamicCompactionPolicy default. Set to None to disable.
+    orchestrator_compact_ratio: float | None = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of the hub model's context window at which to compact; None disables",
+    )
+
     # Per-agent reasoning effort overrides. Mirror the per-agent model fields
     # above: an override wins, else the specialist tier applies. Strategy,
     # crypto, and prediction markets default to a higher tier because their
