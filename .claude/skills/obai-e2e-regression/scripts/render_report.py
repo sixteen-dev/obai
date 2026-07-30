@@ -355,6 +355,19 @@ def render(
         if abort_reason
         else ""
     )
+    harness_failures = results.get("harness_failures") or []
+    # Contained per-case harness failures no longer stop the run, so surface them
+    # explicitly; silence would read as "every case produced trustworthy evidence".
+    if isinstance(harness_failures, list) and harness_failures:
+        contained = ", ".join(
+            f"{item.get('case_id')} ({item.get('harness_status')})"
+            for item in harness_failures
+            if isinstance(item, dict)
+        )
+        abort_html += (
+            '<div class="abort"><b>Contained harness failures:</b> '
+            f"{html.escape(contained)}</div>"
+        )
     cost_warning_html = (
         '<div class="abort"><b>Cost boundary:</b> the between-case start limit is not '
         "a hard cap; an in-flight nested agent can overshoot it.</div>"

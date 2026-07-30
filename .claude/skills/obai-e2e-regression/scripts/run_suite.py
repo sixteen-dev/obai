@@ -52,6 +52,56 @@ EXIT_CONFIGURATION = 2
 EXIT_INFRASTRUCTURE = 3
 CHAIN_CONTINUATION_VERDICTS = frozenset({"pass", "pass_degraded", "needs_semantic_review"})
 SKIPPED_VERDICT = "skipped_dependency"
+# Harness statuses that mean the harness itself can no longer bind a query to
+# its evidence. These stay suite-fatal on the first occurrence. Statuses scoped
+# to a single case (cli_failed, async_followup_failed) are contained instead.
+SUITE_FATAL_HARNESS_STATUSES = frozenset(
+    {"session_mismatch", "trace_lookup_failed", "trace_evidence_failed"}
+)
+MAX_CONSECUTIVE_HARNESS_FAILURES = 2
+MAX_HARNESS_FAILURES = 3
+
+
+def _harness_abort_reason(
+    *, subject: str, status: object, consecutive: int, total: int
+) -> str | None:
+    """Decide whether one case's harness failure must stop the paid run.
+
+    An isolated per-case harness failure is already recorded as an inconclusive
+    verdict, which floors the suite exit code at EXIT_INFRASTRUCTURE, so
+    stopping the whole run adds no safety and forfeits every unrun case. Only
+    statuses that invalidate the harness itself, or repeated failures, abort.
+    Cost-accounting and fingerprint gates are checked separately and remain
+    suite-fatal on their own.
+
+    Args:
+        subject: Human-readable subject for the message, e.g. "case C1" or
+            "resumed case C1".
+        status: The packet's harness_status value.
+        consecutive: Harness failures in an unbroken run through this case.
+        total: Harness failures seen so far in this run.
+
+    Returns:
+        The abort reason, or None to contain the failure and keep going.
+    """
+    # A missing status means there is no packet to judge, which is the same
+    # untrustworthy-evidence condition as a fatal status.
+    if status is None or status in SUITE_FATAL_HARNESS_STATUSES:
+        return (
+            f"{subject} ended with harness status {status!r}; "
+            "refusing to spend on cases that cannot produce trustworthy evidence"
+        )
+    if consecutive >= MAX_CONSECUTIVE_HARNESS_FAILURES:
+        return (
+            f"{consecutive} consecutive harness failures through {subject} "
+            f"(latest {status!r}); refusing additional paid cases"
+        )
+    if total > MAX_HARNESS_FAILURES:
+        return (
+            f"{total} harness failures in this run through {subject} "
+            f"(latest {status!r}); refusing additional paid cases"
+        )
+    return None
 
 
 class PlanError(ValueError):
@@ -1043,6 +1093,8 @@ def _execute_plan(
     observed_request_total = 0
     abort_reason: str | None = None
     model_request_accounting_complete = True
+    harness_failures: list[dict[str, Any]] = []
+    consecutive_harness_failures = 0
     effective_cases_sha256 = cases_sha256 or ("0" * 64)
     effective_manifest_sha256 = manifest_sha256 or ("0" * 64)
 
@@ -1120,13 +1172,26 @@ def _execute_plan(
                         break
                     observed_request_total += prior_requests
                     resumed += 1
-                    if prior_packet is None or prior_packet.get("harness_status") != "completed":
-                        abort_reason = (
-                            f"resumed case {case_id} ended with harness status "
-                            f"{prior_packet.get('harness_status') if prior_packet else None!r}; "
-                            "refusing additional paid cases"
+                    prior_status = (
+                        prior_packet.get("harness_status") if prior_packet else None
+                    )
+                    # Mirror the live containment policy: a resumed run must not
+                    # re-abort on an isolated failure the original run contained.
+                    if prior_status == "completed":
+                        consecutive_harness_failures = 0
+                    else:
+                        harness_failures.append(
+                            {"case_id": case_id, "harness_status": prior_status}
                         )
-                        break
+                        consecutive_harness_failures += 1
+                        abort_reason = _harness_abort_reason(
+                            subject=f"resumed case {case_id}",
+                            status=prior_status,
+                            consecutive=consecutive_harness_failures,
+                            total=len(harness_failures),
+                        )
+                        if abort_reason:
+                            break
                     if observed_request_total > plan.max_api_calls:
                         abort_reason = (
                             f"resumed observed model requests reached {observed_request_total}, "
@@ -1359,12 +1424,21 @@ def _execute_plan(
             break
         observed_request_total += observed_requests
         packet_harness_status = packet.get("harness_status") if packet else None
-        if packet_harness_status != "completed":
-            abort_reason = (
-                f"case {case_id} ended with harness status {packet_harness_status!r}; "
-                "refusing to spend on cases that cannot produce trustworthy evidence"
+        if packet_harness_status == "completed":
+            consecutive_harness_failures = 0
+        else:
+            harness_failures.append(
+                {"case_id": case_id, "harness_status": packet_harness_status}
             )
-            break
+            consecutive_harness_failures += 1
+            abort_reason = _harness_abort_reason(
+                subject=f"case {case_id}",
+                status=packet_harness_status,
+                consecutive=consecutive_harness_failures,
+                total=len(harness_failures),
+            )
+            if abort_reason:
+                break
         if observed_request_total > plan.max_api_calls:
             abort_reason = (
                 f"observed model requests reached {observed_request_total}, exceeding "
@@ -1402,6 +1476,7 @@ def _execute_plan(
         "hard_model_request_cap_enforced": False,
         "model_request_accounting_complete": model_request_accounting_complete,
         "abort_reason": abort_reason,
+        "harness_failures": harness_failures,
         "verdict_counts": verdict_counts,
         "results": results,
     }
