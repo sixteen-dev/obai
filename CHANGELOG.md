@@ -62,6 +62,16 @@ regression gate that no longer false-fails correct answers.
 
 ### Fixed
 
+- **Empty replies from `strategy_analysis` are fixed at the runtime layer.** The
+  relay only surfaced output containing `#### 1. Verdict` or `Job ID` +
+  `Estimated Time`; every other shape fell through unrelayed, and because the
+  hub is instructed to emit nothing but the relayed output, the user got a blank
+  response with no error. A completed walk-forward job-status poll returning
+  2917 characters of fold results was reproduced as an empty reply. Also
+  silently affected: Mode 3 diagnostics (supported indicators/operators,
+  trade-log review), missing-input clarifications, engine errors, and refusals.
+  Any non-empty response is now relayed verbatim, matching `crypto_analysis`
+  and `prediction_market_analysis`.
 - Strategy specialist now formats a **completed** async job-status poll as the
   full Completed Strategy Response (`#### 1. Verdict` contract). Previously a
   completed walk-forward follow-up emitted an ad-hoc summary that the new
