@@ -76,8 +76,16 @@ SPECIALIST_ERROR_RE = re.compile(
     r"\b(?:specialist error|tool error|provider error|execution error|status.?error)\b",
     re.IGNORECASE,
 )
+# Canonical job-ID parser, shared with run_one so the runner and the judge can
+# never disagree about whether a poll was correlated. The label may be followed
+# by an inline "id: value" / "id = value", or be a markdown-style label whose
+# value sits on the next line ("Job ID\n<id>"), and markdown emphasis may wrap
+# the label or enclose the colon ("**job_id**:", "**Job ID:**"). Requiring a
+# colon/equals or a newline keeps prose such as "Job ID is running" from being
+# mistaken for an id.
 ASYNC_JOB_ID_RE = re.compile(
-    r"\bjob[_ ]?id\b\s*[:=]\s*`?"
+    r"\bjob[_ ]?id\b[*_`]{0,2}[ \t]*"
+    r"(?:[:=][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
     r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
     re.IGNORECASE,
 )

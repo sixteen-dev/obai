@@ -43,18 +43,6 @@ CLI_TIMEOUT_S = 900.0
 # bounded fetch/retry window so complete evidence is not killed mid-retry.
 INSPECT_TIMEOUT_S = 45.0
 
-ASYNC_JOB_ID_RE = re.compile(
-    # The label may be followed by an inline "id: value" / "id = value" or a
-    # markdown-style label whose value sits on the next line ("Job ID\n<id>").
-    # Requiring at least a colon/equals or a newline keeps prose such as
-    # "Job ID is running" from being mistaken for an id.
-    # Markdown emphasis may wrap the label ("**job_id**:") or enclose the colon
-    # ("**Job ID:**"), so allow emphasis runs on either side of the separator.
-    r"\bjob[_ ]?id\b[*_`]{0,2}[ \t]*"
-    r"(?:[:=][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
-    r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
-    re.IGNORECASE,
-)
 ASYNC_ETA_RE = re.compile(r"Estimated\s*Time:?\s*~?\s*(\d+)\s*seconds?", re.IGNORECASE)
 ASYNC_BUFFER_S = 30
 ASYNC_MAX_WAIT_S = 600
@@ -78,6 +66,7 @@ from preflight import (  # noqa: E402
     normalize_opik_url,
     redact_sensitive_text,
 )
+from judge_packet import ASYNC_JOB_ID_RE  # noqa: E402
 from resolve_trace import TraceLookupError, find_trace_by_marker  # noqa: E402
 
 CACHE_SCHEMA_VERSION = 3

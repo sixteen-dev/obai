@@ -297,6 +297,40 @@ def test_canonical_walkforward_asserts_completed_verdict_deliverable() -> None:
     )
 
 
+def test_canonical_degraded_classifiers_recognize_real_degraded_answers() -> None:
+    """A declared degraded classifier must classify the answer it exists for.
+
+    degraded_outcome_patterns and assertions.required_text are two statements of
+    the same contract in different words, and lint only checks that the pattern
+    compiles. When they drifted apart, CORE-PORT-COVERAGE's ideal answer
+    ("Coverage Insufficient ... not reported") was scored a plain success and
+    hard-failed. These are the real phrasings observed in paid runs.
+    """
+    import re
+
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    raw = yaml.safe_load(cases_path.read_text())
+    by_id = {case["id"]: case for case in raw["test_cases"]}
+
+    observed = {
+        "CORE-PORT-COVERAGE": (
+            "**Coverage Insufficient**\n"
+            "- Priced: AAPL, MSFT, NVDA — 75% coverage\n"
+            "- Unpriced: ZZZZ — 25%\n"
+            "- Volatility, Sharpe, Sortino, and max drawdown: **not reported**\n"
+            "- ZZZZ was neither treated as cash nor renormalized away."
+        ),
+        "CORE-INVALID": (
+            "The exact quote returned no data; I'm verifying symbol validity."
+            "FAKESYM is not a recognized ticker, so no trading price is available. "
+            "No substitution was made."
+        ),
+    }
+    for case_id, response in observed.items():
+        pattern = by_id[case_id]["degraded_outcome_patterns"]["data_unavailable"]
+        assert re.search(pattern, response), f"{case_id} classifier missed its own answer"
+
+
 def test_unknown_assertion_key_is_an_error_not_silently_ignored() -> None:
     issues = lint_suite(_suite(_case("A1", assertions={"magic_financial_check": ["x"]})))
 

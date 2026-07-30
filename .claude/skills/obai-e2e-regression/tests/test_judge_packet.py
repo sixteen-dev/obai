@@ -1079,6 +1079,38 @@ def _async_packet(status: str, final_response: str, *, job_id: str = "job_1") ->
     return packet
 
 
+def test_judge_shares_one_job_id_parser_with_the_runner() -> None:
+    """One parser, one definition.
+
+    A weaker duplicate in the judge rejected job IDs the runner had already
+    accepted, so a correctly polled async case was scored inconclusive. Pinning
+    identity stops the two copies from drifting apart again.
+    """
+    import judge_packet as judge_module
+    import run_one
+
+    assert judge_module.ASYNC_JOB_ID_RE is run_one.ASYNC_JOB_ID_RE
+
+
+def test_judge_parses_emphasized_and_newline_job_id_labels() -> None:
+    """Both real product shapes must be readable by the judge.
+
+    "- **job_id**: `<id>`" is what the crypto backtest emits and
+    "Job ID\\n<id>" is what the strategy pending stub emits; the judge rejected
+    both, which aborted two paid runs.
+    """
+    import judge_packet as judge_module
+
+    assert judge_module._extract_async_job_ids(
+        "- **job_id**: `crypto_bt_285d03572fe9556a`\n"
+    ) == ["crypto_bt_285d03572fe9556a"]
+    assert judge_module._extract_async_job_ids(
+        "Status\n\nJob ID  \nbt_a707b0de\n\nEstimated Time  \n50 seconds\n"
+    ) == ["bt_a707b0de"]
+    # Still refuses prose, so correlation cannot be satisfied by chatter.
+    assert judge_module._extract_async_job_ids("Job ID is running; none yet") == []
+
+
 def test_async_pending_or_poll_limit_is_harness_inconclusive() -> None:
     case = _case(expect_async_job=True, expected_skills=[])
 

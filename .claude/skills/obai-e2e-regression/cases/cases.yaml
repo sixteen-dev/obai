@@ -269,7 +269,10 @@ test_cases:
         # when it refuses; the contract is that it names the expiry conflict,
         # not that it picks one particular adjective.
         - {regex: "(?i)(?:\\b(?:mixed|different|differing|multiple|mismatched)\\s+expir\\w*|\\bexpir\\w*\\s+mismatch)"}
-        - {regex: "\\b(?:cannot|can't|unable|invalid|not valid|unsupported|refuse)\\b"}
+        # The specialist opens its refusal with "Refused:" and says "no valid",
+        # so match refusal inflections rather than the bare stem, mirroring the
+        # judge's own REFUSAL_RE.
+        - {regex: "(?i)\\b(?:cannot|can'?t|unable|refus(?:e|es|ed|ing|al)|unsupported|invalid|no[t]? valid)\\b"}
       forbidden_text:
         - {regex: "(?i)\\b(?:max(?:imum)?[ -](?:profit|loss|gain)|breakeven)\\b[^.\\n]{0,30}[-+$]?\\d"}
       manual_assertions:
@@ -305,7 +308,13 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     degraded_outcome_patterns:
-      data_unavailable: '(?i)\bZZZZ\b[\s\S]{0,80}\b(?:unavailable|invalid|unpriceable|unresolved|insufficient|withheld|cannot compute|no data|not priced)\b|\b(?:unpriceable|coverage is insufficient|insufficient coverage|cannot compute|withheld)\b'
+      # Keep this vocabulary in step with required_text below. The classifier
+      # previously demanded "coverage is insufficient"/"insufficient coverage"
+      # while the contract accepted bare "insufficient", so the ideal answer
+      # ("Coverage Insufficient ... Unpriced: ZZZZ ... not reported") was scored
+      # a plain success and hard-failed. Fabricated metrics are still blocked
+      # independently by forbidden_text.
+      data_unavailable: '(?i)\bZZZZ\b[\s\S]{0,80}\b(?:unavailable|invalid|unpriceable|unpriced|unresolved|insufficient|withheld|cannot compute|no data|not priced|not reported)\b|\b(?:unpriceable|unpriced|coverage (?:is )?insufficient|insufficient coverage|cannot compute|withheld|not reported)\b'
     tier: core
     estimated_api_calls: 5
     max_cli_turns: 1
@@ -359,10 +368,15 @@ test_cases:
     async_contract:
       job_type: strategy_walk_forward
       max_wait_seconds: 600
-      poll_prompt: "Check strategy walk-forward job {job_id} and echo that same value under the label 'Job ID:'. Begin with exactly one of: Status: queued, Status: running, Status: completed, or Status: failed. If completed, return all five stored fold results, warm-up coverage, out-of-sample metrics, operator list, and total trades without starting a new job."
+      # Ask for the product's own completed-response format rather than
+      # enumerating a payload. The previous prompt listed fold metrics only,
+      # which induced an ad-hoc summary carrying neither the verdict nor the
+      # cost assumptions this case asserts below — the harness was demanding
+      # one shape and judging another.
+      poll_prompt: "Check strategy walk-forward job {job_id} and echo that same value under the label 'Job ID:'. Begin with exactly one of: Status: queued, Status: running, Status: completed, or Status: failed. If completed, return the full stored walk-forward result in your normal completed-response format, covering every fold's train and out-of-sample metrics, warm-up coverage, and the execution and cost assumptions used, without starting or recomputing a job."
     assertions:
       required_text:
-        - {regex: "\\b(?:fold|window)\\s*[1-5]\\b"}
+        - {regex: "(?i)(?:\\b(?:fold|window)s?\\s*[1-5]\\b|\\b(?:five|5)\\s+(?:fold|window)s\\b)"}
         - {regex: "\\b(?:warm[- ]?up|pre[- ]roll)\\b"}
         - {regex: "\\b(?:out[- ]of[- ]sample|OOS|test period)\\b"}
         - {regex: "\\b(?:slippage|commission|transaction costs?)\\b"}
@@ -371,7 +385,7 @@ test_cases:
         # deterministic-relay regression where a completed poll surfaced an
         # ad-hoc summary (no verdict) that the relay dropped to an empty reply.
         - {regex: "(?i)\\bverdict\\b"}
-        - {regex: "(?i)\\b(?:accept|paper[_ ]trade|needs[_ ]more[_ ]research|reject)\\b"}
+        - {regex: "(?i)\\b(?:accept(?:ed)?|paper[_ ]trade[ds]?|needs[_ ]more[_ ]research|reject(?:ed)?)\\b"}
       manual_assertions:
         - "Verify all five fold boundaries, at least 250 pre-start trading days per test fold, next-open execution, no look-ahead, and strictly separated train/OOS metrics."
 
@@ -387,7 +401,9 @@ test_cases:
     data_contract_id: invalid-symbol-contract-v1
     provider_revisions_allowed: true
     degraded_outcome_patterns:
-      data_unavailable: '(?i)\bFAKESYM\b.{0,40}\b(?:not found|invalid|no data|unavailable|no matching|unknown|does not exist)\b|\b(?:not found|invalid|no valid|no matching|unknown)\b.{0,40}\bFAKESYM\b'
+      # Same keyword set in both directions; the previous reverse list omitted
+      # "no data"/"does not exist", so only the generic fallback classified this.
+      data_unavailable: '(?i)\bFAKESYM\b.{0,60}\b(?:not found|invalid|no data|unavailable|no matching|unknown|does not exist|not a recognized|not recognized|unrecognized|no trading price)\b|\b(?:not found|invalid|no data|unavailable|no matching|unknown|does not exist|not a recognized|not recognized|unrecognized|no trading price)\b.{0,60}\bFAKESYM\b'
     tier: core
     estimated_api_calls: 7
     max_cli_turns: 1
