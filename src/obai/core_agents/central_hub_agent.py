@@ -91,7 +91,7 @@ class StrategyPassthrough:
     """
 
     content: str
-    kind: str  # "completed" or "pending"
+    kind: str  # marker label only: "completed", "pending", or "other"
 
 
 @dataclass(frozen=True)
@@ -272,6 +272,27 @@ def _extract_strategy_summary(output: str) -> str:
 def _is_pending_strategy_output(output: str) -> bool:
     """Detect if strategy output is an async pending response."""
     return "Job ID" in output and "Estimated Time" in output
+
+
+def _strategy_relay_kind(output: str) -> str:
+    """Label relayed strategy output for the hub-visible marker.
+
+    Purely descriptive. Every non-empty specialist response is relayed
+    verbatim regardless of shape, so this only selects the marker suffix and
+    never decides whether the relay happens.
+
+    Args:
+        output: Raw specialist response text.
+
+    Returns:
+        "completed" for the nine-section deliverable, "pending" for an async
+        stub, otherwise "other".
+    """
+    if _is_completed_strategy_output(output):
+        return "completed"
+    if _is_pending_strategy_output(output):
+        return "pending"
+    return "other"
 
 
 _STRATEGY_TOOL_DESCRIPTION = (
@@ -1488,17 +1509,17 @@ class CentralHubAgent:
             elif final_output is not None:
                 output = str(final_output)
 
-            # Classify output and set passthrough for terminal responses.
-            # Return full output to hub (preserves session context for
-            # follow-ups) with a rigid marker instructing hub not to rewrite.
-            if _is_completed_strategy_output(output):
-                _set_strategy_passthrough(output, "completed")
-                return _wrap_terminal_strategy_output(output, "completed")
-            if _is_pending_strategy_output(output):
-                _set_strategy_passthrough(output, "pending")
-                return _wrap_terminal_strategy_output(output, "pending")
-            # missing_inputs / errors: no passthrough — hub should handle
-            return output
+            # Relay every non-empty response, matching crypto_analysis and
+            # prediction_market_analysis. The hub is told to emit nothing but
+            # the relayed output, so gating relay on the specialist's section
+            # headings silently discarded whole classes of answer (completed
+            # job-status polls, diagnostics, missing-inputs, errors, refusals).
+            # The kind only labels the marker; it never decides the relay.
+            if not output:
+                return output
+            kind = _strategy_relay_kind(output)
+            _set_strategy_passthrough(output, kind)
+            return _wrap_terminal_strategy_output(output, kind)
 
         return strategy_analysis
 

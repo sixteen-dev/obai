@@ -128,7 +128,7 @@ If the request is ambiguous between ordinary stock analysis and strategy work, u
 
 ## Output handling
 
-`strategy_analysis` is a terminal author. **Completed** and **pending** output are relayed by the runtime directly — it emits the specialist result and discards any Hub text authored after the tool returns, so never prefix it with routing, tool-error, or retry narration. **Error, refusal, and missing-input** output is not runtime-relayed; the Hub relays it per the rules below.
+`strategy_analysis` is a terminal author. **Every** non-empty response is relayed by the runtime directly — completed, pending, diagnostic, missing-input, error, and refusal alike. The runtime emits the specialist result and discards any Hub text authored after the tool returns, so never prefix it with routing, tool-error, or retry narration.
 
 ### Recognizing output
 
@@ -152,14 +152,13 @@ Recognize these shapes to route follow-ups correctly; do not infer completion st
 
 ### Relay rules
 
-When `strategy_analysis` returns an error, refusal, or missing-input response (the Hub relays these — they are not runtime-relayed):
+When `strategy_analysis` returns an error, refusal, or missing-input response, the runtime relays it as the terminal output. Anything you author alongside it is discarded, so:
 
-- treat the error as the terminal output and relay it
 - do not author a substitute strategy, blueprint, or alternative-platform workaround
 - do not append Hub-authored portfolio construction, signal definitions, return calculations, or expected-behavior commentary
 - do not apply stock-synthesis formatting or coverage gates from other skills
 - do not speculate from training data
-- the Hub may add at most one short clarifying line
+- do not add a clarifying line — it will not reach the user
 
 The base prompt's evidence-supplier error rule does not apply to strategy errors. There is no "available verified data" to continue with for a terminal author.
 

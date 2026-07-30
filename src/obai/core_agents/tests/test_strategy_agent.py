@@ -525,3 +525,47 @@ class TestStrategyPassthrough:
 
         event = StrategyPassthroughEvent(content="deliverable")
         assert event.content == "deliverable"
+
+    def test_every_non_empty_output_is_relayable(self) -> None:
+        """Relay is decided by output being non-empty, never by its shape.
+
+        The hub must not depend on specialist section headings: any non-empty
+        response earns a marker label and is therefore relayed verbatim. This
+        pins the generic property, so it must not assert a specific format.
+        """
+        from core_agents.central_hub_agent import _strategy_relay_kind
+
+        shapes = [
+            "#### 1. Verdict\npaper_trade — folds are mostly positive.",
+            "Status\n\nJob ID  \nbt_a707b0de\n\nEstimated Time  \n≈50 seconds",
+            # Completed async job-status follow-up: the shape that was dropped.
+            "Status: completed  \nJob ID: bt_a707b0de  \n\n### Fold results (train)\n| Fold |",
+            # Mode 3 diagnostic answer: carries neither literal, by design.
+            "Supported indicators: SMA, EMA, RSI, MACD, ATR, ADX.",
+            "Missing Inputs\nWhich universe should the strategy trade?",
+            "The backtest engine rejected the date range: 2015-13-01 is not a valid date.",
+            "I cannot model intraday tick data; the engine supports daily bars only.",
+        ]
+        for output in shapes:
+            assert _strategy_relay_kind(output), f"no relay label for: {output[:60]!r}"
+
+    def test_relay_kind_labels_are_descriptive_only(self) -> None:
+        """The label distinguishes known shapes but never blocks relay."""
+        from core_agents.central_hub_agent import _strategy_relay_kind
+
+        assert _strategy_relay_kind("#### 1. Verdict\naccept") == "completed"
+        assert _strategy_relay_kind("Job ID: x\nEstimated Time: 50 seconds") == "pending"
+        assert _strategy_relay_kind("Supported operators: crosses_above, less_than.") == "other"
+
+    def test_relay_marker_preserves_unrecognized_output_verbatim(self) -> None:
+        """An unlabeled shape is still wrapped and left byte-for-byte intact."""
+        from core_agents.central_hub_agent import (
+            _strategy_relay_kind,
+            _wrap_terminal_strategy_output,
+        )
+
+        payload = "Status: completed  \nJob ID: bt_a707b0de  \n\n### Fold results (train)"
+        wrapped = _wrap_terminal_strategy_output(payload, _strategy_relay_kind(payload))
+
+        assert wrapped.startswith("__TERMINAL_TOOL_OUTPUT__:strategy_analysis:other")
+        assert wrapped.endswith(payload)
