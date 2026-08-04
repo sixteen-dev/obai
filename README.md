@@ -14,6 +14,8 @@
   <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
 
+> ⚡ **OBaI is now completely powered by the GPT-5.6 family — Sol and friends.** Every agent runs on the 5.6 tier: `gpt-5.6-sol` on the Hub, `gpt-5.6-terra` on Strategy, Crypto, and Prediction Markets, and `gpt-5.6-luna` on the remaining specialists and the guardrail. No legacy models remain.
+
 > 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
 ---
@@ -36,7 +38,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.6-sol` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.6-sol` for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-5.6-terra` for stronger analysis, and the remaining specialists use `gpt-5.6-luna`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
 ---
 
@@ -284,7 +286,7 @@ Strategy Agent workflow:
   Final strategy JSON: { ... }
 ```
 
-The agent uses `gpt-5.1` by default (not `gpt-5-mini` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
+The agent uses `gpt-5.6-terra` by default (not `gpt-5.6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
 
 **Backtest server tools:** `run_strategy`, `get_job_status`, `get_supported_indicators`, `download_data`, `list_available_data`, `get_trade_log`, `compare_strategies`, `clear_cache`
 
@@ -391,7 +393,8 @@ Key environment variables (all have sensible defaults):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Model for the Central Hub (needs strong reasoning) |
-| `SPECIALIST_MODEL` | `gpt-5-mini` | Model for specialist agents |
+| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Model for specialist agents |
+| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `true` | Run faithfulness/completeness scoring on every query |
 | `OPIK_ENABLED` | `true` | Enable Opik tracing |

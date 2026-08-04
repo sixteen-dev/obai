@@ -38,6 +38,22 @@ regression gate that no longer false-fails correct answers.
 
 ### Changed
 
+- **Every agent model moved onto the `gpt-5.6` price tier.** `SPECIALIST_MODEL`
+  and the guardrail model `gpt-5-mini → gpt-5.6-luna`; strategy, crypto, and
+  prediction markets `gpt-5.1 → gpt-5.6-terra`. The hub stays on
+  `gpt-5.6-sol`. Both new IDs carry the same ~1.05M context window as the hub
+  model, so the compaction threshold is unchanged where they are used as the
+  hub. A new `test_every_default_model_is_gpt_5_6` pins the whole default set so
+  a stale model name surfaces as a test failure rather than an invoice
+  surprise.
+- **Strategy, crypto, and prediction markets reasoning effort `high → medium`.**
+  Medium is the balanced starting point OpenAI recommends for GPT-5.6; the
+  per-agent env overrides (`STRATEGY_REASONING_EFFORT` and friends) remain the
+  first knobs to turn back up if answer quality slips.
+- `evaluation query`/`evaluate` no longer stamp traces with a hard-coded
+  `gpt-4o` label when `--model` is omitted. `run_query_with_trace` takes
+  `str | None` and falls back to the hub's configured model, so trace metadata
+  reflects the model that actually ran.
 - `openai-agents` `0.17.3 → 0.19.1` and `openai` `2.15.0 → 2.42.0` floors in the
   `obai` service. `Reasoning.context` landed in `openai` 2.42.0, so the older
   floor could not express retained reasoning under `mypy --strict`.

@@ -146,9 +146,9 @@ uv run python test_connection.py
 
 ### Key Components
 
-**Input Guardrail** (gpt-4o-mini): Validates queries before processing. Rejects non-financial questions to save API costs.
+**Input Guardrail** (gpt-5.6-luna): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub** (gpt-5.5): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-5.6-sol): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
 **Specialists** (9 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
@@ -157,7 +157,7 @@ uv run python test_connection.py
 4. **Options Agent** (:8004): Options chains, Greeks, strike selection
 5. **Screener Agent** (:8005): Stock screening, ticker lookup
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
-7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.1 for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
+7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.6-terra for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
 
@@ -171,7 +171,7 @@ When a query needs data from multiple domains, the **Central Hub orchestrates**:
 ```
 User: "What's my portfolio worth? I have AAPL 50%, MSFT 50%"
                     ↓
-            Central Hub (gpt-5.5)
+            Central Hub (gpt-5.6-sol)
             /                  \
    portfolio_analysis      market_data_analysis
    (parse positions)         (get prices)
@@ -191,14 +191,14 @@ Key points:
 ### Models
 
 ```bash
-export ORCHESTRATOR_MODEL=gpt-5.5      # Needs strong reasoning
-export SPECIALIST_MODEL=gpt-5-mini    # Cost-effective for tools
+export ORCHESTRATOR_MODEL=gpt-5.6-sol    # Needs strong reasoning
+export SPECIALIST_MODEL=gpt-5.6-luna     # Cost-effective for tools
 ```
 
 Per-agent overrides:
 ```bash
-export MARKET_DATA_MODEL=gpt-5-mini         # Override for specific agent
-export STRATEGY_MODEL=gpt-5.1               # Strategy default; cheaper than the hub's gpt-5.5 with comparable backtest output
+export MARKET_DATA_MODEL=gpt-5.6-luna       # Override for specific agent
+export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; cheaper than the hub's gpt-5.6-sol with comparable backtest output
 ```
 
 ### Prompts

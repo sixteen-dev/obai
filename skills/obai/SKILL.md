@@ -53,7 +53,7 @@ obai query "<question>" [OPTIONS]
   "elapsed_ms": 2340,
   "session_id": "cli_a1b2c3d4",
   "timestamp": "2026-03-16T10:30:00Z",
-  "model": "gpt-5.1",
+  "model": "gpt-5.6-sol",
   "guardrail_rejected": false,
   "faithfulness": {"numeric_accuracy": 0.95, "faithfulness_pass": true},
   "completeness": {"coverage_score": 0.88, "completeness_pass": true}
@@ -169,7 +169,7 @@ uv run python -m evaluation evaluate --suite --category A
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--suite` | `-s` | Run full test suite |
-| `--model` | `-m` | Model for queries (default: `gpt-4o`) |
+| `--model` | `-m` | Model label for the trace (default: `ORCHESTRATOR_MODEL`) |
 | `--judge` | `-j` | Model for LLM scorers (default: `anthropic/claude-sonnet-4-5-20250929`) |
 | `--no-builtin` | | Skip Opik built-in scorers (faster) |
 | `--category` | `-c` | Filter: A-G (A=single-agent, B=multi-agent, C=guardrails, D=errors, E=strategy/backtest, G=new capabilities) |
@@ -190,12 +190,12 @@ uv run python -m evaluation evaluate --suite --category A
 | Variable | Default | What it does |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key for all agents |
-| `ORCHESTRATOR_MODEL` | `gpt-5.5` | Central Hub model |
-| `SPECIALIST_MODEL` | `gpt-5-mini` | Default specialist model |
-| `STRATEGY_MODEL` | falls back to `ORCHESTRATOR_MODEL` | Strategy agent model |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Central Hub model |
+| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Default specialist model |
+| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent model |
 | `EXA_API_KEY` | optional | Exa API key for research server |
 | `ENABLE_GUARDRAILS` | `true` | Block non-financial queries |
-| `RESEARCH_MODEL` | `gpt-5-mini` | Research agent model |
+| `RESEARCH_MODEL` | `gpt-5.6-luna` | Research agent model |
 | `ENABLE_INLINE_SCORING` | `true` | Score every query for faithfulness |
 | `MCP_TIMEOUT` | `30` | Request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
