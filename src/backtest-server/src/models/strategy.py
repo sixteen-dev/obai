@@ -46,6 +46,7 @@ class WalkForwardResult:
     consistency_score: float  # % of windows where test Sharpe > 0
     degradation: float  # mean(train_sharpe - test_sharpe)
     total_runtime_seconds: float
+    execution_config: dict[str, Any]  # resolved slippage/commission/capital the windows ran under
     failed_windows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +62,7 @@ class WalkForwardResult:
             "consistency_score": round(self.consistency_score, 2),
             "degradation": round(self.degradation, 4),
             "total_runtime_seconds": round(self.total_runtime_seconds, 2),
+            "execution_config": self.execution_config,
         }
 
 

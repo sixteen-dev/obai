@@ -15,7 +15,7 @@ from statistics import mean, stdev
 from typing import Any
 
 from ..logging_config import get_logger
-from ..models.strategy import WalkForwardResult, WindowResult
+from ..models.strategy import StrategyDefinition, WalkForwardResult, WindowResult
 
 logger = get_logger(__name__)
 
@@ -115,6 +115,10 @@ async def walk_forward_validate(
 
     """
     strategy_dict = json.loads(strategy_json)
+    # Resolve through the same parser the per-window backtests use, so the
+    # reported assumptions are the ones actually applied — defaults included —
+    # rather than a restatement of whatever the caller happened to send.
+    execution_config = StrategyDefinition.from_dict(strategy_dict).to_dict()["execution_config"]
     data_config = strategy_dict.get("data_config", {})
     start_date = data_config.get("start_date", "")
     end_date = data_config.get("end_date", "")
@@ -174,7 +178,7 @@ async def walk_forward_validate(
     )
 
     elapsed = time.monotonic() - start_time
-    return _compute_aggregates(window_results, elapsed)
+    return _compute_aggregates(window_results, elapsed, execution_config=execution_config)
 
 
 def _modify_strategy_dates(
@@ -242,6 +246,8 @@ def _extract_metrics(result: dict[str, Any]) -> dict[str, Any]:
 def _compute_aggregates(
     window_results: list[WindowResult],
     total_runtime: float,
+    *,
+    execution_config: dict[str, Any],
 ) -> WalkForwardResult:
     """Compute aggregate statistics from per-window results.
 
@@ -252,6 +258,8 @@ def _compute_aggregates(
     Args:
         window_results: List of WindowResult from each walk-forward window.
         total_runtime: Total elapsed time in seconds.
+        execution_config: Resolved execution and cost assumptions the windows
+            ran under, carried into the result so they survive serialization.
 
     Returns:
         WalkForwardResult with all aggregate metrics.
@@ -279,6 +287,7 @@ def _compute_aggregates(
             consistency_score=0.0,
             degradation=0.0,
             total_runtime_seconds=total_runtime,
+            execution_config=execution_config,
             failed_windows=failed_count,
         )
 
@@ -309,5 +318,6 @@ def _compute_aggregates(
         consistency_score=consistency,
         degradation=mean_degradation,
         total_runtime_seconds=total_runtime,
+        execution_config=execution_config,
         failed_windows=failed_count,
     )

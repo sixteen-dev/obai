@@ -157,7 +157,7 @@ class TestComputeAggregates:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=42.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=42.0)
 
         assert result.n_windows == 3
         # mean([0.8, -0.3, 0.5]) = 1.0/3 ≈ 0.3333
@@ -183,7 +183,7 @@ class TestComputeAggregates:
             for i, sharpe in enumerate([0.5, 1.2, 0.8, 0.3, 0.1])
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=10.0)
 
         assert result.consistency_score == 100.0
 
@@ -203,7 +203,7 @@ class TestComputeAggregates:
             for i, s in enumerate(sharpes)
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=10.0)
 
         assert result.consistency_score == 40.0
 
@@ -230,7 +230,7 @@ class TestComputeAggregates:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=5.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=5.0)
 
         # mean([2.0-1.0, 1.5-0.5]) = mean([1.0, 1.0]) = 1.0
         assert abs(result.degradation - 1.0) < 0.001
@@ -309,6 +309,43 @@ class TestWalkForwardValidate:
         assert isinstance(result, WalkForwardResult)
         assert result.n_windows == n_windows
         assert len(result.windows) == n_windows
+
+    async def test_serializes_execution_and_cost_assumptions(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """The stored payload must retain the assumptions the windows ran under.
+
+        ``to_dict`` carried windows and aggregates only, so a later turn could
+        not state slippage, commission, or starting capital without inventing
+        them. The values must track the strategy, not be a fixed echo.
+        """
+        strategy = json.loads(sample_strategy_json)
+        strategy["execution_config"] = {"slippage_pct": 0.25, "commission_pct": 0.05}
+        mock_fn = AsyncMock(
+            return_value={
+                "performance": {
+                    "sharpe_ratio": 1.0,
+                    "sortino_ratio": 1.2,
+                    "total_return_pct": 15.0,
+                    "cagr_pct": 10.0,
+                },
+                "risk": {"max_drawdown_pct": -5.0},
+                "trading": {"win_rate_pct": 55.0, "total_trades": 20, "profit_factor": 1.5},
+            }
+        )
+
+        result = await walk_forward_validate(
+            strategy_json=json.dumps(strategy),
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        assumptions = result.to_dict()["execution_config"]
+
+        assert assumptions["slippage_pct"] == 0.25
+        assert assumptions["commission_pct"] == 0.05
+        assert assumptions["initial_capital"] == 100_000.0
 
     async def test_window_dates_passed_correctly(
         self,
@@ -472,9 +509,11 @@ class TestWalkForwardResult:
             consistency_score=60.0,
             degradation=0.45678901,
             total_runtime_seconds=42.123456,
+            execution_config={"slippage_pct": 0.1, "commission_pct": 0.1},
         )
 
         d = result.to_dict()
+        assert d["execution_config"] == {"slippage_pct": 0.1, "commission_pct": 0.1}
         assert d["mean_test_sharpe"] == 0.3333
         assert d["std_test_sharpe"] == 0.1235
         assert d["mean_test_win_rate"] == 52.67
@@ -571,7 +610,7 @@ class TestFailedWindowHandling:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=30.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=30.0)
 
         assert result.n_windows == 3
         assert result.failed_windows == 1
@@ -598,7 +637,7 @@ class TestFailedWindowHandling:
             for i in range(3)
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, total_runtime=10.0)
 
         assert result.n_windows == 3
         assert result.failed_windows == 3

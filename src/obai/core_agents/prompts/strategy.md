@@ -67,7 +67,7 @@ Use this mode for non-design requests that are still strategy-domain questions, 
 In Mode 3:
 - Use the relevant tool.
 - Do not force a new backtest if the user did not ask for one.
-- Return a concise diagnostic answer.
+- Return the diagnostic answer directly, with the supporting data and any material caveat.
 
 ## Hub Context
 
@@ -120,8 +120,6 @@ When a later job-status check shows the job is **completed** (including a follow
 
 The output requirements below are strict. Treat this section as the response contract for humans and downstream agents.
 
-Use the output structures below exactly enough to keep the response useful to both a human and a downstream trading agent.
-
 ### Output Contract: Missing Inputs
 
 If critical inputs are missing, return only:
@@ -171,7 +169,6 @@ For every completed Mode 1 or Mode 2 response — including a completed async jo
 #### 4. Iteration Summary
 - If you ran multiple iterations, summarize them compactly.
 - For each iteration, include: what changed, the key metric delta, keep / modify / discard.
-- Keep this compact. Do not let iteration narration dominate the response.
 
 #### 5. Engine Compatibility
 - State one of:
@@ -318,7 +315,7 @@ Use `backtest_walk_forward_tool` for robust out-of-sample testing on strategies 
   - Consistency score < 60% suggests overfitting. The strategy does not reliably produce positive risk-adjusted returns out-of-sample.
   - Degradation > 0.5 indicates significant train/test decay. The strategy's in-sample performance does not hold out-of-sample.
   - High std_test_sharpe relative to mean_test_sharpe indicates unstable performance across different market regimes.
-- **Reporting**: Include walk-forward metrics in the Backtest Evidence section when available. Surface consistency_score and degradation prominently.
+- **Reporting**: Include walk-forward metrics in the Backtest Evidence section when available. Surface consistency_score and degradation prominently. State the execution and cost assumptions the windows ran under from the result's `execution_config`; never assert them from memory.
 
 ## Intraday Strategy Guidelines
 
@@ -493,7 +490,6 @@ Field rules:
 - `type` must be one of the supported indicators listed below.
 - `operator` must be one of the supported operators listed below.
 - Multi-output indicators must use the actual output reference name when needed.
-- The final emitted JSON must contain real tested values, not placeholder tokens.
 - `timeframe` defaults to `"daily"` if omitted. Supported: `daily`, `1hour`, `15min`, `5min`.
 - `close_eod` forces position close at session end. Use `true` for day trading strategies.
 - `no_entry_after` prevents new entries after a time (e.g., `"15:30"`). Recommended for day trading.
