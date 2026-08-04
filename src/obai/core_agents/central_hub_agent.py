@@ -73,6 +73,7 @@ from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .research_agent import ResearchAgent
+from .response_assembly import AnswerAccumulator
 from .screener_agent import ScreenerAgent
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
@@ -447,11 +448,29 @@ _STRATEGY_SYMBOL_LIST_PATTERNS = (
     # but label-agnostic so the hub's paraphrases ("Concrete universe tickers:
     # [KO]", "Resolved instrument: [KO]") still resolve a concrete universe.
     re.compile(r"\[(?P<body>[A-Z]{1,5}(?:\.[A-Z])?(?:\s*,\s*[A-Z]{1,5}(?:\.[A-Z])?)*)\]"),
+    # Unbracketed context line whose entire value is tickers, under any label
+    # that names the universe. The hub rewords that label freely ("Concrete
+    # tradable universe ticker resolved by screener: SPY."), so requiring the
+    # exact `Universe:` form made a plainly present ticker invisible. The label
+    # must still say universe/ticker/symbol/instrument: keying on punctuation
+    # alone accepted `Benchmark: SPY` and `Region: US` as a resolved universe,
+    # which is precisely what this gate exists to refuse. Requiring the tickers
+    # to span the whole value keeps prose out ("Instrument: State Street SPDR").
+    re.compile(
+        # The label match is case-insensitive via a scoped flag; the body must
+        # not be, or lower-case prose would read as tickers.
+        r"^[^\n:]*\b(?i:universe|tickers?|symbols?|instruments?|subject)\b[^\n:]*:[ \t]*"
+        r"(?P<body>[A-Z]{1,5}(?:\.[A-Z])?(?:[ \t]*,[ \t]*[A-Z]{1,5}(?:\.[A-Z])?)*)"
+        r"[ \t]*\.?[ \t]*$",
+        re.MULTILINE,
+    ),
 )
 _NON_TICKER_TOKENS = {
     "AND",
     "OR",
     "JSON",
+    # Walk-forward jargon, not an instrument
+    "OOS",
     "SMA",
     "EMA",
     "WMA",
@@ -518,8 +537,7 @@ _PREDICTION_MARKET_KEYWORDS = re.compile(
 # word ("before a paper trade", "paper ledger") that does not by itself signal an
 # export/handoff. Genuine handoffs always carry export/artifact/handoff/validate.
 _CRYPTO_BACKTEST_INTENT = re.compile(
-    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log"
-    r"|job[_ ]?id|export|validate)\b",
+    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log|export|validate)\b",
     re.IGNORECASE,
 )
 _CRYPTO_RESEARCH_ONLY_INTENT = re.compile(
@@ -528,6 +546,19 @@ _CRYPTO_RESEARCH_ONLY_INTENT = re.compile(
     re.IGNORECASE,
 )
 _CRYPTO_PRODUCT_PATTERN = re.compile(r"\b[A-Z0-9]{2,15}-(?:USD|USDC|EUR|BTC|ETH)\b")
+# A stored job id is as concrete a target as a product id: the specialist
+# resolves the product from the job. Matching the literal token is a hard
+# syntactic fact, not the fuzzy follow-up classification the hub must avoid.
+_CRYPTO_JOB_REFERENCE_PATTERN = re.compile(r"\bcrypto_bt_[0-9a-f]{6,}\b", re.IGNORECASE)
+# A stored artifact id is as concrete a target as a job id for the same reason:
+# the crypto engine derives it from the product id, so the specialist resolves
+# the product from the id alone. The literal `_coinbase_` segment and the
+# trailing `_v<digits>` make this a hard syntactic match on a generated
+# identifier, not fuzzy intent classification.
+_CRYPTO_ARTIFACT_REFERENCE_PATTERN = re.compile(
+    r"\b[a-z0-9]+_[a-z0-9]+_coinbase_[a-z0-9]+(?:_[a-z0-9]+)*_v\d+\b",
+    re.IGNORECASE,
+)
 _CRYPTO_ASSET_PATTERN = re.compile(
     r"\b(BTC|ETH|SOL|XRP|DOGE|ADA|AVAX|LINK|LTC|BCH|UNI|AAVE|MATIC|DOT"
     r"|bitcoin|ethereum|solana|ripple|dogecoin|cardano|avalanche|chainlink"
@@ -539,8 +570,12 @@ _CRYPTO_UNSUPPORTED_VENUE_PATTERN = re.compile(
     r"|amberdata|coinbase exchange)\b",
     re.IGNORECASE,
 )
+# Bare "future" is excluded for the same reason as "paper" above: it is a date
+# word ("the future requested end", "future candle") far more often than a
+# contract type. The plural names the instrument; "perp"/"perpetual" already
+# cover the singular derivative.
 _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN = re.compile(
-    r"\b(perp|perpetual|future|futures|option|options|funding|open interest"
+    r"\b(perp|perpetual|futures|option|options|funding|open interest"
     r"|liquidation|liquidations|basis|defi|yield|stablecoin|on[- ]?chain)\b",
     re.IGNORECASE,
 )
@@ -573,6 +608,23 @@ def _build_strategy_routing_hint() -> str:
     )
 
 
+def _distinct_matches(pattern: re.Pattern[str], text: str) -> list[str]:
+    """Return each distinct match of ``pattern`` in first-seen order.
+
+    Args:
+        pattern: Compiled scope pattern.
+        text: Handoff text to scan.
+
+    Returns:
+        Distinct matched substrings, case-folded for de-duplication but
+        returned in their original casing.
+    """
+    seen: dict[str, str] = {}
+    for match in pattern.finditer(text):
+        seen.setdefault(match.group(0).casefold(), match.group(0))
+    return list(seen.values())
+
+
 def _get_crypto_preflight_error(input_text: str) -> str | None:
     """Fail closed on hard scope violations in executable crypto handoffs.
 
@@ -592,18 +644,20 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
     ):
         return None
 
-    if match := _CRYPTO_UNSUPPORTED_VENUE_PATTERN.search(input_text):
+    # Report every violation, not the first. Stopping at one left the Hub
+    # unable to name the rest of an out-of-scope request in its refusal.
+    venues = _distinct_matches(_CRYPTO_UNSUPPORTED_VENUE_PATTERN, input_text)
+    instruments = _distinct_matches(_CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN, input_text)
+    if venues or instruments:
+        detail = ""
+        if venues:
+            detail += f" Unsupported venue/provider in handoff: {', '.join(venues)}."
+        if instruments:
+            detail += f" Unsupported instrument/data type in handoff: {', '.join(instruments)}."
         return (
             "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase Advanced "
-            f"Trade spot only. Unsupported venue/provider in handoff: {match.group(0)}. "
-            "Retry with Coinbase spot scope or route to the correct specialist."
-        )
-
-    if match := _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN.search(input_text):
-        return (
-            "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase spot only. "
-            f"Unsupported instrument/data type in handoff: {match.group(0)}. "
-            "Do not request derivatives, DeFi, on-chain, or non-spot artifacts."
+            f"Trade spot only.{detail} Retry with Coinbase spot scope or route to "
+            "the correct specialist."
         )
 
     if "data_source_policy" in input_text and "execution_venue_required" not in input_text:
@@ -617,7 +671,13 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
     # Pre-classifying that intent here false-positives on requests that merely
     # mention artifacts (e.g. "would an artifact be eligible" on a new backtest).
 
-    if not (_CRYPTO_PRODUCT_PATTERN.search(input_text) or _CRYPTO_ASSET_PATTERN.search(input_text)):
+    has_resolvable_target = (
+        _CRYPTO_PRODUCT_PATTERN.search(input_text)
+        or _CRYPTO_ASSET_PATTERN.search(input_text)
+        or _CRYPTO_JOB_REFERENCE_PATTERN.search(input_text)
+        or _CRYPTO_ARTIFACT_REFERENCE_PATTERN.search(input_text)
+    )
+    if not has_resolvable_target:
         return (
             "MISSING_CRYPTO_INPUTS: Coinbase spot backtests require a concrete product "
             "or asset symbol. Retry with a Coinbase product_id such as BTC-USD or an "
@@ -967,10 +1027,14 @@ def _build_hub_agent(
     """Build the SandboxAgent Central Hub with lazy hub_skills.
 
     The Sandbox Hub keeps the same agents-as-tools wiring but exposes the
-    files in ``HUB_SKILLS_DIR`` as lazy skills. Skill metadata (name +
-    description) is loaded eagerly; full SKILL.md bodies are fetched only
-    when the model selects a skill. Critical routing/passthrough logic
-    stays in code; skills only carry verbose conditional instructions.
+    files in ``HUB_SKILLS_DIR`` as lazy skills. Only skill metadata (name +
+    description) reaches the model: ``load_skill`` stages the directory and
+    returns a status envelope, and with ``Skills`` as the sole capability the
+    hub has no file-read tool, so **SKILL.md bodies never enter the model's
+    context**. Treat them as documentation and as the routing signal the
+    regression gate asserts on -- never as an instruction channel. Any rule
+    the hub must actually obey belongs in ``central_hub_base.md``, which is
+    rendered into the instructions on every turn.
 
     Capabilities: ``Skills`` only. We deliberately do **not** include
     ``Capabilities.default()`` (Filesystem + Shell + Compaction):
@@ -1034,7 +1098,7 @@ class CentralHubAgent:
 
     This agent calls specialists as tools (agents-as-tools pattern),
     receives their outputs, and synthesizes comprehensive responses.
-    Uses gpt-4o for better reasoning.
+    Runs on ``orchestrator_model``, the strongest tier we configure.
 
     The agents-as-tools pattern keeps the hub in control:
     - Hub calls market_data_tool() -> gets price data back
@@ -1441,7 +1505,7 @@ class CentralHubAgent:
         @function_tool(
             name_override="prediction_market_analysis",
             description_override=_PREDICTION_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
         async def prediction_market_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
             result = Runner.run_streamed(
@@ -1480,14 +1544,16 @@ class CentralHubAgent:
         @function_tool(
             name_override="crypto_analysis",
             description_override=_CRYPTO_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
         async def crypto_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
             preflight_error = _get_crypto_preflight_error(input)
             if preflight_error:
+                # Return to the Hub rather than relaying, matching the strategy
+                # handoff errors above: this is a control signal, and shipping it
+                # verbatim made the raw token the user's entire answer.
                 logger.info("Blocked crypto_analysis due to preflight violation")
-                _set_crypto_passthrough(preflight_error)
-                return _wrap_terminal_crypto_output(preflight_error)
+                return preflight_error
 
             result = Runner.run_streamed(
                 starting_agent=crypto_agent,
@@ -1530,7 +1596,7 @@ class CentralHubAgent:
         @function_tool(
             name_override="strategy_analysis",
             description_override=_STRATEGY_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
         async def strategy_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
             format_error = _get_strategy_handoff_format_error(input)
@@ -1723,8 +1789,10 @@ class CentralHubAgent:
             run_config=self._run_config,
         )
 
-        # Buffer response text for caching
-        response_buffer: list[str] = []
+        # Buffer response text for caching, minus commentary-phase narration:
+        # caching a status line as the answer poisons every later cache hit.
+        answer = AnswerAccumulator()
+        passthrough: str | None = None
 
         # Buffered hub-mediated relay: after a terminal specialist fires,
         # buffer hub synthesis and emit the specialist output directly.
@@ -1735,18 +1803,18 @@ class CentralHubAgent:
             # Buffer streaming text deltas for caching
             if isinstance(event, RawResponsesStreamEvent):
                 data = event.data
-                if isinstance(data, ResponseTextDeltaEvent):
-                    delta = data.delta
-                    if delta:
-                        response_buffer.append(delta)
+                if isinstance(data, ResponseTextDeltaEvent) and data.delta:
+                    answer.add_delta(data.item_id, data.delta)
 
             # Also capture final message output
             elif isinstance(event, RunItemStreamEvent):
                 item = event.item
                 if isinstance(item, MessageOutputItem):
-                    text = ItemHelpers.text_message_output(item)
-                    if text and not response_buffer:
-                        response_buffer.append(text)
+                    answer.note_message(
+                        item.raw_item.id,
+                        ItemHelpers.text_message_output(item),
+                        item.raw_item.phase,
+                    )
 
             # Detect terminal specialist firing: passthrough set by tool wrapper.
             if terminal_fired is None and _prediction_passthrough is not None:
@@ -1782,22 +1850,19 @@ class CentralHubAgent:
         # is still invoked for trace diagnostics; the boolean does not gate the
         # choice. (Crypto and strategy use the same deterministic passthrough.)
         if terminal_fired == "prediction" and _prediction_passthrough:
-            hub_final_text = "".join(response_buffer)
             relay_ok = validate_prediction_relay(
-                hub_final_text,
+                answer.text(),
                 _prediction_passthrough,
                 allowed_context=prediction_context_block,
             )
             if not relay_ok:
                 logger.info("Hub authored invented identifiers — passthrough used")
             yield PredictionPassthroughEvent(content=_prediction_passthrough)
-            response_buffer.clear()
-            response_buffer.append(_prediction_passthrough)
+            passthrough = _prediction_passthrough
         elif terminal_fired == "crypto" and _get_crypto_passthrough():
             crypto_output = _get_crypto_passthrough() or ""
             yield CryptoPassthroughEvent(content=crypto_output)
-            response_buffer.clear()
-            response_buffer.append(crypto_output)
+            passthrough = crypto_output
         elif terminal_fired == "strategy" and _get_strategy_passthrough():
             # Strategy is a terminal author whose output is a deterministic
             # nine-section (or pending-stub) deliverable. Emit it verbatim and
@@ -1806,11 +1871,10 @@ class CentralHubAgent:
             strategy_state = _get_strategy_passthrough()
             strategy_output = strategy_state.content if strategy_state else ""
             yield StrategyPassthroughEvent(content=strategy_output)
-            response_buffer.clear()
-            response_buffer.append(strategy_output)
+            passthrough = strategy_output
 
         # Cache the response for future follow-up questions
-        final_response = "".join(response_buffer)
+        final_response = passthrough if passthrough is not None else answer.text()
         if self._cache and final_response:
             await self._cache.store(
                 query=query,  # Original query, not augmented

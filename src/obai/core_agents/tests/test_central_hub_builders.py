@@ -7,11 +7,16 @@ wired correctly.
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 
 from core_agents.central_hub_agent import (
     HUB_SKILLS_DIR,
+    CentralHubAgent,
     _build_hub_agent,
     _hub_context_management,
 )
@@ -48,6 +53,62 @@ def test_hub_builder_returns_sandbox_agent_with_skills() -> None:
     lazy_source = skills_caps[0].lazy_from
     assert isinstance(lazy_source, LocalDirLazySkillSource)
     assert lazy_source.source.src == HUB_SKILLS_DIR
+
+
+@pytest.mark.parametrize(
+    ("builder", "attribute"),
+    [
+        ("_build_prediction_tool", "prediction_markets_agent"),
+        ("_build_crypto_tool", "crypto_agent"),
+        ("_build_strategy_tool", "strategy_agent"),
+    ],
+)
+def test_specialist_wrappers_use_strict_json_schema(builder: str, attribute: str) -> None:
+    """Lax schemas let the model send `Input` and get rejected by the SDK.
+
+    The model then retries with correct casing, so one routing decision
+    bills two model requests and burns two specialist calls. Strict mode
+    removes the guess; the wrappers take a single required string.
+    """
+    hub = object.__new__(CentralHubAgent)
+    setattr(hub, attribute, SimpleNamespace(agent=SimpleNamespace(name="stub")))
+
+    assert getattr(hub, builder)().strict_json_schema is True
+
+
+def _hub_base_prompt() -> str:
+    return (Path(__file__).resolve().parents[1] / "prompts" / "central_hub_base.md").read_text()
+
+
+def test_load_bearing_hub_rules_live_in_the_in_context_prompt() -> None:
+    """Skill bodies never reach the model, so rules there are dead.
+
+    ``load_skill`` stages a directory and returns a status envelope, and
+    with ``Skills`` as the only capability the hub has no file-read tool.
+    A captured run confirms it: the rendered hub instructions contain the
+    one-line skill index but none of the SKILL.md section headings. Rules
+    the hub must obey therefore belong in central_hub_base.md, which is
+    rendered on every turn.
+    """
+    prompt = _hub_base_prompt()
+
+    # Relay is scoped to the marker, so a pre-flight control signal is not
+    # mistaken for an answer and echoed back to the user verbatim.
+    assert "__TERMINAL_TOOL_OUTPUT__:<tool>:" in prompt
+    assert "MISSING_CRYPTO_INPUTS:" in prompt
+    assert "never an answer" in prompt
+
+    # The SDK sandbox preamble asks for brevity upstream of this file; these
+    # four items are the explicit exception to it.
+    assert "Never shorten past these four" in prompt
+    for rule in ("Name the subject", "Restate every input", "State the filters"):
+        assert rule in prompt, f"missing brevity carve-out: {rule}"
+
+    # A capability question ("can OBaI place a real-money Polymarket order?")
+    # routed nowhere and was answered from the hub's own instructions. The
+    # supported list has to come from the specialist's contract, which can
+    # drift from the hub's belief about it without either side noticing.
+    assert "supports, refuses, or can execute is a routing trigger" in prompt
 
 
 def test_compaction_threshold_scales_with_model_window() -> None:

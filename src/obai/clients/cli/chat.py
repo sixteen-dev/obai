@@ -331,6 +331,7 @@ async def _run_query(  # noqa: PLR0912
     )
     from core_agents.config import get_config
     from core_agents.guardrails import get_rejection_message
+    from core_agents.response_assembly import AnswerAccumulator
     from evaluation.scorers.faithfulness import (
         CompletenessScorer,
         FaithfulnessScorer,
@@ -340,8 +341,11 @@ async def _run_query(  # noqa: PLR0912
     start = time.perf_counter()
     # Holds the text streamed since the last hub tool call (or query start).
     # Resets on every tool_call_item so intermediate "thinking" narration
-    # gets discarded — only the final segment (the answer) survives to stdout.
-    response_text = ""
+    # gets discarded, and drops any message the model labelled commentary —
+    # only the answer survives to stdout.
+    answer = AnswerAccumulator()
+    # A terminal specialist's output replaces the answer wholesale.
+    passthrough: str | None = None
     agents_called: list[str] = []
     tool_calls: list[dict[str, str]] = []
     current_agent = "central_hub"
@@ -353,7 +357,7 @@ async def _run_query(  # noqa: PLR0912
                 event,
                 PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
             ):
-                response_text = event.content
+                passthrough = event.content
                 continue
 
             if isinstance(event, AgentUpdatedStreamEvent):
@@ -371,21 +375,22 @@ async def _run_query(  # noqa: PLR0912
                         name: str = getattr(raw, "name", "unknown")
                         tool_calls.append({"tool": name, "agent": current_agent})
                     # Anything streamed before this hub tool call was thinking.
-                    response_text = ""
-                elif (
-                    item_type == "message_output_item"
-                    and isinstance(item, MessageOutputItem)
-                    and not response_text
-                ):
-                    # Fallback for the current segment when no deltas arrived.
-                    msg = ItemHelpers.text_message_output(item)
-                    if msg:
-                        response_text = msg
+                    answer.reset()
+                elif item_type == "message_output_item" and isinstance(item, MessageOutputItem):
+                    # Carries the phase label, and the whole text when no
+                    # deltas arrived.
+                    answer.note_message(
+                        item.raw_item.id,
+                        ItemHelpers.text_message_output(item),
+                        item.raw_item.phase,
+                    )
 
             elif isinstance(event, RawResponsesStreamEvent):
                 data = event.data
                 if isinstance(data, ResponseTextDeltaEvent) and data.delta:
-                    response_text += data.delta
+                    answer.add_delta(data.item_id, data.delta)
+
+        response_text = passthrough if passthrough is not None else answer.text()
 
         if not json_mode and response_text:
             sys.stdout.write(response_text)

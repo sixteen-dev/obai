@@ -44,8 +44,8 @@ export MCP_EVENTS_NEWS_URL=http://localhost:8003/mcp
 export MCP_OPTIONS_URL=http://localhost:8004/mcp
 
 # Optional: Model configuration
-export ORCHESTRATOR_MODEL=gpt-4o        # Central hub model
-export SPECIALIST_MODEL=gpt-4o-mini     # Specialist agents model
+export ORCHESTRATOR_MODEL=gpt-5.6-sol   # Central hub model
+export SPECIALIST_MODEL=gpt-5.6-luna    # Specialist agents model
 
 # Optional: Weave tracing
 export WANDB_API_KEY=your-key           # Enable W&B Weave tracing
@@ -89,7 +89,7 @@ Type these in the input field:
 
 ```
 ┌─ OBaI - Financial Research Agent ──────────────────┐
-│ Hub: gpt-4o │ Specialist: gpt-4o-mini │ Weave: ✓   │
+│ Hub: gpt-5.6-sol │ Specialist: gpt-5.6-luna │ ✓    │
 ├────────────────────────────────────────────────────┤
 │                                                    │
 │    ____  ____        _____                         │

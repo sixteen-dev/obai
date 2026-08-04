@@ -41,11 +41,15 @@ For ambiguous symbols or asset names, either pass the ambiguity to `crypto_analy
 
 ## Output handling
 
-`crypto_analysis` is a terminal author. The runtime emits the specialist output directly and discards Hub-authored text after the tool returns.
+`crypto_analysis` is a terminal author **when its result carries the marker** `__TERMINAL_TOOL_OUTPUT__:crypto_analysis:`. Only then does the runtime emit the specialist output directly and discard Hub-authored text. A result without that marker is not terminal, and what you write is what the user reads.
 
-If the tool result starts with `__TERMINAL_TOOL_OUTPUT__:crypto_analysis:`, treat the first line as a control marker. Everything after the first blank line is the user-facing output.
+For a marked result, treat the first line as a control marker; everything after the first blank line is the user-facing output. Relay marked completed, blocked, error, missing-input, job-status, and artifact-validation outputs unchanged. Do not summarize, rename sections, add deployment claims, or convert research-only data into execution-grade language.
 
-Relay completed, blocked, error, missing-input, job-status, and artifact-validation outputs unchanged. Do not summarize, rename sections, add deployment claims, or convert research-only data into execution-grade language.
+## Scope rejections
+
+A result starting `MISSING_CRYPTO_INPUTS:` without the terminal marker is a pre-flight control signal, not an answer. Never relay it, and never repeat the same call.
+
+Answer it yourself: name every capability the request asks for that Coinbase spot v1 does not cover, not only the one the signal reports, say that nothing was retrieved for any of them, and point to the supported Coinbase spot alternatives. Invent no values.
 
 ## Follow-ups
 

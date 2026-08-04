@@ -48,16 +48,37 @@ class TestAgentConfig:
         """Test default model values."""
         config = AgentConfig()
         assert config.orchestrator_model == "gpt-5.6-sol"
-        assert config.specialist_model == "gpt-5-mini"
+        assert config.specialist_model == "gpt-5.6-luna"
+
+    def test_every_default_model_is_gpt_5_6(self) -> None:
+        """No OpenAI-facing default may drift off the gpt-5.6 price tier.
+
+        Every model default we ship bills the user per query. Pinning the
+        whole set here means a stale model name shows up as a test failure
+        rather than as a surprise line on someone's OpenAI invoice.
+        """
+        config = AgentConfig()
+        defaults = {
+            "orchestrator": config.orchestrator_model,
+            "specialist": config.specialist_model,
+            "strategy": config.get_strategy_model(),
+            "crypto": config.get_agent_model("crypto"),
+            "prediction_markets": config.get_agent_model("prediction_markets"),
+            "guardrail": config.guardrail_model,
+        }
+        off_tier = {
+            name: model for name, model in defaults.items() if not model.startswith("gpt-5.6-")
+        }
+        assert not off_tier, f"default models off the gpt-5.6 tier: {off_tier}"
 
     def test_default_reasoning_effort(self) -> None:
-        """Hub drops to medium; the three heavy specialists default to high."""
+        """Every tier sits at the balanced medium starting point."""
         config = AgentConfig()
         assert config.orchestrator_reasoning_effort == "medium"
         assert config.specialist_reasoning_effort == "medium"
-        assert config.strategy_reasoning_effort == "high"
-        assert config.crypto_reasoning_effort == "high"
-        assert config.prediction_markets_reasoning_effort == "high"
+        assert config.strategy_reasoning_effort == "medium"
+        assert config.crypto_reasoning_effort == "medium"
+        assert config.prediction_markets_reasoning_effort == "medium"
 
     def test_default_compact_ratio(self) -> None:
         """Hub compaction is on by default at 90% of the model window."""
@@ -83,11 +104,21 @@ class TestAgentConfig:
         assert effort == config.specialist_reasoning_effort
 
     def test_get_agent_reasoning_effort_override(self) -> None:
-        """Strategy, crypto, and prediction markets resolve to high by default."""
+        """The three heavy specialists keep an explicit per-agent pin."""
         config = AgentConfig()
-        assert config.get_agent_reasoning_effort("strategy") == "high"
-        assert config.get_agent_reasoning_effort("crypto") == "high"
-        assert config.get_agent_reasoning_effort("prediction_markets") == "high"
+        assert config.get_agent_reasoning_effort("strategy") == "medium"
+        assert config.get_agent_reasoning_effort("crypto") == "medium"
+        assert config.get_agent_reasoning_effort("prediction_markets") == "medium"
+
+    def test_get_agent_reasoning_effort_env_override(self) -> None:
+        """A per-agent env var still wins over the pinned default."""
+        os.environ["STRATEGY_REASONING_EFFORT"] = "xhigh"
+        reset_config()
+        try:
+            assert get_config().get_agent_reasoning_effort("strategy") == "xhigh"
+        finally:
+            del os.environ["STRATEGY_REASONING_EFFORT"]
+            reset_config()
 
     def test_default_mcp_urls(self) -> None:
         """Test default MCP server URLs."""

@@ -118,7 +118,7 @@ class AgentConfig(BaseSettings):
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-5.6-luna",
         description="Model for specialist agents (can reason about tool selection)",
     )
     market_data_model: str | None = Field(
@@ -146,7 +146,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -154,15 +154,15 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
     crypto_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for crypto agent (uses specialist_model if None)",
     )
     guardrail_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-5.6-luna",
         description=(
             "Model for input guardrail validation. Pick a small, cheap model — "
             "guardrails run on every query."
@@ -196,10 +196,11 @@ class AgentConfig(BaseSettings):
     # off the front.
     #
     # Expressed as a fraction of the hub model's context window rather than a
-    # token count: the window varies by an order of magnitude across models we
-    # actually run (gpt-5.6-sol is ~1.05M, gpt-5.1 is 400k), so a fixed count
-    # would compact far too eagerly on the larger ones. 0.9 matches the SDK's
-    # own DynamicCompactionPolicy default. Set to None to disable.
+    # token count. The whole gpt-5.6 line is ~1.05M, but ORCHESTRATOR_MODEL is
+    # env-overridable and windows across candidates span an order of magnitude
+    # (gpt-5.1 is 400k), so a fixed count would compact far too eagerly on the
+    # larger ones. 0.9 matches the SDK's own DynamicCompactionPolicy default.
+    # Set to None to disable.
     orchestrator_compact_ratio: float | None = Field(
         default=0.9,
         gt=0.0,
@@ -209,19 +210,21 @@ class AgentConfig(BaseSettings):
 
     # Per-agent reasoning effort overrides. Mirror the per-agent model fields
     # above: an override wins, else the specialist tier applies. Strategy,
-    # crypto, and prediction markets default to a higher tier because their
-    # analysis (backtest iteration, executable pricing, setup evaluation)
-    # benefits from stronger reasoning.
+    # crypto, and prediction markets previously ran a tier above the rest;
+    # they now sit at medium, the balanced starting point, alongside every
+    # other agent. The fields stay because these three carry the heaviest
+    # analysis (backtest iteration, executable pricing, setup evaluation) and
+    # are therefore the first knobs to turn back up if answer quality slips.
     strategy_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Override reasoning effort for strategy agent (uses specialist tier if None)",
     )
     crypto_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Override reasoning effort for crypto agent (uses specialist tier if None)",
     )
     prediction_markets_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Reasoning effort for prediction markets agent (uses specialist tier if None)",
     )
 
@@ -467,11 +470,11 @@ def reset_config() -> None:
             reset_config()
 
             # Set custom env vars
-            os.environ["SPECIALIST_MODEL"] = "gpt-4-turbo"
+            os.environ["SPECIALIST_MODEL"] = "gpt-5.6-terra"
 
             # Get fresh config
             config = get_config()
-            assert config.specialist_model == "gpt-4-turbo"
+            assert config.specialist_model == "gpt-5.6-terra"
 
             # Reset after test
             reset_config()

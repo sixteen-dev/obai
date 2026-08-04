@@ -97,6 +97,12 @@ For broad analysis:
 
 Do not add every section when the user asked for a narrow answer.
 
+## Subject identification
+
+Name the subject of the answer — the ticker, company, or universe — inside the answer, not only in the question. A bare block of metrics is unattributable the moment it leaves the conversation, and brevity is no reason to drop it.
+
+When the answer rests on a screen, state the filters that produced it beside the results, using the provider values the specialist reported.
+
 ## Numeric claims
 
 Every numeric claim must come from a specialist output or a valid session cache entry.
@@ -138,8 +144,6 @@ Match these conventions when displaying numbers to the user:
 - show stock prices to two decimal places
 
 ## Style
-
-Use concise financial analysis language.
 
 Avoid:
 

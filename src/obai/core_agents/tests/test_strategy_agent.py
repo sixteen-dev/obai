@@ -13,6 +13,65 @@ from core_agents.config import AgentConfig, get_config, reset_config
 from core_agents.prompt_loader import load_prompt
 from core_agents.strategy_agent import StrategyAgent
 
+# Verbatim strategy_analysis inputs recorded in the CORE-WALKFORWARD run.
+# The first two were rejected for "concrete universe tickers"; the third
+# passed the gate but handed 'OOS' back as a ticker.
+_WALKFORWARD_USER_REQUEST = (
+    "User request:\n"
+    "Run a frozen walk-forward test of a long-only SPY SMA(200) trend rule from "
+    "2015-01-02 through 2024-12-31: five anchored training/test folds, at least 250 prior "
+    "trading days of indicator warm-up for every test fold, next-open execution, 5 bps "
+    "slippage and 1 bp commission per side. Report each fold's train and out-of-sample "
+    "dates, warm-up coverage, trades, return, Sharpe and drawdown; then assess robustness "
+    "without mixing train and test metrics.\n\n"
+    "[OBaI regression correlation: regress:CORE-WALKFORWARD:00317b94. "
+    "Do not repeat this marker.]\n\n"
+    "Strategy context:\n"
+)
+_WALKFORWARD_CONTEXT_TAIL = (
+    "- Backtest dates: 2015-01-02 through 2024-12-31.\n"
+    "- Strategy family: long-only SMA(200) trend rule.\n"
+    "- Validation: five anchored training/test folds, frozen walk-forward.\n"
+    "- Indicator warm-up: at least 250 prior trading days for every test fold.\n"
+    "- Execution: next open.\n"
+    "- Costs: 5 bps slippage and 1 bp commission per side.\n"
+    "- Required fold-level reporting: train and out-of-sample dates, warm-up coverage, "
+    "trades, return, Sharpe, and drawdown.\n"
+    "- Robustness assessment must not mix train and test metrics.\n"
+    "- Defaults where relevant: USD 60,000 initial capital; moderate risk tolerance; "
+    "medium investment horizon; SPY benchmark; US market."
+)
+_WALKFORWARD_SCREENER_LABEL = (
+    _WALKFORWARD_USER_REQUEST
+    + "- Concrete tradable universe ticker resolved by screener: SPY.\n"
+    + "- Instrument: State Street SPDR S&P 500 ETF, USD, AMEX.\n"
+    + _WALKFORWARD_CONTEXT_TAIL
+)
+_WALKFORWARD_SUBJECT_LABEL = (
+    _WALKFORWARD_USER_REQUEST + "- Subject: SPY.\n" + _WALKFORWARD_CONTEXT_TAIL
+)
+_WALKFORWARD_UNLABELLED = (
+    "Run and report a completed frozen walk-forward backtest for SPY, long-only SMA(200) "
+    "trend rule, covering 2015-01-02 through 2024-12-31. Use exactly five anchored "
+    "(expanding-window) training/test folds, with parameters frozen before each OOS fold "
+    "and no train/test metric mixing. Ensure every test fold has at least 250 prior trading "
+    "days of indicator warm-up and explicitly report each fold’s warm-up date coverage. "
+    "Signal rule: hold SPY long when the daily close is above its 200-day simple moving "
+    "average; otherwise cash. Execute signal changes at the next session open. Costs: 5 bps "
+    "slippage plus 1 bp commission per side (6 bps total per side). Use the Strategy "
+    "Agent’s defensible default fold boundaries for five anchored folds if not otherwise "
+    "specified, but state those exact train and OOS dates and preserve strict chronology. "
+    "For every fold, separately report train metrics and out-of-sample metrics: dates, "
+    "warm-up coverage, trade count, total return, Sharpe ratio, and maximum drawdown. Then "
+    "assess robustness using OOS evidence only for the robustness conclusion, while "
+    "discussing train metrics separately and never pooling or blending train and test "
+    "metrics. Include methodology, assumptions (cash return treatment, Sharpe "
+    "annualization, trade-count definition, dividends/adjustment handling), and any data "
+    "limitations. User preferences available as defaults where relevant: moderate risk "
+    "tolerance, medium horizon, SPY benchmark, USD, US market, initial capital $60,000. "
+    "Do not include or repeat the user’s regression-correlation marker."
+)
+
 
 @pytest.fixture(autouse=True)
 def setup_env() -> None:  # type: ignore[misc]
@@ -153,7 +212,7 @@ class TestStrategyConfig:
     def test_strategy_model_default(self) -> None:
         """Strategy model should default to the dedicated strategy model."""
         config = AgentConfig()
-        assert config.strategy_model == "gpt-5.1"
+        assert config.strategy_model == "gpt-5.6-terra"
 
     def test_strategy_max_turns_default(self) -> None:
         """Strategy run loop default must accommodate multi-step design+backtest flows."""
@@ -393,6 +452,84 @@ class TestStrategyRoutingGuard:
 
         assert "KO" in _extract_strategy_symbols("- Resolved instrument: [KO]")
         assert {"AAPL", "MSFT"} <= _extract_strategy_symbols("Universe: [AAPL, MSFT]")
+
+    def test_extracts_ticker_from_a_paraphrased_universe_label(self) -> None:
+        """The gate must test whether a ticker is present, not how it was labelled.
+
+        Replay of the two rejected CORE-WALKFORWARD handoffs. Both name SPY
+        as the whole value of a context line, but the label reads "Concrete
+        tradable universe ticker resolved by screener:" and "Subject:"
+        instead of the literal "Universe:", so the extractor saw nothing and
+        the walk-forward test never ran.
+        """
+        from core_agents.central_hub_agent import (
+            _extract_strategy_symbols,
+            _get_missing_strategy_inputs,
+        )
+
+        for handoff in (_WALKFORWARD_SCREENER_LABEL, _WALKFORWARD_SUBJECT_LABEL):
+            assert "SPY" in _extract_strategy_symbols(handoff)
+            assert _get_missing_strategy_inputs(handoff) == []
+
+    def test_oos_acronym_is_not_a_ticker(self) -> None:
+        """`OOS` is walk-forward jargon; a fabricated universe is worse than none."""
+        from core_agents.central_hub_agent import _extract_strategy_symbols
+
+        symbols = _extract_strategy_symbols(_WALKFORWARD_UNLABELLED)
+
+        assert "SPY" in symbols
+        assert "OOS" not in symbols
+
+    def test_blocks_labelled_context_block_with_no_ticker(self) -> None:
+        """A context block of metadata is not a resolved universe.
+
+        Every value here is upper-case and ticker-shaped. Matching on the
+        colon alone read all of them as tickers, so a handoff whose universe
+        was explicitly unresolved passed the gate on its benchmark line --
+        the one thing this gate exists to refuse.
+        """
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
+        handoff = (
+            "User request:\n"
+            "Build a momentum strategy for large-cap technology names.\n"
+            "Strategy context:\n"
+            "- Universe: pending screener resolution.\n"
+            "- Objective: momentum ranking, rebalanced monthly.\n"
+            "- Region: US.\n"
+            "- Currency: USD.\n"
+            "- Exchange: NYSE.\n"
+            "- Sector: TECH.\n"
+            "- Execution: MOC.\n"
+            "- Benchmark: SPY.\n"
+        )
+
+        assert _get_missing_strategy_inputs(handoff) == ["concrete universe tickers"]
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "- Region: US.",
+            "- Currency: USD.",
+            "- Exchange: NYSE.",
+            "- Sector: TECH.",
+            "- Benchmark: SPY.",
+            "- Frequency: DAILY.",
+            "- Execution: MOC.",
+            "- Data source: EODHD.",
+            "Note: TBD.",
+        ],
+    )
+    def test_non_universe_labels_never_yield_a_ticker(self, line: str) -> None:
+        """Only a label naming the universe may resolve one.
+
+        A benchmark or venue is not the thing being traded. Accepting one
+        starts a backtest against a universe the user never chose, which is
+        worse than refusing and asking.
+        """
+        from core_agents.central_hub_agent import _extract_strategy_symbols
+
+        assert _extract_strategy_symbols(line) == set()
 
     def test_buy_and_hold_is_a_recognized_objective(self) -> None:
         """Buy-and-hold must be a recognized objective on its own merit."""
