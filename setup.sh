@@ -118,6 +118,42 @@ check_cmd() {
     fi
 }
 
+# Inspect a failed install log and print the remediation for known root causes.
+# Today the only one we recognise is a Rust/cargo build failure: opik pulls in
+# litellm, whose transitive deps (tokenizers, pydantic-core) fall back to
+# building from source when no wheel matches, and that needs a current rustc.
+diagnose_install_failure() {
+    local log_file="$1"
+
+    echo ""
+    fail "Install output (last 30 lines):"
+    tail -n 30 "$log_file" | sed 's/^/    /'
+    echo ""
+
+    if ! grep -qiE 'cargo|rustc|rust version|maturin|setuptools-rust|error: failed to (compile|run custom build)' "$log_file"; then
+        return 0
+    fi
+
+    warn "This looks like a Rust build failure. A dependency (opik -> litellm ->"
+    warn "tokenizers/pydantic-core) had no matching wheel and fell back to"
+    warn "building from source, which needs a current Rust toolchain."
+    echo ""
+    if command -v rustc &>/dev/null; then
+        info "Installed Rust: $(rustc --version)"
+    else
+        info "Rust is not installed."
+    fi
+    info "Upgrade (or install) Rust, then re-run this script:"
+    if command -v rustup &>/dev/null; then
+        echo "    rustup update stable"
+    elif [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        echo "    brew upgrade rust    # or: brew install rust"
+    else
+        echo "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    fi
+    echo "    obai upgrade         # or: ./setup.sh"
+}
+
 prompt_key() {
     local name="$1"
     local desc="$2"
@@ -455,17 +491,24 @@ step "6/8 Installing OBaI CLI"
 
 info "Installing OBaI as a global tool via uv (editable — source changes take effect immediately)..."
 
+# Keep the install output instead of discarding it — a failure here (e.g. a
+# dependency building from source) is unactionable without the real error.
+INSTALL_LOG="$(mktemp -t obai-cli-install)"
+trap 'rm -f "$INSTALL_LOG"' EXIT
+
 # Editable install so `obai` always runs from source — no reinstall needed after code changes.
-if uv tool install --reinstall --editable "$OBAI_SRC" 2>/dev/null; then
+if uv tool install --reinstall --editable "$OBAI_SRC" >"$INSTALL_LOG" 2>&1; then
     ok "OBaI CLI installed (editable)"
 else
     # Fallback: non-editable snapshot (requires reinstall after source changes)
     info "Editable install failed, trying snapshot install..."
-    if uv tool install --reinstall --from "$OBAI_SRC" obai 2>/dev/null; then
+    if uv tool install --reinstall --from "$OBAI_SRC" obai >"$INSTALL_LOG" 2>&1; then
         ok "OBaI CLI installed (snapshot — re-run setup after code changes)"
     else
         fail "Could not install OBaI CLI with uv."
-        echo "  Try manually:"
+        diagnose_install_failure "$INSTALL_LOG"
+        echo ""
+        echo "  Or try manually:"
         echo "    uv tool install --editable \"$OBAI_SRC\""
         echo "  Or run from source:"
         echo "    cd \"$OBAI_SRC\" && uv run obai"

@@ -116,4 +116,8 @@ scripts/*
 !.claude/skills/obai-e2e-regression/tests/*.py
 .claude/skills/obai-e2e-regression/runs/
 .claude/skills/obai-e2e-regression/backup/
+# Paid E2E gate artifacts: packets carry full responses and raw trace spans.
+.e2e-runs/
+# Local working directory for analysis scripts; never part of a change.
+scratchpad/
 .claude/skills/obai-e2e-regression/**/__pycache__/

@@ -46,11 +46,21 @@
 
 ## Commands
 ```sh
-uv run ruff check . --fix     # Lint (fix auto-fixable)
-uv run ruff format .          # Format
-uv run mypy src/ --strict     # Type check (must pass with no errors)
-uv run pytest                 # All tests must pass
+uv run ruff check . --fix        # Lint (fix auto-fixable)
+uv run ruff format .             # Format
+./scripts/run-all-typechecks.sh  # Type check (must pass with no errors)
+./scripts/run-all-tests.sh       # All tests must pass
 ```
+
+**Never typecheck or test from the repo root.** Each service has its own venv
+with its own dependency floors, and the root venv's are older. `mypy src/`
+from the root resolves imports against the *root* venv and invents errors that
+do not exist in the environment the service actually runs in — `openai` is
+2.29.0 at the root vs 2.42.0+ in `src/obai`, so `Reasoning(context=...)` reads
+as an unexpected keyword there. Root `pytest` is worse: `testpaths = ["tests"]`
+means it collects a handful of cases and exits 0 while every real suite goes
+unrun. Both scripts `cd` into each service first, which is the only way the
+per-service `[tool.mypy]` block and venv apply.
 
 ## Docs
 - `docs/spec.md` — Product spec: features, business rules (TODO: create)

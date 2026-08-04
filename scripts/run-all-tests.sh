@@ -11,6 +11,7 @@ cd "$ROOT"
 
 services=(
     "src/backtest-server"
+    "src/crypto-server"
     "src/events-news-server"
     "src/fundamentals-server"
     "src/market-data-server"
