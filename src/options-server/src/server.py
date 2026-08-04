@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import time
 from datetime import datetime
 from datetime import time as dtime
@@ -17,7 +18,13 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients.massive_client import MassiveClient
 from .config import Settings, get_settings, load_settings
-from .engine.pricing import breakeven_at_expiry, bs_greeks, bs_price, implied_vol
+from .engine.pricing import (
+    GREEK_UNITS,
+    breakeven_at_expiry,
+    bs_greeks,
+    bs_price,
+    implied_vol,
+)
 from .engine.scenarios import position_pnl_scenarios, position_risk_profile
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
@@ -551,7 +558,9 @@ def _resolve_iv(
     caller-supplied ``volatility`` seed.
 
     Returns:
-        Solved implied volatility (rounded), or the volatility seed.
+        Solved implied volatility (rounded), the volatility seed when no
+        market price is given, or ``float('nan')`` when neither solver
+        converges on the supplied market price.
     """
     if market_price is None:
         return volatility
@@ -596,43 +605,28 @@ async def options_compute_greeks_tool(
         strike: Option strike price.
         expiry_date: Expiration date (YYYY-MM-DD).
         option_type: 'call' or 'put'.
-        volatility: Implied volatility seed (annualized, e.g. 0.30 for 30%).
-            Used to price/Greek the contract and as the fallback IV when no
-            market_price is given.
+        volatility: Volatility seed (annualized, e.g. 0.30 for 30%). Prices
+            the contract when no market_price is given, and is the declared
+            fallback when the implied-vol solve fails.
         risk_free_rate: Risk-free interest rate (default 4.5%).
         dividend_yield: Continuous dividend yield of the underlying
             (annualized, e.g. 0.03 for 3%). Set for dividend payers and
             indices; 0.0 (default) for non-dividend-paying underlyings.
-        market_price: Observed option price. When supplied, implied_volatility
-            is solved from it; when omitted, implied_volatility echoes the
-            volatility seed.
+        market_price: Observed option price. When supplied, implied
+            volatility is solved from it and price, Greeks, and breakeven
+            are computed at that solved IV, so the payload describes one
+            volatility. When omitted, everything is computed at the seed.
 
     Returns:
-        Dict with price, greeks, breakeven, and implied_volatility. The
-        implied_volatility is solved from market_price when given, else the
-        volatility seed.
+        Dict with price, greeks, greeks_units, breakeven,
+        implied_volatility, and volatility_used — the volatility every
+        other numeric field was computed from. implied_volatility is the
+        solved IV when market_price is given, else the seed; it is None
+        when the solver fails to converge, in which case volatility_used
+        falls back to the seed and an iv_solve_error string says so.
     """
     try:
         time_to_expiry = _years_to_expiry(expiry_date)
-        price = bs_price(
-            underlying_price,
-            strike,
-            time_to_expiry,
-            risk_free_rate,
-            volatility,
-            option_type,
-            dividend_yield,
-        )
-        greeks = bs_greeks(
-            underlying_price,
-            strike,
-            time_to_expiry,
-            risk_free_rate,
-            volatility,
-            option_type,
-            dividend_yield,
-        )
-        be = breakeven_at_expiry(strike, price, option_type, "long")
         iv = _resolve_iv(
             volatility,
             market_price,
@@ -643,13 +637,43 @@ async def options_compute_greeks_tool(
             option_type,
             dividend_yield,
         )
+        iv_failed = market_price is not None and math.isnan(iv)
+        volatility_used = volatility if iv_failed else iv
+        price = bs_price(
+            underlying_price,
+            strike,
+            time_to_expiry,
+            risk_free_rate,
+            volatility_used,
+            option_type,
+            dividend_yield,
+        )
+        greeks = bs_greeks(
+            underlying_price,
+            strike,
+            time_to_expiry,
+            risk_free_rate,
+            volatility_used,
+            option_type,
+            dividend_yield,
+        )
+        be = breakeven_at_expiry(strike, price, option_type, "long")
 
-        return {
+        payload: dict[str, Any] = {
             "price": round(price, 4),
             "greeks": {k: round(v, 6) for k, v in greeks.items()},
+            "greeks_units": GREEK_UNITS,
             "breakeven": round(be, 4),
-            "implied_volatility": iv,
+            "implied_volatility": None if iv_failed else iv,
+            "volatility_used": round(volatility_used, 6),
         }
+        if iv_failed:
+            payload["iv_solve_error"] = (
+                f"implied volatility did not converge for market_price={market_price}; "
+                f"price, Greeks, and breakeven were computed at the volatility seed "
+                f"{volatility}"
+            )
+        return payload
     except Exception as e:
         log_error(
             logger,
