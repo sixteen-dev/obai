@@ -1617,7 +1617,7 @@ def test_remote_dataset_contract_drift_is_rejected_before_query() -> None:
         async def evaluate_trace(self, _trace: Trace, _case: EvalTestCase) -> dict[str, Any]:
             return {}
 
-    async def query_runner(_query: str, _model: str, _verbose: bool) -> Trace:
+    async def query_runner(_query: str, _model: str | None, _verbose: bool) -> Trace:
         nonlocal query_called
         query_called = True
         return _trace("unexpected")
