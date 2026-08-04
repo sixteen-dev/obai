@@ -16,6 +16,36 @@ from ..response_filters import filter_screen_results, filter_search_results
 
 logger = get_logger(__name__)
 
+# US national securities exchanges as FMP reports them in `exchangeShortName`.
+# OTC/PNK venues are deliberately absent: they are US-traded but not
+# exchange-listed, and "US-listed" screens should not silently include them.
+_US_LISTING_VENUES = frozenset({"NASDAQ", "NYSE", "AMEX", "NYSE AMERICAN", "BATS", "CBOE"})
+
+
+def _split_by_listing_venue(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Partition screener rows into US-listed rows and the venues dropped.
+
+    Args:
+        rows: Screener rows carrying an ``exchangeShortName`` field.
+
+    Returns:
+        Tuple of the US-listed rows and the sorted distinct venue labels that
+        were excluded. A row with no recognisable venue is excluded and
+        reported as ``unknown`` rather than assumed to be US-listed.
+
+    """
+    kept: list[dict[str, Any]] = []
+    excluded: set[str] = set()
+    for row in rows:
+        venue = str(row.get("exchangeShortName") or "").strip().upper()
+        if venue in _US_LISTING_VENUES:
+            kept.append(row)
+        else:
+            excluded.add(venue or "unknown")
+    return kept, sorted(excluded)
+
 
 # =============================================================================
 # Stock Screening Tool
@@ -41,6 +71,7 @@ async def screen_stocks(
     is_fund: bool | None = None,
     is_actively_trading: bool = True,
     include_all_share_classes: bool = False,
+    us_listed_only: bool = False,
     limit: int = 25,
 ) -> dict[str, Any]:
     """Screen stocks with various filters for idea generation.
@@ -70,6 +101,10 @@ async def screen_stocks(
         is_fund: Filter for mutual funds only
         is_actively_trading: Only actively traded stocks (default: True)
         include_all_share_classes: Include all share classes (default: False)
+        us_listed_only: Keep only rows listed on a US exchange. The provider's
+            `country` filter is company domicile, not listing venue, so a
+            US-domiciled issuer's foreign cross-listings survive it. Excluded
+            rows and their venues are always reported in the response metadata.
         limit: Maximum results (default: 25, max: 100)
 
     Returns:
@@ -108,9 +143,17 @@ async def screen_stocks(
                 limit=fetch_limit,
             )
 
-            filtered_results = filter_screen_results(data)
-            has_more = len(filtered_results) > capped_limit
-            results = filtered_results[:capped_limit]
+            page = filter_screen_results(data)
+            # The over-fetched probe row exists only to answer "are there more?".
+            # It is not part of the result set, so it must not reach any count.
+            has_more = len(page) > capped_limit
+            considered = page[:capped_limit]
+            eligible, excluded_venues = (
+                _split_by_listing_venue(considered) if us_listed_only else (considered, [])
+            )
+            provider_rows_considered = len(considered)
+            excluded_count = provider_rows_considered - len(eligible)
+            results = eligible
 
             # Build filters applied for response metadata
             filters_applied: dict[str, Any] = {}
@@ -150,6 +193,8 @@ async def screen_stocks(
                 filters_applied["is_actively_trading"] = False
             if include_all_share_classes:
                 filters_applied["include_all_share_classes"] = True
+            if us_listed_only:
+                filters_applied["us_listed_only"] = True
 
             # Warn if no filters applied (could return too many results)
             warning = None
@@ -163,6 +208,10 @@ async def screen_stocks(
                     "requested_at": datetime.now(timezone.utc).isoformat(),
                     "row_count": len(results),
                     "returned": len(results),
+                    "provider_rows_considered": provider_rows_considered,
+                    "us_listed_only": us_listed_only,
+                    "excluded_by_venue": excluded_count,
+                    "excluded_venues": excluded_venues,
                     "limit": capped_limit,
                     "has_more": has_more,
                     "order": "provider_default",

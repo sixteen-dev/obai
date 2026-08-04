@@ -166,6 +166,7 @@ async def screening_screen_stocks_tool(
     is_fund: bool | None = None,
     is_actively_trading: bool = True,
     include_all_share_classes: bool = False,
+    us_listed_only: bool = False,
     limit: int = 25,
 ) -> dict[str, Any]:
     """Screen stocks with various filters for idea generation.
@@ -199,6 +200,10 @@ async def screening_screen_stocks_tool(
         is_fund: True to filter for mutual funds only
         is_actively_trading: Only actively traded stocks (default: True)
         include_all_share_classes: Include all share classes, e.g. GOOG and GOOGL (default: False)
+        us_listed_only: Keep only rows listed on a US exchange. `country` is
+            company domicile, not listing venue, so foreign cross-listings of
+            US-domiciled issuers survive it. Excluded rows and their venues are
+            always reported in the response metadata.
         limit: Maximum results (default: 25, max: 100)
 
     Returns:
@@ -224,6 +229,7 @@ async def screening_screen_stocks_tool(
             is_fund=is_fund,
             is_actively_trading=is_actively_trading,
             include_all_share_classes=include_all_share_classes,
+            us_listed_only=us_listed_only,
             limit=limit,
         )
         return truncate_response(result)
