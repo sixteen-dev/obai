@@ -268,9 +268,7 @@ def test_exact_tier_policy_fails_open_downward_changes() -> None:
 def test_canonical_suite_rejects_deleted_core_case() -> None:
     cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
     raw = yaml.safe_load(cases_path.read_text())
-    raw["test_cases"] = [
-        case for case in raw["test_cases"] if case.get("id") != "CORE-FX"
-    ]
+    raw["test_cases"] = [case for case in raw["test_cases"] if case.get("id") != "CORE-FX"]
 
     issues = lint_suite(raw, as_of=date(2026, 7, 16))
 
@@ -292,9 +290,7 @@ def test_canonical_walkforward_asserts_completed_verdict_deliverable() -> None:
 
     regexes = [spec["regex"] for spec in case["assertions"]["required_text"]]
     assert any("verdict" in rx.lower() for rx in regexes)
-    assert any(
-        "accept" in rx and "reject" in rx and "needs" in rx.lower() for rx in regexes
-    )
+    assert any("accept" in rx and "reject" in rx and "needs" in rx.lower() for rx in regexes)
 
 
 def test_canonical_degraded_classifiers_recognize_real_degraded_answers() -> None:
@@ -382,6 +378,78 @@ def test_frozen_provider_contract_requires_explicit_revision_policy() -> None:
     )
 
     assert "provider-revision-policy-missing" in codes(issues)
+
+
+def test_skill_doc_tier_table_matches_the_case_file() -> None:
+    """The documented planning estimates must equal what cases.yaml sums to.
+
+    `--max-api-calls` is copied from this table, so a stale row makes a paid
+    run abort mid-suite. Nothing cross-checked the two until this test.
+    """
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    cases = yaml.safe_load((root / "cases" / "cases.yaml").read_text())["test_cases"]
+    doc = (root / "SKILL.md").read_text()
+
+    def totals(tier: str) -> tuple[int, int]:
+        rows = [c for c in cases if (c.get("smoke") if tier == "smoke" else c.get("tier") == tier)]
+        return len(rows), sum(c.get("estimated_api_calls", 0) for c in rows)
+
+    for tier in ("smoke", "core", "live"):
+        row = re.search(rf"^\|\s*`{tier}`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|", doc, re.M)
+        assert row is not None, f"SKILL.md has no tier row for {tier}"
+        assert (int(row.group(1)), int(row.group(2))) == totals(tier), (
+            f"SKILL.md {tier} row is stale: documented {row.groups()}, actual {totals(tier)}"
+        )
+
+
+def test_only_when_asserted_is_accepted_on_forbidden_text() -> None:
+    # Scopes a forbidden pattern to the clauses that assert, so refusing the
+    # claim is not scored as making it.
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"forbidden_text": [{"regex": "unlimited", "only_when_asserted": True}]},
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" not in codes(issues)
+
+
+def test_only_when_asserted_is_rejected_on_required_text() -> None:
+    # required_text is already scored against the asserting clauses, so the key
+    # would silently do nothing there.
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"required_text": [{"regex": "JPY", "only_when_asserted": True}]},
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" in codes(issues)
+
+
+def test_only_when_asserted_must_be_boolean() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "forbidden_text": [{"regex": "unlimited", "only_when_asserted": "yes"}]
+                },
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" in codes(issues)
 
 
 def test_text_assertion_regex_is_compiled_during_lint() -> None:

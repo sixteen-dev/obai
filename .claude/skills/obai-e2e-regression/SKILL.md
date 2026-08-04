@@ -22,7 +22,7 @@ or reducing its estimate fails lint just as an overrun does.
 | Tier | Cases | Minimum planning estimate | Selection |
 |---|---:|---:|---|
 | `smoke` | 8 | 45 | Explicit cheaper route check |
-| `core` | 21 | 183 | Exact default release gate |
+| `core` | 21 | 185 | Exact default release gate |
 | `live` | 8 | 48 | Explicit provider/freshness canary |
 
 The legacy YAML/CLI field is named `estimated_api_calls`, but it is only a minimum planning estimate for billable model requests, including guardrail, hub, skill-load continuation, and specialist turns. `--max-api-calls` is a **between-case start limit**, not a hard cap: one already-started hub or specialist agent can exceed its estimate before control returns to the runner. The runner counts actual Opik `llm` spans after every case and refuses to start another case when accounting is unavailable or the next estimate would cross the limit. Use an OpenAI project budget/rate limit as the hard external spending backstop.
@@ -54,7 +54,7 @@ Core gate:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-e2e-regression/scripts/run_suite.py \
-  --execute --max-api-calls 183 --run-dir <new-run-dir>
+  --execute --max-api-calls 185 --run-dir <new-run-dir>
 ```
 
 Smoke gate, only when the user asks for smoke/cheaper coverage:
@@ -80,7 +80,7 @@ Execution is serial. `run_suite.py` automatically runs the zero-model-call prefl
 
 Preflight resolves the inherited environment plus the CLI-managed `~/.obai/.env` with the same no-override precedence as `obai`. That effective environment is shared with `obai status` and paid query subprocesses, so Opik/model/MCP settings cannot point the helper and CLI at different services. `OPENAI_API_KEY` may come from either source; an inherited value has precedence. The key is never printed or copied into run artifacts.
 
-Before a paid subprocess can start, the runner writes `<run-dir>/cases.snapshot.yaml` once, binds its SHA-256 and path in the manifest, and passes only that snapshot to `run_one.py`. The manifest also binds the exact runner/preflight paths and bytes, prompt/runtime tree, the content digest of `~/.obai/.env`, effective model/MCP/cache/Opik/base-URL settings, `~/.obai/preferences.json`, and domain-separated digests of active secret settings including the *effective* OpenAI credential (inherited environment first, then `~/.obai/.env`); no secret value is serialized. The snapshot, manifest, runtime, helper bytes, preferences, and credential identity are rechecked before every case, and `run_one.py` rechecks its full input fingerprint before the initial request and each async poll.
+Before a paid subprocess can start, the runner writes `<run-dir>/cases.snapshot.yaml` once, binds its SHA-256 and path in the manifest, and passes only that snapshot to `run_one.py`. The manifest also binds the exact runner/preflight/judge-packet paths and bytes, prompt/runtime tree, the content digest of `~/.obai/.env`, effective model/MCP/cache/Opik/base-URL settings, `~/.obai/preferences.json`, and domain-separated digests of active secret settings including the *effective* OpenAI credential (inherited environment first, then `~/.obai/.env`); no secret value is serialized. The snapshot, manifest, runtime, helper bytes, preferences, and credential identity are rechecked before every case, and `run_one.py` rechecks its full input fingerprint before the initial request and each async poll.
 
 Each case receives a cryptographically random 256-bit nonce in an fsynced immutable attempt marker. `run_one.py` will not run from `--id`/`--run-dir` alone: it must validate the execute manifest, snapshot, run ID, marker, and nonce, then atomically consume the nonce in `<run-dir>/claims/` before the first model request. Packets and judgments bind the attempt, claim, manifest, snapshot, and input fingerprints. The old `.agents/.../scripts/run_one.py` entry is deliberately disabled. Never edit, copy, or replace run-directory artifacts.
 
@@ -138,7 +138,9 @@ Unexpected undeclared financial specialists are listed for semantic review becau
 
 ## Required offline semantic closeout
 
-Do not rerun a case to judge it. For every `needs_semantic_review` result, read its `packet_path`, the full response, raw trace/spans, parent packets for chains, and every exact string in `unexecuted_assertions`. Recompute material arithmetic and verify timestamps, units, source lineage, premise checks, missing-data handling, and cross-turn identity from captured evidence.
+Do not rerun a case to judge it. Review every result that still carries `unexecuted_assertions`: both `needs_semantic_review` and `fail_product`. A deterministic failure does not cancel a case's remaining assertions, and skipping them lets a second, unrelated defect ship inside a case that is already red. Semantic findings can only add to a deterministic failure, never overturn it.
+
+For each, read its `packet_path`, the full response, raw trace/spans, parent packets for chains, and every exact string in `unexecuted_assertions`. Recompute material arithmetic and verify timestamps, units, source lineage, premise checks, missing-data handling, and cross-turn identity from captured evidence.
 
 Write `<run-dir>/semantic_reviews.json` with this shape. Copy `run_id`, `case_fingerprint`, `packet_sha256`, and assertion strings exactly from the preliminary artifacts. Every assertion needs at least one real packet-field reference; a prose-only evidence string is rejected:
 

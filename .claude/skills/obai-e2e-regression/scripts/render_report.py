@@ -365,8 +365,7 @@ def render(
             if isinstance(item, dict)
         )
         abort_html += (
-            '<div class="abort"><b>Contained harness failures:</b> '
-            f"{html.escape(contained)}</div>"
+            f'<div class="abort"><b>Contained harness failures:</b> {html.escape(contained)}</div>'
         )
     cost_warning_html = (
         '<div class="abort"><b>Cost boundary:</b> the between-case start limit is not '

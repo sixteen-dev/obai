@@ -44,6 +44,9 @@ SKILL_DIR = SCRIPT_DIR.parent
 DEFAULT_CASES = SKILL_DIR / "cases" / "cases.yaml"
 DEFAULT_RUN_ONE = SCRIPT_DIR / "run_one.py"
 DEFAULT_PREFLIGHT = SCRIPT_DIR / "preflight.py"
+# The deterministic scoring contract. Unlike the two above it is imported,
+# not spawned, so there is no path to override and no CLI flag for it.
+DEFAULT_JUDGE_PACKET = SCRIPT_DIR / "judge_packet.py"
 DEFAULT_MAX_API_CALLS = 20
 CASES_SNAPSHOT_NAME = "cases.snapshot.yaml"
 EXIT_SUCCESS = 0
@@ -315,9 +318,20 @@ def _git_metadata(cwd: Path) -> dict[str, Any]:
 def _runtime_script_bindings(
     *, run_one_path: Path = DEFAULT_RUN_ONE, preflight_path: Path = DEFAULT_PREFLIGHT
 ) -> dict[str, dict[str, str]]:
-    """Bind the exact helper programs selected for a paid run."""
+    """Bind the exact helper programs selected for a paid run.
+
+    ``judge_packet`` decides every deterministic verdict. The whole-tree
+    runtime fingerprint already covers it, but only as one file among many:
+    naming it here makes the scoring contract individually verifiable, so a
+    changed judge fails the recheck by file rather than surfacing later as
+    an unreproducible judgment for whichever case it happened to move.
+    """
     bindings: dict[str, dict[str, str]] = {}
-    for label, path in (("run_one", run_one_path), ("preflight", preflight_path)):
+    for label, path in (
+        ("run_one", run_one_path),
+        ("preflight", preflight_path),
+        ("judge_packet", DEFAULT_JUDGE_PACKET),
+    ):
         try:
             resolved = path.resolve(strict=True)
             payload = resolved.read_bytes()
@@ -330,6 +344,26 @@ def _runtime_script_bindings(
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
     return bindings
+
+
+def _changed_helper_labels(recorded: object, expected: dict[str, dict[str, str]]) -> list[str]:
+    """Name the helpers whose recorded binding no longer matches the tree.
+
+    Args:
+        recorded: The manifest's ``runtime_helpers`` value, of unknown shape.
+        expected: Bindings recomputed from the current tree.
+
+    Returns:
+        Sorted labels that differ, added, or went missing. Every label when
+        the manifest entry is not a mapping at all.
+    """
+    if not isinstance(recorded, dict):
+        return sorted(expected)
+    return sorted(
+        label
+        for label in set(expected) | set(recorded)
+        if recorded.get(label) != expected.get(label)
+    )
 
 
 def _runtime_fingerprint(
@@ -348,6 +382,7 @@ def _runtime_fingerprint(
         *runtime_source_paths(repo_root),
         Path(helper_bindings["run_one"]["path"]),
         Path(helper_bindings["preflight"]["path"]),
+        Path(helper_bindings["judge_packet"]["path"]),
     ]
     digest = hashlib.sha256()
     digest.update(_hash_tree(roots, root=repo_root).encode("ascii"))
@@ -453,8 +488,9 @@ def validate_resume_manifest(
         run_one_path=run_one_path,
         preflight_path=preflight_path,
     )
-    if manifest.get("runtime_helpers") != expected_helpers:
-        raise PlanError("run_one or preflight helper path/content changed since the manifest")
+    changed = _changed_helper_labels(manifest.get("runtime_helpers"), expected_helpers)
+    if changed:
+        raise PlanError(f"helper path/content changed since the manifest: {', '.join(changed)}")
     if manifest.get("runtime_fingerprint") != _runtime_fingerprint(
         run_one_path=run_one_path,
         preflight_path=preflight_path,
@@ -1172,9 +1208,7 @@ def _execute_plan(
                         break
                     observed_request_total += prior_requests
                     resumed += 1
-                    prior_status = (
-                        prior_packet.get("harness_status") if prior_packet else None
-                    )
+                    prior_status = prior_packet.get("harness_status") if prior_packet else None
                     # Mirror the live containment policy: a resumed run must not
                     # re-abort on an isolated failure the original run contained.
                     if prior_status == "completed":
@@ -1427,9 +1461,7 @@ def _execute_plan(
         if packet_harness_status == "completed":
             consecutive_harness_failures = 0
         else:
-            harness_failures.append(
-                {"case_id": case_id, "harness_status": packet_harness_status}
-            )
+            harness_failures.append({"case_id": case_id, "harness_status": packet_harness_status})
             consecutive_harness_failures += 1
             abort_reason = _harness_abort_reason(
                 subject=f"case {case_id}",

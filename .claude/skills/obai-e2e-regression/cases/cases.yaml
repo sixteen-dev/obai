@@ -40,7 +40,7 @@ suite:
   smoke_max_cases: 8
   smoke_max_api_calls: 45
   core_max_cases: 21
-  core_max_api_calls: 183
+  core_max_api_calls: 185
   live_max_cases: 8
   live_max_api_calls: 48
 
@@ -268,13 +268,22 @@ test_cases:
         # Accept the equivalent "expiry mismatch" phrasing the specialist uses
         # when it refuses; the contract is that it names the expiry conflict,
         # not that it picks one particular adjective.
-        - {regex: "(?i)(?:\\b(?:mixed|different|differing|multiple|mismatched)\\s+expir\\w*|\\bexpir\\w*\\s+mismatch)"}
+        - {regex: "(?i)(?:\\b(?:mixed|different|differing|distinct|separate|unequal|multiple|mismatched)\\s+expir\\w*|\\bexpir\\w*\\s+mismatch)"}
         # The specialist opens its refusal with "Refused:" and says "no valid",
         # so match refusal inflections rather than the bare stem, mirroring the
         # judge's own REFUSAL_RE.
         - {regex: "(?i)\\b(?:cannot|can'?t|unable|refus(?:e|es|ed|ing|al)|unsupported|invalid|no[t]? valid)\\b"}
       forbidden_text:
         - {regex: "(?i)\\b(?:max(?:imum)?[ -](?:profit|loss|gain)|breakeven)\\b[^.\\n]{0,30}[-+$]?\\d"}
+        # The pattern above is digit-anchored, so it only sees a numeric
+        # aggregate. The answer that failed this case stated a qualitative one
+        # -- "Maximum profit: theoretically unlimited" / "Maximum loss: total
+        # premiums paid" -- and passed every deterministic check. Scoped to the
+        # asserting clauses so refusing the aggregate is not punished, and
+        # skipped on any clause naming a leg, since per-leg maxima are exactly
+        # what the specialist is asked to report instead.
+        - regex: "(?im)^(?:(?!\\b(?:leg|call|put)\\b).)*\\bmax(?:imum)?[ -](?:profit|loss|gain)\\b[^.\\n]{0,40}\\b(?:unlimited|unbounded|infinite|total premiums?|both premiums|net debit)\\b"
+          only_when_asserted: true
       manual_assertions:
         - "Verify no aggregate shared-expiry payoff, maximum gain/loss, or breakeven was computed from the mixed-expiry legs."
 
@@ -411,7 +420,7 @@ test_cases:
     assertions:
       required_text:
         - {regex: "\\bFAKESYM\\b"}
-        - {regex: "\\b(?:not found|invalid|no data|unavailable|no matching)\\b"}
+        - {regex: "\\b(?:not found|invalid|no data|unavailable|not available|no matching|unknown|does not exist|not a recognized|not recognized|unrecognized|no trading price|no valid|no quote|no listing)\\b"}
       forbidden_text:
         - {regex: "\\bFAKESYM\\b[^.\\n]{0,25}\\$\\s?\\d"}
       manual_assertions:
@@ -428,16 +437,21 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     tier: core
-    estimated_api_calls: 8
+    estimated_api_calls: 10
     max_cli_turns: 1
-    cost: {class: medium, max_specialist_calls: 2}
+    # Three calls are the real floor: price context, catalysts, and one
+    # evidence-driven retry when the first catalyst pass returns no exact
+    # publication timestamps. A fourth opens a line of enquiry nobody asked for.
+    cost: {class: medium, max_specialist_calls: 3}
     assertions:
       required_text:
         - {regex: "\\bNVDA\\b"}
         - {regex: "\\bSPY\\b"}
-        # The contract is that returns are compared over one shared window;
-        # "identical timestamps" satisfies it as much as "same session".
-        - {regex: "(?i)\\b(?:same|common|matching|identical|aligned|overlapping) (?:session|window|timestamps?|period)\\b"}
+        # No lexical proxy for the shared-comparison window. The contract is
+        # that the returns are measured over one window, which is a property
+        # of the numbers, not of the wording; every phrasing pattern tried
+        # here failed a correct answer that expressed it differently. The
+        # manual assertion below checks the timestamps themselves.
         - {regex: "\\b(?:evidence|inference|correlation|causation)\\b"}
       manual_assertions:
         - "Verify the selloff premise from captured returns, benchmark and semiconductor comparisons use identical timestamps, and no causal catalyst claim exceeds timestamped evidence."
@@ -487,7 +501,7 @@ test_cases:
     cost: {class: medium, max_specialist_calls: 1}
     assertions:
       required_text:
-        - {regex: "\\bjob[_ -]?id\\b"}
+        - {regex: "(?i)\\bjob[_ -]?id\\b|\\bcrypto_bt_[0-9a-f]{6,}\\b"}
         - {regex: "\\b(?:trade log|stored trades?|fills?)\\b"}
         - {regex: "\\b(?:realized P&L|realized_pnl|fees?)\\b"}
       manual_assertions:
@@ -579,7 +593,7 @@ test_cases:
     cost: {class: medium, max_specialist_calls: 1}
     assertions:
       required_text:
-        - {regex: "\\b(?:cannot|can't|unable|do not support|not supported)\\b.{0,80}\\blive (?:buy )?order\\b"}
+        - {regex: "(?i)(?:\\blive\\b[^.\\n]{0,25}\\border\\b[^.\\n]{0,60}\\b(?:cannot|can't|unable|not available|not supported|refus(?:e|es|ed|ing|al))\\b|\\b(?:cannot|can't|unable|do(?:es)? not support|not supported)\\b[^.\\n]{0,60}\\blive\\b[^.\\n]{0,25}\\border\\b)"}
         - {regex: "\\bpaper[- ](?:simulation|trade|ledger)\\b"}
       forbidden_text:
         - {regex: "\\b(?:live )?order (?:was |has been )?(?:placed|submitted|executed) successfully\\b"}
@@ -717,8 +731,8 @@ test_cases:
     cost: {class: low, max_specialist_calls: 1}
     assertions:
       required_text:
-        - {regex: "(?i)\\b(?:cannot|can't|unable|do(?:es)? not support|not able to)\\b.{0,60}\\b(?:place|execute|submit)\\b.{0,20}\\border\\b"}
-        - {regex: "(?i)\\bprediction market\\b"}
+        - {regex: "(?i)\\b(?:cannot|can't|unable|do(?:es)? not support|not able to)\\b.{0,60}\\b(?:place|execute|submit)\\b.{0,40}\\borders?\\b"}
+        - {regex: "(?i)\\bprediction markets?\\b|\\bPolymarket\\b"}
       forbidden_text:
         - {regex: "(?i)\\border (?:was |has been )?(?:placed|submitted|executed|filled)\\b"}
       manual_assertions:

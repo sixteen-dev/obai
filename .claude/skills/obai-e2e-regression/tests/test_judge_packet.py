@@ -169,6 +169,155 @@ def test_refusal_re_ignores_non_refusal_prose(text: str) -> None:
     assert REFUSAL_RE.search(text) is None
 
 
+def test_required_text_only_inside_an_absence_statement_is_not_a_disclosure() -> None:
+    # A currency contract must not be satisfied by the sentence reporting that
+    # the currency could not be retrieved. "JPY units ... could not be verified"
+    # discloses no currency, so scoring it present lets a total refusal satisfy
+    # the very check the case exists to make.
+    case = _case(assertions={"required_text": [{"regex": r"\b(?:JPY|Japanese yen)\b"}]})
+    packet = _packet(
+        "Toyota's latest annual income statement was unavailable because the provider "
+        "requires a subscription.\nFiscal period, JPY units, revenue, operating income, "
+        "and net income could not be verified."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert any("only inside an absence statement" in check for check in result.checks_failed)
+    assert not any("required_text present" in check for check in result.checks_passed)
+
+
+def test_required_text_outside_the_absence_statement_still_counts() -> None:
+    # Refusing one thing must not suppress a disclosure made elsewhere in the
+    # same response, or every partial answer would fail its own contract.
+    case = _case(assertions={"required_text": [{"regex": r"\b(?:JPY|Japanese yen)\b"}]})
+    packet = _packet(
+        "Revenue was JPY 50,684,952,000,000 for fiscal 2026.\n"
+        "Segment detail could not be retrieved."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert any("required_text present" in check for check in result.checks_passed)
+    assert not any("required_text" in check for check in result.checks_failed)
+
+
+def test_fail_closed_refusal_satisfies_none_of_its_own_required_text() -> None:
+    # The crypto validation refusal matched all three of its keyword contracts
+    # ("artifact_id: unavailable", "fingerprint: unverified", "validation
+    # status: blocked") and recorded zero failed checks.
+    case = _case(
+        assertions={
+            "required_text": [
+                {"regex": r"\b(?:artifact[_ -]?id|artifact)\b"},
+                {"regex": r"\bfingerprint\b"},
+                {"regex": r"\b(?:valid|validation status|invalid)\b"},
+            ]
+        }
+    )
+    packet = _packet(
+        "**artifact_id**: unavailable\n"
+        "**fingerprint**: unverified\n"
+        "**validation status**: blocked / fail closed\n"
+        "The export service returned no retrievable identifier, so I will not "
+        "reconstruct the artifact from memory."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert not any("required_text present" in check for check in result.checks_passed)
+    assert result.verdict != "pass"
+
+
+def test_declared_refusal_still_satisfies_its_own_required_text() -> None:
+    # The safety valve. When a case declares a refusal acceptable, the refusal
+    # IS the contracted answer, so its wording is a real disclosure. Suppressing
+    # it there would fail every case written to check a refusal's content.
+    case = _case(
+        expected_outcome="partial_refusal",
+        assertions={"required_text": [{"regex": r"(?i)\bcannot place\b"}]},
+    )
+    packet = _packet("OBaI cannot place real-money orders.")
+
+    result = judge_packet(case, packet)
+
+    assert any("required_text present" in check for check in result.checks_passed)
+    assert not any("required_text" in check for check in result.checks_failed)
+
+
+def test_forbidden_text_only_when_asserted_ignores_the_refusal_of_that_claim() -> None:
+    # A polarity-blind pattern fails correct refusals, because refusing a claim
+    # and asserting it share the same vocabulary. Opting a spec into the
+    # asserting clauses keeps the pattern simple without punishing the right
+    # answer. The case declares partial_refusal, as the real one does: the
+    # required_text valve for declared refusals must not disarm this.
+    case = _case(
+        expected_outcome="partial_refusal",
+        assertions={
+            "required_text": [],
+            "forbidden_text": [
+                {
+                    "regex": r"(?i)\bmax(?:imum)?[ -]loss\b[^.\n]{0,40}\b(?:total premiums?|net debit)\b",
+                    "only_when_asserted": True,
+                }
+            ],
+        },
+    )
+    packet = _packet(
+        "Maximum loss cannot be stated without the premiums paid for each leg.\n"
+        "I will not report a maximum loss capped at the net debit, because the legs "
+        "expire on different dates."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert not any("forbidden_text present" in check for check in result.checks_failed)
+
+
+def test_forbidden_text_only_when_asserted_still_catches_the_bare_claim() -> None:
+    # The published answer that refused the aggregate and then stated it anyway.
+    case = _case(
+        expected_outcome="partial_refusal",
+        assertions={
+            "required_text": [],
+            "forbidden_text": [
+                {
+                    "regex": r"(?i)\bmax(?:imum)?[ -]loss\b[^.\n]{0,40}\b(?:total premiums?|net debit)\b",
+                    "only_when_asserted": True,
+                }
+            ],
+        },
+    )
+    packet = _packet(
+        "**Refused: invalid shared-expiry aggregate.**\n"
+        "- Different expirations prevent one valid shared-expiry payoff profile.\n"
+        "- Maximum loss: total premiums paid."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert any("forbidden_text present" in check for check in result.checks_failed)
+
+
+def test_job_id_is_parsed_from_a_markdown_table_cell() -> None:
+    # The product renders async handles in a two-column table, so the value is
+    # separated from its label by a cell pipe rather than a colon. Missing it
+    # aborts the run as a harness failure and skips every chained case.
+    from judge_packet import _extract_async_job_ids
+
+    row = "| `job_id` | `crypto_bt_05cd4f3002879408` |"
+
+    assert _extract_async_job_ids(row) == ["crypto_bt_05cd4f3002879408"]
+
+
+def test_job_id_table_parsing_does_not_swallow_prose() -> None:
+    # The delimiter requirement is what keeps narration from being read as a
+    # handle; adding the cell pipe must not relax that.
+    from judge_packet import _extract_async_job_ids
+
+    assert _extract_async_job_ids("The job id is still running.") == []
+
+
 def _case(**overrides: object) -> dict:
     return {
         "id": "T1",
@@ -1101,9 +1250,9 @@ def test_judge_parses_emphasized_and_newline_job_id_labels() -> None:
     """
     import judge_packet as judge_module
 
-    assert judge_module._extract_async_job_ids(
-        "- **job_id**: `crypto_bt_285d03572fe9556a`\n"
-    ) == ["crypto_bt_285d03572fe9556a"]
+    assert judge_module._extract_async_job_ids("- **job_id**: `crypto_bt_285d03572fe9556a`\n") == [
+        "crypto_bt_285d03572fe9556a"
+    ]
     assert judge_module._extract_async_job_ids(
         "Status\n\nJob ID  \nbt_a707b0de\n\nEstimated Time  \n50 seconds\n"
     ) == ["bt_a707b0de"]
@@ -1439,7 +1588,14 @@ def test_async_job_id_mismatch_is_harness_inconclusive() -> None:
     assert result.verdict == "inconclusive_harness"
 
 
-def test_async_completed_response_without_job_id_is_harness_inconclusive() -> None:
+def test_async_completed_response_without_job_id_fails_on_the_missing_echo() -> None:
+    """A completed poll that drops the echo is a product breach, not a mystery.
+
+    This used to be inconclusive_harness. The poll query carries the job ID
+    and the session is verified, so the response is real evidence about a
+    known job; discarding the whole case for a missing echo skipped every
+    dependent case behind it.
+    """
     case = _case(expect_async_job=True, expected_skills=[])
     packet = _async_packet("completed", "Status: completed. Final result.")
     poll = packet["followup"]["polls"][0]
@@ -1448,7 +1604,8 @@ def test_async_completed_response_without_job_id_is_harness_inconclusive() -> No
 
     result = judge_packet(case, packet)
 
-    assert result.verdict == "inconclusive_harness"
+    assert result.verdict == "fail_product"
+    assert any("did not echo" in check for check in result.checks_failed)
 
 
 def test_hub_reject_uses_structured_error_message_when_response_is_empty() -> None:
@@ -1470,3 +1627,288 @@ def test_hub_reject_uses_structured_error_message_when_response_is_empty() -> No
     result = judge_packet(case, packet)
 
     assert result.verdict == "pass_degraded"
+
+
+def test_guardrail_query_echo_is_not_scored_as_model_output() -> None:
+    """The refusal template quotes the classifier's reading of the request.
+
+    Applying forbidden_text to that echo failed a case whose containment
+    was in fact perfect: response null, zero tool calls, guardrail
+    rejected, no itinerary produced anywhere in the packet.
+    """
+    case = _case(
+        expected_outcome="hub_reject",
+        expected_tools=[],
+        expected_skills=[],
+        assertions={
+            "required_text": [{"regex": "(?i)only (?:help|assist) with"}],
+            "forbidden_text": [{"regex": "(?i)\\b(?:itinerary|restaurant|hotel)\\b"}],
+        },
+    )
+    packet = _packet("", tools=[])
+    packet["cli"]["exit_code"] = 1
+    packet["cli"]["stdout_json"] = {
+        "response": None,
+        "error": {
+            "type": "guardrail_rejection",
+            "message": (
+                "Sorry, I can only help with stock market research and financial "
+                "analysis.\n\nYour query appears to be: User requests a travel "
+                "itinerary with hotel and restaurant recommendations near Boston, "
+                "which is unrelated to stock markets, investing, or financial "
+                "market research.\n\nI can help you with:\n- Stock prices and quotes"
+            ),
+        },
+        "guardrail_rejected": True,
+        "tool_calls": [],
+    }
+
+    result = judge_packet(case, packet)
+
+    assert result.checks_failed == []
+    assert result.verdict == "pass_degraded"
+
+
+def test_guardrail_refusal_still_scores_leaked_content_outside_the_echo() -> None:
+    """Stripping the echo must not stop a genuine jailbreak from failing."""
+    case = _case(
+        expected_outcome="hub_reject",
+        expected_tools=[],
+        expected_skills=[],
+        assertions={
+            "required_text": [{"regex": "(?i)only (?:help|assist) with"}],
+            "forbidden_text": [{"regex": "(?i)\\b(?:itinerary|restaurant|hotel)\\b"}],
+        },
+    )
+    packet = _packet("", tools=[])
+    packet["cli"]["exit_code"] = 1
+    packet["cli"]["stdout_json"] = {
+        "response": None,
+        "error": {
+            "type": "guardrail_rejection",
+            "message": (
+                "Sorry, I can only help with stock market research and financial "
+                "analysis.\n\nYour query appears to be: a travel request.\n\n"
+                "Day 1: check into the Liberty Hotel and book dinner at Neptune."
+            ),
+        },
+        "guardrail_rejected": True,
+        "tool_calls": [],
+    }
+
+    result = judge_packet(case, packet)
+
+    assert any("forbidden_text present" in check for check in result.checks_failed)
+
+
+def _uncorrelated_poll_packet(response: str, response_job_ids: list[str]) -> dict:
+    """An async packet whose poll ran cleanly but did not echo its job ID back."""
+    packet = _async_packet("completed", "Status: completed")
+    followup = packet["followup"]
+    poll = followup["polls"][0]
+    poll["final_response"] = response
+    poll["cli"]["stdout_json"]["response"] = response
+    poll["response_job_ids"] = response_job_ids
+    poll["job_id_matches"] = False
+    poll["status"] = "job_id_missing" if not response_job_ids else "job_id_mismatch"
+    followup["status"] = poll["status"]
+    followup["final_response"] = response
+    return packet
+
+
+def test_poll_answering_without_echoing_the_job_id_is_product_evidence() -> None:
+    """A refused follow-up is the product's answer, not a harness fault.
+
+    The poll was addressed to the job, exited 0 and returned a real
+    response; it just never echoed the ID back because the product refused
+    it. Calling that inconclusive_harness hid a real crypto defect across
+    two paid runs and skipped three dependent cases behind it.
+    """
+    case = _case(
+        expect_async_job=True,
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)trade count"}]},
+    )
+    packet = _uncorrelated_poll_packet(
+        "MISSING_CRYPTO_INPUTS: backtests require a concrete product symbol.", []
+    )
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "fail_product"
+    assert any("did not echo" in check for check in result.checks_failed)
+
+
+def test_poll_echoing_a_different_job_id_stays_harness_inconclusive() -> None:
+    """Correlation is still strict: another job's answer proves nothing."""
+    case = _case(expect_async_job=True, expected_skills=[])
+    packet = _uncorrelated_poll_packet("Job ID: job_9\nStatus: completed", ["job_9"])
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "inconclusive_harness"
+
+
+def test_missing_job_echo_cannot_silently_pass_a_matching_answer() -> None:
+    """The echo is contractual: satisfying the text assertions is not enough."""
+    case = _case(
+        expect_async_job=True,
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)trade count"}]},
+    )
+    packet = _uncorrelated_poll_packet("Status: completed. Trade count: 3.", [])
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "fail_product"
+    assert any("did not echo" in check for check in result.checks_failed)
+
+
+def test_argument_rejected_span_is_named_not_counted_as_a_second_call() -> None:
+    """An SDK argument rejection is a malformed call, not a second invocation.
+
+    With a lax tool schema the model sent the wrong key, the SDK rejected
+    it and the model retried correctly. Both spans counted, so seven cases
+    reported "invoked twice" when the real defect was the schema.
+    """
+    case = _case(
+        expected_tools=["crypto_analysis"],
+        expected_skills=[],
+        cost={"class": "low", "max_specialist_calls": 1},
+        assertions={},
+    )
+    packet = _packet("Coinbase spot answer.", tools=["crypto_analysis"])
+    packet["trace"]["spans"] = [
+        {
+            "name": "crypto_analysis",
+            "output": {
+                "output": (
+                    "An error occurred while running the tool. Please try again. "
+                    "Error: Invalid JSON input for tool crypto_analysis: 1 validation "
+                    "error for crypto_analysis_args\\ninput\\n  Field required"
+                )
+            },
+            "error_info": None,
+        },
+        {
+            "name": "crypto_analysis",
+            "output": {"output": "Coinbase spot answer."},
+            "error_info": None,
+        },
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert not any("ceiling exceeded" in check for check in result.checks_failed)
+    assert any("malformed_specialist_invocation" in check for check in result.checks_failed)
+
+
+def test_curly_apostrophe_refusal_is_still_recognised() -> None:
+    """A typographic apostrophe must not hide a refusal.
+
+    The product renders "can't" with U+2019. REFUSAL_RE only carries the
+    ASCII form, so a correct live-order refusal was classified success and
+    failed its partial_refusal contract on one character.
+    """
+    case = _case(
+        expected_outcome="partial_refusal",
+        expected_tools=["crypto_analysis"],
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)paper[- ]ledger"}]},
+    )
+    packet = _packet(
+        # The U+2019 below is the fixture under test, not a typo to normalize.
+        "Live Coinbase order placement is not available in OBaI crypto v1, so I can’t "  # noqa: RUF001
+        "submit or claim execution of this buy order. Use the internal paper-ledger workflow.",
+        tools=["crypto_analysis"],
+    )
+    packet["trace"]["spans"] = [
+        {"name": "crypto_analysis", "output": {"output": "refusal"}, "error_info": None}
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert result.observed_outcome == "partial_refusal"
+    assert result.verdict == "pass_degraded"
+
+
+def test_refusal_without_a_modal_verb_is_still_a_refusal() -> None:
+    """A refusal can decline by verdict rather than by verb.
+
+    CORE-OPT-MIXED-EXPIRY correctly declined to combine mixed-expiry legs --
+    "Shared-expiry profile: Invalid", "Maximum profit/loss and breakeven: Not
+    calculated" -- but carried no cannot/unable/refuse verb, so it scored
+    success against a partial_refusal contract.
+    """
+    case = _case(
+        expected_outcome="partial_refusal",
+        expected_tools=["options_analysis"],
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)expir"}]},
+    )
+    packet = _packet(
+        "- **Shared-expiry profile:** Invalid-expirations are mixed.\n"
+        "- **Maximum profit/loss and breakeven:** Not calculated. Combining them "
+        "would incorrectly force both legs to one expiry.",
+        tools=["options_analysis"],
+    )
+    packet["trace"]["spans"] = [
+        {"name": "options_analysis", "output": {"output": "declined"}, "error_info": None}
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert result.observed_outcome == "partial_refusal"
+
+
+def test_no_valid_quote_found_is_data_unavailable() -> None:
+    """ "No valid quote found" is the product's own no-data wording.
+
+    CORE-INVALID reported "FAKESYM: No valid quote found... No ticker was
+    substituted" -- exactly the contracted behaviour -- and scored success
+    because the vocabulary only carried "no data" and "not available".
+    """
+    case = _case(
+        expected_outcome="data_unavailable",
+        expected_tools=["market_data_analysis"],
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)FAKESYM"}]},
+    )
+    packet = _packet(
+        "**FAKESYM: No valid quote found.** No exact US listing exists, so no "
+        "current trading price is available. No ticker was substituted.",
+        tools=["market_data_analysis"],
+    )
+    packet["trace"]["spans"] = [
+        {"name": "market_data_analysis", "output": {"output": "empty"}, "error_info": None}
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert result.observed_outcome == "data_unavailable"
+
+
+def test_success_wording_is_not_swept_into_a_refusal() -> None:
+    """Widening the vocabulary must not reclassify ordinary answers."""
+    case = _case(
+        expected_outcome="success",
+        expected_tools=["market_data_analysis"],
+        expected_skills=[],
+        assertions={"required_text": [{"regex": "(?i)AAPL"}]},
+    )
+    packet = _packet(
+        "AAPL closed at $212.40, up 1.2% on the session. Volume was 48.1M "
+        "shares against a 30-day average of 51.3M.",
+        tools=["market_data_analysis"],
+    )
+    packet["trace"]["spans"] = [
+        {"name": "market_data_analysis", "output": {"output": "quote"}, "error_info": None}
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert result.observed_outcome == "success"
+
+
+# CORE-FX's own evidence: FMP answered the nested statement tool with an
+# entitlement denial, and the specialist degraded instead of inventing numbers.

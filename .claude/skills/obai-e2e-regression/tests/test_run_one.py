@@ -1434,3 +1434,60 @@ def test_fetch_curated_trace_passes_selected_opik_config(
     )
 
     assert observed[-4:] == ["--url", "http://custom-opik", "--project", "custom-project"]
+
+
+def test_build_packet_treats_a_missing_job_echo_as_judgeable_evidence() -> None:
+    """A poll that ran and answered is product evidence, not a harness fault.
+
+    Exiting 2 here made the case inconclusive_harness and skipped every
+    dependent case behind it, twice, while the product was in fact refusing
+    the follow-up.
+    """
+    packet = run_one.build_packet(
+        case={"id": "T1", "query": "query", "expect_async_job": True},
+        cli=_cli_result("- **job_id**: `crypto_bt_7197be75807dc23e`"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup={
+            "job_id": "crypto_bt_7197be75807dc23e",
+            "status": "job_id_missing",
+            "timed_out": False,
+            "poll_limit_reached": False,
+            "evidence_complete": True,
+            "polls": [{"status": "job_id_missing", "response_job_ids": []}],
+        },
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "completed"
+
+
+def test_build_packet_still_faults_on_a_broken_poll_session() -> None:
+    """Correlation faults remain harness failures; only the echo moved."""
+    packet = run_one.build_packet(
+        case={"id": "T1", "query": "query", "expect_async_job": True},
+        cli=_cli_result("- **job_id**: `crypto_bt_7197be75807dc23e`"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup={
+            "job_id": "crypto_bt_7197be75807dc23e",
+            "status": "session_id_mismatch",
+            "timed_out": False,
+            "poll_limit_reached": False,
+            "evidence_complete": True,
+            "polls": [{"status": "session_id_mismatch"}],
+        },
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "async_followup_failed"

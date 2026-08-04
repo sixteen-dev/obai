@@ -201,7 +201,12 @@ def _validate_assertions(case: dict[str, Any], issues: list[LintIssue], case_id:
                         spec_field,
                     )
                     continue
-                unknown = set(spec) - {"text", "regex", "case_sensitive"}
+                allowed = {"text", "regex", "case_sensitive"}
+                if field == "forbidden_text":
+                    # Meaningful only here: required_text is already scored
+                    # against the asserting clauses.
+                    allowed.add("only_when_asserted")
+                unknown = set(spec) - allowed
                 text_value = spec.get("text")
                 regex_value = spec.get("regex")
                 has_one_pattern = (isinstance(text_value, str) and not regex_value) or (
@@ -211,6 +216,10 @@ def _validate_assertions(case: dict[str, Any], issues: list[LintIssue], case_id:
                     unknown
                     or not has_one_pattern
                     or ("case_sensitive" in spec and not isinstance(spec["case_sensitive"], bool))
+                    or (
+                        "only_when_asserted" in spec
+                        and not isinstance(spec["only_when_asserted"], bool)
+                    )
                 ):
                     _issue(
                         issues,

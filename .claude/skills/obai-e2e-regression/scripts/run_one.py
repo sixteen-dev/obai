@@ -81,6 +81,11 @@ ASYNC_HARNESS_FAILURE_STATUSES = {
     "session_id_missing",
     "session_id_mismatch",
 }
+# Every status above ends the poll loop, but only these mean the harness could
+# not obtain trustworthy evidence. A poll that ran, exited 0 and answered
+# without echoing its job ID back is the product's behaviour, and the judge
+# scores it against the case contract instead of discarding the run.
+ASYNC_FOLLOWUP_FAULT_STATUSES = ASYNC_HARNESS_FAILURE_STATUSES - {"job_id_missing"}
 ASYNC_STATUS_RE = re.compile(
     r"\bstatus\b[^a-z0-9_]{0,20}"
     r"(queued|running|pending|in[_ -]?progress|completed|failed|cancelled|expired|not[_ -]?found)\b",
@@ -1204,7 +1209,7 @@ def build_packet(
         harness_status = "async_followup_failed"
     elif followup and (
         followup.get("timed_out")
-        or followup.get("status") in ASYNC_HARNESS_FAILURE_STATUSES
+        or followup.get("status") in ASYNC_FOLLOWUP_FAULT_STATUSES
         or followup.get("evidence_complete") is False
     ):
         harness_status = "async_followup_failed"

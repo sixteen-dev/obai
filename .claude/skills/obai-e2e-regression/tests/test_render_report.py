@@ -207,7 +207,11 @@ def test_render_html_populates_expected_from_structured(tmp_path: Path) -> None:
     }
 
     out = render_report.render(
-        results, cases, render_report.build_details(results, cases), "2026-07-16T00:00:00Z", tmp_path
+        results,
+        cases,
+        render_report.build_details(results, cases),
+        "2026-07-16T00:00:00Z",
+        tmp_path,
     )
 
     assert "screener_lookup → market_data_analysis" in out

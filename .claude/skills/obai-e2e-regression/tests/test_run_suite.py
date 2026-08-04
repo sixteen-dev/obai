@@ -865,10 +865,7 @@ def test_resume_noncompleted_packet_aborts_before_next_paid_case(
     assert resumed["attempted_count"] == 0
     assert resumed["resumed_count"] == 1
     assert resumed["missing_case_ids"] == ["C2"]
-    assert (
-        "resumed case C1 ended with harness status 'session_mismatch'"
-        in resumed["abort_reason"]
-    )
+    assert "resumed case C1 ended with harness status 'session_mismatch'" in resumed["abort_reason"]
 
 
 def test_resume_usage_over_limit_aborts_before_next_paid_case(
@@ -1191,6 +1188,60 @@ def test_execute_manifest_binds_selected_helper_paths_and_bytes(tmp_path: Path) 
             run_dir=run_dir,
             run_one_path=run_one_path,
             preflight_path=preflight_path,
+        )
+
+
+def test_execute_manifest_binds_the_scoring_contract(tmp_path: Path) -> None:
+    """judge_packet.py decides every deterministic verdict, so name it.
+
+    It was reachable only through the whole-tree runtime fingerprint, which
+    proves *something* under scripts/ moved but not what. Editing it after a
+    run was finalized surfaced as "resume deterministic judgment mismatch
+    for CORE-CRYPTO-BOUNDARY" -- a case name, with no hint that the scoring
+    contract itself had changed underneath the stored judgments.
+    """
+    plan = choose_cases([_case("C1")])
+    run_dir = tmp_path / "run"
+    snapshot = run_dir / "cases.snapshot.yaml"
+    write_immutable_json(snapshot, {"suite": "v1"})
+
+    manifest = build_manifest(
+        plan,
+        cases_path=tmp_path / "cases.yaml",
+        cases_bytes=snapshot.read_bytes(),
+        cases_snapshot_path=snapshot,
+        mode="execute",
+    )
+
+    binding = manifest["runtime_helpers"]["judge_packet"]
+    assert binding["path"] == str(run_suite.DEFAULT_JUDGE_PACKET.resolve())
+    assert (
+        binding["sha256"] == hashlib.sha256(run_suite.DEFAULT_JUDGE_PACKET.read_bytes()).hexdigest()
+    )
+
+
+def test_scoring_contract_edit_is_named_in_the_resume_error(tmp_path: Path) -> None:
+    """A changed judge must fail the recheck by name, not by symptom."""
+    plan = choose_cases([_case("C1")])
+    run_dir = tmp_path / "run"
+    snapshot = run_dir / "cases.snapshot.yaml"
+    write_immutable_json(snapshot, {"suite": "v1"})
+    cases_bytes = snapshot.read_bytes()
+    manifest = build_manifest(
+        plan,
+        cases_path=tmp_path / "cases.yaml",
+        cases_bytes=cases_bytes,
+        cases_snapshot_path=snapshot,
+        mode="execute",
+    )
+    manifest["runtime_helpers"]["judge_packet"]["sha256"] = "0" * 64
+
+    with pytest.raises(PlanError, match=r"helper path/content changed.*: judge_packet$"):
+        validate_resume_manifest(
+            manifest,
+            plan,
+            cases_bytes=cases_bytes,
+            run_dir=run_dir,
         )
 
 
