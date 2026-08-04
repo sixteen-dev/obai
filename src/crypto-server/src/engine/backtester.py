@@ -20,6 +20,24 @@ DEFAULT_MAX_POSITION_PCT = 1.0
 DEFAULT_MAX_BAR_PARTICIPATION_PCT = 5.0
 POSITION_EPSILON = 1e-12
 
+# Every key each config accepts, including the aliases resolved below. An
+# unrecognized key used to fall through to a default, so a caller that
+# misspelled one ran a backtest it never asked for and was told it
+# succeeded. Callers get the accepted set back instead.
+STRATEGY_SPEC_KEYS = frozenset({"template", "parameters"})
+EXECUTION_CONFIG_KEYS = frozenset(
+    {
+        "initial_capital_usd",
+        "taker_fee_bps",
+        "spread_bps",
+        "slippage_bps",
+        "participation_slippage_bps_per_pct",
+        "max_position_pct",
+        "position_fraction",
+        "max_bar_participation_pct",
+    }
+)
+
 
 @dataclass(frozen=True)
 class Fill:
@@ -87,6 +105,8 @@ def run_bar_backtest(
     if len(candles) < MIN_BACKTEST_CANDLES:
         msg = "At least five candles are required for a backtest"
         raise ValueError(msg)
+    reject_unknown_keys(strategy_spec, STRATEGY_SPEC_KEYS, config_name="strategy_spec")
+    reject_unknown_keys(execution_config, EXECUTION_CONFIG_KEYS, config_name="execution_config")
 
     template = str(strategy_spec.get("template") or "spot_trend_follow")
     parameters = strategy_spec.get("parameters") or {}
@@ -118,6 +138,31 @@ def run_bar_backtest(
         },
         trades=state.trades,
     )
+
+
+def reject_unknown_keys(
+    config: dict[str, Any], accepted: frozenset[str], *, config_name: str
+) -> None:
+    """Fail loud on keys the engine would otherwise silently ignore.
+
+    Args:
+        config: Caller-supplied config dict.
+        accepted: Every key this config honours.
+        config_name: Name used in the error, matching the tool argument.
+
+    Raises:
+        ValueError: If ``config`` carries any key outside ``accepted``. The
+            message names the offending keys and the full accepted set so the
+            caller can correct the call rather than guess again.
+
+    """
+    unknown = sorted(set(config) - accepted)
+    if unknown:
+        msg = (
+            f"{config_name} has unsupported key(s): {', '.join(unknown)}. "
+            f"Accepted keys: {', '.join(sorted(accepted))}."
+        )
+        raise ValueError(msg)
 
 
 def _execution_params(execution_config: dict[str, Any]) -> ExecutionParams:

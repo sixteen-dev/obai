@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -431,3 +433,352 @@ def test_artifact_fingerprint_blocks_load_bearing_mutation() -> None:
     assert validation["valid"] is False
     assert "venues must be ['coinbase'] for v1" in validation["errors"]
     assert "fingerprint does not match load-bearing fields" in validation["errors"]
+
+
+def test_unknown_execution_config_key_is_rejected_not_defaulted() -> None:
+    """A misspelled key silently ran the wrong backtest.
+
+    A live handoff sent ``initial_capital: 60000``; the engine reads
+    ``initial_capital_usd`` and fell back to its $100,000 default, so every
+    dollar metric described an account the caller never asked for.
+    """
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    with pytest.raises(ValueError, match="initial_capital"):
+        run_bar_backtest(
+            candles,
+            strategy_spec={"template": "spot_trend_follow", "parameters": {}},
+            execution_config={"initial_capital": 60_000},
+        )
+
+
+def test_unknown_strategy_spec_key_is_rejected_not_defaulted() -> None:
+    """The same handoff sent its rules under ``signal``, which was ignored.
+
+    The engine reads ``parameters``, so it ran template defaults and echoed
+    ``parameters: {}`` while the caller believed a 50/200 crossover ran.
+    """
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    with pytest.raises(ValueError, match="signal"):
+        run_bar_backtest(
+            candles,
+            strategy_spec={
+                "template": "spot_trend_follow",
+                "signal": {"fast_sma": 50, "slow_sma": 200},
+            },
+            execution_config={"initial_capital_usd": 60_000},
+        )
+
+
+def test_coverage_reports_the_window_it_actually_evaluated() -> None:
+    """Coverage echoed the request back, hiding a truncated assessment.
+
+    Requesting through a future close clamps the evaluated window to the
+    last closed bar, but ``start``/``end`` still echoed the request, so
+    callers could not tell the two apart.
+    """
+    now = datetime(2026, 1, 6, 12, tzinfo=UTC)
+    requested_end = datetime(2026, 1, 8, tzinfo=UTC)
+    candles = [_candle(idx) for idx in range(5)]
+
+    coverage = compute_coverage(
+        candles,
+        requested_start=datetime(2026, 1, 1, tzinfo=UTC),
+        requested_end=requested_end,
+        granularity="ONE_DAY",
+        now=now,
+    )
+
+    assert coverage.end == requested_end.isoformat()
+    assert coverage.evaluated_end < coverage.end
+
+
+def test_future_requested_window_blocks_execution_grade() -> None:
+    """Fail-closed was unenforceable: a future end could never report missing.
+
+    ``expected_intervals`` is clamped to the last closed bar, so a window
+    extending past available data reported 0 missing and execution_grade
+    true. The caller asked to fail closed and got a green light instead.
+    """
+    now = datetime(2026, 1, 6, 12, tzinfo=UTC)
+    candles = [_candle(idx) for idx in range(5)]
+    coverage = compute_coverage(
+        candles,
+        requested_start=datetime(2026, 1, 1, tzinfo=UTC),
+        requested_end=datetime(2026, 1, 8, tzinfo=UTC),
+        granularity="ONE_DAY",
+        now=now,
+    )
+
+    quality = build_candle_source_quality(
+        product_id="BTC-USD",
+        candles=candles,
+        coverage=coverage,
+        execution_grade_required=True,
+        max_missing_pct_execution=0.01,
+        fetch_failed=False,
+    )
+
+    assert quality.blocking_quality_warning is True
+    assert quality.execution_grade is False
+    assert "requested_window_not_yet_closed" in quality.warnings
+
+
+def test_closed_requested_window_stays_execution_grade() -> None:
+    """The block must not fire when the request ends at a closed bar."""
+    now = datetime(2026, 1, 6, 12, tzinfo=UTC)
+    candles = [_candle(idx) for idx in range(5)]
+    coverage = compute_coverage(
+        candles,
+        requested_start=datetime(2026, 1, 1, tzinfo=UTC),
+        requested_end=datetime(2026, 1, 6, tzinfo=UTC),
+        granularity="ONE_DAY",
+        now=now,
+    )
+
+    quality = build_candle_source_quality(
+        product_id="BTC-USD",
+        candles=candles,
+        coverage=coverage,
+        execution_grade_required=True,
+        max_missing_pct_execution=0.01,
+        fetch_failed=False,
+    )
+
+    assert quality.blocking_quality_warning is False
+    assert quality.execution_grade is True
+
+
+@pytest.mark.asyncio
+async def test_backtest_through_future_close_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The trace scenario end to end: a window past the last closed bar.
+
+    Requesting through tomorrow's UTC close previously returned
+    ``quality_status: execution_grade`` with ``missing_pct: 0.0``, because
+    the unclosed bars were dropped from ``expected`` as well as from
+    ``returned``. The caller asked to fail closed and got a green light.
+    """
+    now = datetime.now(UTC)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = today - timedelta(days=10)
+    tomorrow_close = today + timedelta(days=2)
+    closed = [
+        Candle(
+            "BTC-USD",
+            start + timedelta(days=idx),
+            low=99.0,
+            high=101.0,
+            open=100.0,
+            close=100.0 + idx,
+            volume=50.0,
+        )
+        for idx in range(10)
+    ]
+
+    class _FakeCoinbase:
+        """Serves only bars that have actually closed."""
+
+        async def get_historical_candles(self, product_id: str, **_kwargs: object) -> list[Candle]:
+            del product_id
+            return closed
+
+    store = CryptoStore(str(tmp_path / "crypto.duckdb"))
+    await store.upsert_candles(closed, "ONE_DAY")
+    monkeypatch.setattr(server._state, "store", store)
+    monkeypatch.setattr(server._state, "coinbase", _FakeCoinbase())
+    monkeypatch.setattr(server._state, "settings", Settings())
+    try:
+        response = await server.crypto_backtest_run_strategy(
+            strategy_spec=json.dumps({"template": "spot_trend_follow", "parameters": {}}),
+            data_config=json.dumps(
+                {
+                    "product_id": "BTC-USD",
+                    "timeframe": "1d",
+                    "start": start.isoformat(),
+                    "end": tomorrow_close.isoformat(),
+                }
+            ),
+            execution_config=json.dumps({"initial_capital_usd": 60_000}),
+        )
+    finally:
+        store.close()
+
+    assert response["isError"] is True
+    assert "incomplete" in response["error"].lower()
+    assert response["source_quality"]["blocking_quality_warning"] is True
+    assert "requested_window_not_yet_closed" in response["source_quality"]["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_backtest_rejects_unread_fail_closed_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Flags the server never read must not be silently accepted.
+
+    ``require_complete_coverage`` and ``fail_closed`` appeared nowhere in the
+    server, so a caller believed it had opted into a guarantee that was never
+    enforced. Coverage is now always fail-closed, and the flags are refused.
+    """
+    monkeypatch.setattr(server._state, "store", CryptoStore(str(tmp_path / "crypto.duckdb")))
+    monkeypatch.setattr(server._state, "settings", Settings())
+
+    response = await server.crypto_backtest_run_strategy(
+        strategy_spec=json.dumps({"template": "spot_trend_follow"}),
+        data_config=json.dumps(
+            {
+                "product_id": "BTC-USD",
+                "timeframe": "1d",
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-10T00:00:00Z",
+                "require_complete_coverage": True,
+                "fail_closed": True,
+            }
+        ),
+        execution_config=json.dumps({"initial_capital_usd": 60_000}),
+    )
+
+    assert response["isError"] is True
+    assert "fail_closed" in response["error"]
+    assert "require_complete_coverage" in response["error"]
+
+
+def _sample_artifact() -> dict[str, Any]:
+    """Build a valid exported artifact for storage and retrieval tests."""
+    return export_artifact(
+        job_id="crypto_bt_test",
+        strategy_spec={"template": "spot_trend_follow", "parameters": {"fast_window": 2}},
+        risk_config={"max_position_pct": 10},
+        execution_profile={"paper_backend": "internal_coinbase_paper_ledger"},
+        backtest_result={
+            "data_config": {
+                "product_id": "BTC-USD",
+                "timeframe": "1d",
+                "start": "2026-01-01T00:00:00+00:00",
+                "end": "2026-01-10T00:00:00+00:00",
+            },
+            "quality_status": "execution_grade",
+            "source_quality_fingerprint": "abc123",
+        },
+    )
+
+
+async def test_store_reads_back_exported_artifact(tmp_path: Path) -> None:
+    """Exported artifacts must be retrievable.
+
+    The ``artifacts`` table was write-only — no SELECT existed anywhere — so a
+    validation turn could never load what an export turn had produced.
+    """
+    store = CryptoStore(str(tmp_path / "crypto.duckdb"))
+    artifact = _sample_artifact()
+    await store.store_artifact(artifact["fingerprint"], artifact)
+
+    stored = await store.get_artifact(artifact["fingerprint"])
+
+    assert stored is not None
+    assert stored["fingerprint"] == artifact["fingerprint"]
+    assert stored["artifact"] == artifact
+    assert await store.get_artifact("no-such-fingerprint") is None
+
+
+def test_validate_artifact_binds_to_external_storage_key() -> None:
+    """A fingerprint carried inside the payload cannot certify the payload.
+
+    ``validate_artifact`` recomputes the fingerprint from the same dict that
+    carries it, so a self-consistent artifact always validates — including one
+    whose risk limits were swapped. Binding to the key the row was filed under
+    is what makes retrieval validation falsifiable.
+    """
+    artifact = _sample_artifact()
+    assert validate_artifact(artifact, storage_key=artifact["fingerprint"])["valid"] is True
+
+    tampered = {**artifact, "risk": {"max_position_pct": 99}}
+    tampered["fingerprint"] = artifact_fingerprint(tampered)
+
+    assert validate_artifact(tampered)["valid"] is True
+
+    stale = validate_artifact(tampered, storage_key=artifact["fingerprint"])
+    assert stale["valid"] is False
+    assert "fingerprint does not match storage key" in stale["errors"]
+
+
+async def test_export_returns_artifact_id_that_get_artifact_resolves(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The export -> validate handoff needs a named, resolvable identifier."""
+    store = CryptoStore(str(tmp_path / "crypto.duckdb"))
+    monkeypatch.setattr(server._state, "store", store)
+    monkeypatch.setattr(server._state, "settings", Settings())
+    await store.store_job(
+        "crypto_bt_test",
+        status="completed",
+        result={
+            "data_config": {
+                "product_id": "BTC-USD",
+                "timeframe": "1d",
+                "start": "2026-01-01T00:00:00+00:00",
+                "end": "2026-01-10T00:00:00+00:00",
+            },
+            "quality_status": "execution_grade",
+            "source_quality_fingerprint": "abc123",
+            "source_quality": {"blocking_quality_warning": None},
+        },
+    )
+
+    exported = await server.crypto_strategy_export_artifact(
+        job_id="crypto_bt_test",
+        strategy_spec=json.dumps(
+            {"template": "spot_trend_follow", "parameters": {"fast_window": 2}}
+        ),
+        risk_config=json.dumps({"max_position_pct": 10}),
+        execution_profile=json.dumps({"paper_backend": "internal_coinbase_paper_ledger"}),
+    )
+
+    assert exported["artifact_id"] == exported["artifact"]["fingerprint"]
+
+    fetched = await server.crypto_strategy_get_artifact(exported["artifact_id"])
+
+    assert fetched["artifact"] == exported["artifact"]
+    assert fetched["validation"]["valid"] is True
+    assert (await server.crypto_strategy_get_artifact("no-such-fingerprint"))["isError"] is True
+
+
+def test_displayed_identity_is_covered_by_the_fingerprint() -> None:
+    """A stored artifact must not name one product while describing another.
+
+    ``strategy_id`` and ``human_name`` are what a specialist surfaces to the
+    user, so leaving them outside the fingerprint let a row display "ETH-USD"
+    while its load-bearing ``symbols`` said BTC-USD, and still validate.
+    """
+    artifact = _sample_artifact()
+
+    for field, value in (
+        ("strategy_id", "eth_usd_totally_different_v1"),
+        ("human_name", "ETH-USD Coinbase Spot Strategy"),
+        ("market", "equity"),
+        ("version", "9.9"),
+    ):
+        mutated = {**artifact, field: value}
+        assert validate_artifact(mutated)["valid"] is False, field
+
+
+async def test_unbound_validation_declares_its_own_scope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Validating a loose payload proves internal consistency only, and says so."""
+    monkeypatch.setattr(server._state, "store", CryptoStore(str(tmp_path / "crypto.duckdb")))
+    monkeypatch.setattr(server._state, "settings", Settings())
+    artifact = _sample_artifact()
+
+    loose = await server.crypto_strategy_validate_artifact(json.dumps(artifact))
+    bound = await server.crypto_strategy_validate_artifact(
+        json.dumps(artifact), artifact_id="not-the-key"
+    )
+
+    assert loose["scope"] == "internal_consistency_only"
+    assert loose["valid"] is True
+    assert bound["scope"] == "storage_bound"
+    assert bound["valid"] is False
+    assert "fingerprint does not match storage key" in bound["errors"]
