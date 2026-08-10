@@ -69,7 +69,10 @@ from preflight import (  # noqa: E402
 from judge_packet import ASYNC_JOB_ID_RE  # noqa: E402
 from resolve_trace import TraceLookupError, find_trace_by_marker  # noqa: E402
 
-CACHE_SCHEMA_VERSION = 3
+# 4: bound ~/.obai/settings.json (hub model + reasoning effort) into the
+# runtime source tree. Fingerprints minted under 3 predate that binding and
+# cannot attest which hub ran, so they must not be reused.
+CACHE_SCHEMA_VERSION = 4
 MARKER_TEMPLATE = "[OBaI regression correlation: {marker}. Do not repeat this marker.]"
 ASYNC_MAX_POLLS = 2
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled", "expired", "not_found"}
@@ -449,6 +452,13 @@ def _hash_file(path: Path) -> str | None:
 
 
 def _hash_tree(paths: list[Path], *, root: Path) -> str:
+    """Hash named files and source trees into one order-independent digest.
+
+    A named path that does not exist contributes nothing, so an optional
+    config file that is absent hashes the same on every machine. An empty
+    file is not the same input: it still contributes its path marker, so
+    creating one changes the digest.
+    """
     digest = hashlib.sha256()
     files: list[Path] = []
     source_suffixes = {
@@ -557,7 +567,16 @@ def runtime_environment_binding() -> dict[str, dict[str, str]]:
 
 
 def runtime_source_paths(repo_root: Path) -> list[Path]:
-    """Return source/config inputs shared by manifest and per-case fingerprints."""
+    """Return source/config inputs shared by manifest and per-case fingerprints.
+
+    ``~/.obai/settings.json`` carries the user-chosen hub model and reasoning
+    effort, which the web UI and ``obai config`` write without touching the
+    environment. It is bound here so a hub swap cannot produce a byte-identical
+    fingerprint and serve a cached result for a configuration that never ran.
+    An absent file — the normal state on a fresh machine — is skipped by
+    ``_hash_tree`` and is distinct from an empty one, which still folds in its
+    path marker.
+    """
     return [
         repo_root / "src",
         repo_root / "skills",
@@ -567,6 +586,7 @@ def runtime_source_paths(repo_root: Path) -> list[Path]:
         SCRIPT_DIR,
         Path.home() / ".obai" / ".env",
         Path.home() / ".obai" / "preferences.json",
+        Path.home() / ".obai" / "settings.json",
     ]
 
 

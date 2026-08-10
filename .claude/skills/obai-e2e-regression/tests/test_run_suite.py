@@ -1292,6 +1292,24 @@ def test_runtime_fingerprint_binds_preferences_file(
     assert run_suite._runtime_fingerprint(bind_credential=False) != first
 
 
+def test_runtime_fingerprint_binds_hub_settings_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A hub model or effort swap cannot resume against a manifest that predates it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = tmp_path / ".obai" / "settings.json"
+    settings.parent.mkdir()
+
+    absent = run_suite._runtime_fingerprint(bind_credential=False)
+    settings.write_text('{"hub_model":"gpt-5.6-sol","hub_reasoning_effort":"medium"}')
+    sol = run_suite._runtime_fingerprint(bind_credential=False)
+    settings.write_text('{"hub_model":"gpt-5.6-terra","hub_reasoning_effort":"max"}')
+    terra = run_suite._runtime_fingerprint(bind_credential=False)
+
+    assert len({absent, sol, terra}) == 3
+
+
 def test_runtime_fingerprint_binds_cli_managed_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
