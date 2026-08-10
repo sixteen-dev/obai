@@ -299,7 +299,7 @@ OBaI ships a browser-based client with a dark glassmorphism interface:
 - Real-time streaming via WebSocket
 - Session management with persistent conversation history
 - Live agent activity panel showing tool calls and specialist routing
-- Portfolio preferences and Opik trace links in settings
+- Portfolio preferences, hub model / reasoning effort, and Opik trace links in settings
 
 ```bash
 obai web                  # Launch on http://127.0.0.1:8090
@@ -392,7 +392,8 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Model for the Central Hub (needs strong reasoning) |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
+| `ORCHESTRATOR_REASONING_EFFORT` | `medium` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Overrides `~/.obai/settings.json` |
 | `SPECIALIST_MODEL` | `gpt-5.6-luna` | Model for specialist agents |
 | `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
@@ -403,6 +404,49 @@ Key environment variables (all have sensible defaults):
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`.
+
+Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists, and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent. Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` model, so OBaI does not accept it.)
+
+---
+
+## Hub Model & Reasoning Effort
+
+The Central Hub's model and reasoning effort are the two knobs worth changing without editing code — together they set the cost and the depth of every query. OBaI stores your choice in `~/.obai/settings.json`:
+
+```json
+{
+  "hub_model": "gpt-5.6-sol",
+  "hub_reasoning_effort": "medium"
+}
+```
+
+| Field | Default | Choices |
+|-------|---------|---------|
+| `hub_model` | `gpt-5.6-sol` | `gpt-5.6-sol` (balanced, shipped default), `gpt-5.6-terra` (heavier analysis, also used by the strategy, crypto, and prediction-markets specialists) |
+| `hub_reasoning_effort` | `medium` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
+
+Specialist models and efforts are not settable here; they stay code-owned and are tuned through the environment variables above.
+
+**Change it from the web UI** — open the settings modal in `obai web` and pick a model and effort tier.
+
+**Change it from the CLI:**
+
+```bash
+obai config set-model gpt-5.6-terra    # hub model
+obai config set-effort high            # hub reasoning effort
+```
+
+Both write the same `~/.obai/settings.json`. The file is created on first write; if it is missing, OBaI uses the defaults above, so there is nothing to migrate on upgrade. You can also edit it by hand — an unparseable or out-of-range file is reported as an error rather than silently ignored, so a typo can never quietly bill you at a different tier.
+
+### Two things to know
+
+**Environment variables win.** Resolution order for these two settings is `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` → `~/.obai/settings.json` → shipped default. They are fully supported, not deprecated — the eval A/B comparison and the E2E regression gate both pin the hub model by injecting env. But that also means a stale `export ORCHESTRATOR_MODEL=...` in your shell profile, or a leftover `ORCHESTRATOR_MODEL=` line in `~/.obai/.env` (the CLI loads it into the environment at startup), makes the web UI and `obai config` appear to do nothing. Both surfaces warn you when the matching variable is set; if a change does not take, that is the first place to look.
+
+**Changes apply on the next hub start.** Nothing hot-swaps a running agent. After changing the model or effort — by any of the three routes — run:
+
+```bash
+obai restart
+```
 
 ---
 

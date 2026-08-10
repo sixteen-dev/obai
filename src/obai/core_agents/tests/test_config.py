@@ -4,16 +4,33 @@ Tests config loading, validation, and the reset function.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from core_agents import hub_settings as hub_settings_module
 from core_agents.config import AgentConfig, get_config, reset_config
+from core_agents.hub_settings import HubSettings, HubSettingsStore
 
 
 @pytest.fixture(autouse=True)
-def setup_env() -> None:  # type: ignore[misc]
-    """Set required environment variables and reset config for all tests."""
+def setup_env(  # type: ignore[misc]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Set required environment variables and reset config for all tests.
+
+    Also points the hub settings file at an empty tmp_path so these tests
+    read shipped defaults rather than whatever the developer running them
+    happens to have selected in ~/.obai/settings.json.
+    """
+    monkeypatch.setattr(
+        hub_settings_module,
+        "default_hub_settings_path",
+        lambda: tmp_path / "settings.json",
+    )
+
     # Save and clear any model environment variables
     saved_env: dict[str, str] = {}
     model_vars = [
@@ -26,6 +43,8 @@ def setup_env() -> None:  # type: ignore[misc]
         "CRYPTO_MODEL",
         "LOG_LEVEL",
         "ENABLE_GUARDRAILS",
+        "ORCHESTRATOR_REASONING_EFFORT",
+        "STRATEGY_REASONING_EFFORT",
     ]
     for var in model_vars:
         if var in os.environ:
@@ -193,6 +212,84 @@ class TestConfigSingleton:
         config2 = get_config()
         assert config2.specialist_model == "gpt-4-turbo"
         assert config2.specialist_model != initial_model
+
+
+class TestHubSettingsFilePrecedence:
+    """Hub model/effort resolution: env > ~/.obai/settings.json > default."""
+
+    def test_settings_file_applies_when_env_unset(self, tmp_path: Path) -> None:
+        """The file is what the web UI and `obai config` write."""
+        HubSettingsStore(path=tmp_path / "settings.json").save(
+            HubSettings(hub_model="gpt-5.6-terra", hub_reasoning_effort="xhigh"),
+        )
+        reset_config()
+
+        config = get_config()
+        assert config.orchestrator_model == "gpt-5.6-terra"
+        assert config.orchestrator_reasoning_effort == "xhigh"
+
+    def test_env_var_beats_settings_file(self, tmp_path: Path) -> None:
+        """An explicit env var stays authoritative, as the eval A/B relies on."""
+        HubSettingsStore(path=tmp_path / "settings.json").save(
+            HubSettings(hub_model="gpt-5.6-terra", hub_reasoning_effort="max"),
+        )
+        os.environ["ORCHESTRATOR_MODEL"] = "gpt-5.6-sol"
+        os.environ["ORCHESTRATOR_REASONING_EFFORT"] = "high"
+        reset_config()
+
+        config = get_config()
+        assert config.orchestrator_model == "gpt-5.6-sol"
+        assert config.orchestrator_reasoning_effort == "high"
+
+    def test_env_and_file_resolve_per_field(self, tmp_path: Path) -> None:
+        """Env pinning the model must not drag the effort off the file."""
+        HubSettingsStore(path=tmp_path / "settings.json").save(
+            HubSettings(hub_model="gpt-5.6-terra", hub_reasoning_effort="max"),
+        )
+        os.environ["ORCHESTRATOR_MODEL"] = "gpt-5.6-sol"
+        reset_config()
+
+        config = get_config()
+        assert config.orchestrator_model == "gpt-5.6-sol"
+        assert config.orchestrator_reasoning_effort == "max"
+
+    def test_missing_file_falls_back_to_shipped_defaults(self) -> None:
+        """Fresh install and upgraded install both land here — no migration."""
+        config = get_config()
+        assert config.orchestrator_model == "gpt-5.6-sol"
+        assert config.orchestrator_reasoning_effort == "medium"
+
+    def test_settings_file_does_not_touch_specialists(self, tmp_path: Path) -> None:
+        """The toggle is hub-only; specialist tiers stay code-owned."""
+        HubSettingsStore(path=tmp_path / "settings.json").save(
+            HubSettings(hub_model="gpt-5.6-terra", hub_reasoning_effort="max"),
+        )
+        reset_config()
+
+        config = get_config()
+        assert config.specialist_model == "gpt-5.6-luna"
+        assert config.specialist_reasoning_effort == "medium"
+        assert config.get_agent_reasoning_effort("strategy") == "medium"
+
+
+class TestReasoningEffortTiers:
+    """The effort literal must match what the gpt-5.6 API actually accepts."""
+
+    def test_max_is_accepted(self) -> None:
+        """`max` is a real tier on every gpt-5.6 model."""
+        config = AgentConfig(orchestrator_reasoning_effort="max")
+        assert config.orchestrator_reasoning_effort == "max"
+
+    def test_minimal_is_rejected(self) -> None:
+        """gpt-5.6 rejects `minimal` at request time — fail at config time.
+
+        mypy flags the argument for the same reason this test exists, so the
+        ignore is the static half of the assertion: if `minimal` were ever
+        added back to `ReasoningEffort`, the ignore goes unused and the
+        strict run fails.
+        """
+        with pytest.raises(ValidationError):
+            AgentConfig(orchestrator_reasoning_effort="minimal")  # type: ignore[arg-type]
 
 
 class TestGuardrailConfig:

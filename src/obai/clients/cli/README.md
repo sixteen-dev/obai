@@ -44,12 +44,34 @@ export MCP_EVENTS_NEWS_URL=http://localhost:8003/mcp
 export MCP_OPTIONS_URL=http://localhost:8004/mcp
 
 # Optional: Model configuration
-export ORCHESTRATOR_MODEL=gpt-5.6-sol   # Central hub model
-export SPECIALIST_MODEL=gpt-5.6-luna    # Specialist agents model
+export SPECIALIST_MODEL=gpt-5.6-luna          # Specialist agents model
+
+# The two hub settings are better set with `obai config` (see below) — these
+# exports pin them and make the web UI and CLI appear to do nothing.
+# export ORCHESTRATOR_MODEL=gpt-5.6-sol         # Central hub model
+# export ORCHESTRATOR_REASONING_EFFORT=medium   # none|low|medium|high|xhigh|max
 
 # Optional: Weave tracing
 export WANDB_API_KEY=your-key           # Enable W&B Weave tracing
 ```
+
+The CLI also loads `~/.obai/.env` into the environment at startup (without overriding anything already exported), so a line there behaves exactly like an `export`.
+
+### Hub Model & Reasoning Effort
+
+You do not have to export the two hub settings — `obai config` saves them to `~/.obai/settings.json`, the same file the web UI settings modal writes:
+
+```bash
+obai config set-model gpt-5.6-terra   # gpt-5.6-sol | gpt-5.6-terra
+obai config set-effort high           # medium | high | xhigh | max
+```
+
+Two caveats:
+
+- **`ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` win over the file.** They remain supported — that is how the eval and regression harnesses pin a hub model — but if either is exported in your shell or sitting in `~/.obai/.env`, `obai config` writes the file and nothing changes. The command warns when it detects this.
+- **Changes apply on the next hub start.** Run `obai restart` afterwards; a running session keeps the model and effort it was built with.
+
+With no file present, OBaI uses the shipped defaults (`gpt-5.6-sol`, `medium`), so there is nothing to create on a fresh install or an upgrade.
 
 ### 3. Install Dependencies
 

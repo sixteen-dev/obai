@@ -201,6 +201,35 @@ export MARKET_DATA_MODEL=gpt-5.6-luna       # Override for specific agent
 export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; cheaper than the hub's gpt-5.6-sol with comparable backtest output
 ```
 
+### Reasoning Effort
+
+Every agent's effort tier is one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` is in the OpenAI SDK's own type but every `gpt-5.6` model rejects it at request time, so `ReasoningEffort` in `core_agents/config.py` does not include it.)
+
+```bash
+export ORCHESTRATOR_REASONING_EFFORT=high   # Hub (default: medium)
+export SPECIALIST_REASONING_EFFORT=medium   # Specialist default
+export STRATEGY_REASONING_EFFORT=high       # Also CRYPTO_, PREDICTION_MARKETS_
+```
+
+### Hub Settings File (`~/.obai/settings.json`)
+
+The hub's model and reasoning effort — and only those two — are user-settable without touching the environment. `core_agents/hub_settings.py` owns the file; the web UI settings modal and `obai config set-model` / `obai config set-effort` both write it, so the two clients (separate processes, each building its own hub) agree on one source of truth.
+
+```json
+{
+  "hub_model": "gpt-5.6-sol",
+  "hub_reasoning_effort": "medium"
+}
+```
+
+`hub_model` is `gpt-5.6-sol` or `gpt-5.6-terra`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max`. Specialist models and efforts stay code-owned.
+
+`AgentConfig.settings_customise_sources` inserts this file **below** the environment, so resolution is init kwargs > env > `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` therefore still win — deliberately, since the eval A/B comparison and the E2E gate pin the hub model by injecting env. Any surface that writes the file must warn when the matching variable is set, or the write looks like a no-op.
+
+An absent or empty file means "use the shipped defaults" (fresh installs and upgrades both land there — no migration). A file that exists but does not parse or validate raises `ValueError`; user-facing callers must report it rather than fall back, so nobody is silently moved to another price tier.
+
+Changes apply on the next hub construction — `obai restart`. Nothing hot-swaps a live agent.
+
 ### Prompts
 
 Agent instructions are in `core_agents/prompts/*.md` files. Edit these to tune agent behavior. Changes take effect immediately (no code changes needed).

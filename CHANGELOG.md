@@ -6,6 +6,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **User-settable hub model and reasoning effort**, persisted in
+  `~/.obai/settings.json` (`hub_model`: `gpt-5.6-sol` | `gpt-5.6-terra`,
+  `hub_reasoning_effort`: `medium` | `high` | `xhigh` | `max`). The web UI
+  settings modal and the new `obai config set-model` / `obai config set-effort`
+  commands write the same file, so the CLI and web clients — separate processes
+  that each build their own hub — resolve one source of truth. Scope is the hub
+  only; specialist models and effort tiers stay code-owned.
+- Resolution order for those two settings is init kwargs > env >
+  `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` and
+  `ORCHESTRATOR_REASONING_EFFORT` are unchanged and still win — the eval A/B
+  comparison and the E2E regression gate pin the hub model by injecting env —
+  so a stale export makes the UI and CLI appear to do nothing. Both surfaces
+  warn when the matching variable is set.
+- Changes apply on the next hub construction (`obai restart`). Nothing
+  hot-swaps a live agent.
+- No migration on upgrade: an absent or empty settings file means "use the
+  shipped defaults", so existing installs behave exactly as before until
+  someone changes a setting. A file that exists but does not parse or validate
+  is reported as an error instead of silently falling back, so a typo cannot
+  quietly move you to another price tier.
+- `ORCHESTRATOR_REASONING_EFFORT` is now documented in the README, both
+  `.env.example` files, and the `obai` skill. It worked before but appeared
+  nowhere user-facing. The specialist and per-agent `*_REASONING_EFFORT`
+  variables are documented alongside it.
+
+### Changed
+
+- The accepted reasoning-effort set is now `none|low|medium|high|xhigh|max`.
+  `minimal` has been removed: it is a valid value in the OpenAI SDK's own type
+  but every `gpt-5.6` model rejects it at request time, so accepting it only
+  traded a config-time error for a mid-query one.
+
+  **Upgrading:** if you have `ORCHESTRATOR_REASONING_EFFORT=minimal` (or any
+  other `*_REASONING_EFFORT=minimal`) exported or set in `~/.obai/.env`, unset
+  it or change it to `low` before upgrading. The value was previously accepted
+  at config time, so on the new version every `obai` command that builds a
+  config will fail validation until it is changed. `obai config show` flags an
+  env value that is not accepted.
+
 ## [1.6.0] - 2026-07-18
 
 Minor: cost-aware evaluation suite with deterministic outcome contracts, plus a

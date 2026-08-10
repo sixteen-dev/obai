@@ -1038,6 +1038,155 @@ const prefFields = {
     market: document.getElementById("pref-market"),
 };
 
+// Hub model + reasoning effort. These are the only agent settings the user
+// owns; specialists stay code-owned. Nothing hot-swaps a live agent, so a
+// saved change applies on the next restart — and an exported
+// ORCHESTRATOR_* variable outranks the file entirely, which the notes say.
+const hubFields = {
+    hub_model: document.getElementById("hub-model"),
+    hub_reasoning_effort: document.getElementById("hub-effort"),
+};
+
+const hubNotes = {
+    hub_model: document.getElementById("hub-model-note"),
+    hub_reasoning_effort: document.getElementById("hub-effort-note"),
+};
+
+function setNote(el, text, warn) {
+    if (!el) {
+        return;
+    }
+    el.textContent = text;
+    el.classList.toggle("warn", Boolean(warn));
+    el.classList.toggle("hidden", !text);
+}
+
+function fillChoices(select, choices, selected) {
+    if (!select) {
+        return;
+    }
+    select.textContent = "";
+    for (const choice of choices || []) {
+        const option = document.createElement("option");
+        option.value = choice;
+        option.textContent = choice;
+        select.appendChild(option);
+    }
+    if (selected) {
+        select.value = selected;
+    }
+}
+
+function isEnvOverride(value) {
+    // The server reports an unset variable as null. An exported empty string
+    // is still an override — pydantic-settings applies it — so only null and
+    // undefined mean "no override".
+    return value !== null && value !== undefined;
+}
+
+function renderHubSettings(data) {
+    const saved = data.saved || {};
+    const choices = data.choices || {};
+    const overrides = data.env_overrides || {};
+    const envVars = data.env_vars || {};
+
+    for (const [key, el] of Object.entries(hubFields)) {
+        fillChoices(el, choices[key], saved[key]);
+        // An exported-but-empty variable still outranks the file, so test for
+        // presence rather than truthiness — the server does the same.
+        const override = overrides[key];
+        const warning = isEnvOverride(override)
+            ? envVars[key] + '="' + override + '" is set in your environment and outranks this ' +
+              "setting. The saved value will not take effect until you unset it and restart."
+            : "";
+        setNote(hubNotes[key], warning, Boolean(warning));
+    }
+
+    const running = data.running || {};
+    const runningLine = "Running now: " + (running.hub_model || "unknown") +
+        " / " + (running.hub_reasoning_effort || "unknown") + ".";
+    const applyLine = data.restart_required ? " Saved values apply after you restart OBaI." : "";
+    setNote(document.getElementById("hub-apply-note"), runningLine + applyLine, false);
+}
+
+async function loadHubSettings() {
+    const applyNote = document.getElementById("hub-apply-note");
+    try {
+        const res = await fetch("/api/settings");
+        const data = await res.json();
+
+        if (!res.ok) {
+            // A broken settings file is repaired by saving a complete pair of
+            // values over it, so still offer both dropdowns rather than
+            // leaving the user stuck with an error and two empty selects.
+            const choices = data.choices || {};
+            for (const [key, el] of Object.entries(hubFields)) {
+                fillChoices(el, choices[key], null);
+            }
+            setNote(applyNote, data.error || "Failed to load model settings.", true);
+            return;
+        }
+        renderHubSettings(data);
+    } catch (error) {
+        console.error("Failed to load model settings:", error);
+        setNote(applyNote, "Failed to load model settings.", true);
+    }
+}
+
+async function saveHubSettings() {
+    const body = {};
+    for (const [key, el] of Object.entries(hubFields)) {
+        if (el && el.value) {
+            body[key] = el.value;
+        }
+    }
+    if (!Object.keys(body).length) {
+        return { ok: true, restartRequired: false, envPinned: false };
+    }
+
+    try {
+        const res = await fetch("/api/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            return { ok: false, error: data.error || "Failed to save model settings" };
+        }
+        renderHubSettings(data);
+        return {
+            ok: true,
+            restartRequired: Boolean(data.restart_required),
+            envPinned: Object.values(data.env_overrides || {}).some(isEnvOverride),
+        };
+    } catch (error) {
+        console.error("Failed to save model settings:", error);
+        return { ok: false, error: "Error saving model settings" };
+    }
+}
+
+function hubSaveStatus(hub) {
+    // restartRequired already excludes env-pinned fields server-side, so both
+    // flags can be true at once — one field needs a restart while a different
+    // one is pinned. Report the restart first; hiding it behind the env
+    // warning would leave a change that a restart WOULD apply looking dead.
+    if (hub.restartRequired && hub.envPinned) {
+        return {
+            text: "Saved — restart OBaI to apply; an environment variable pins the rest",
+            sticky: true,
+        };
+    }
+    if (hub.restartRequired) {
+        return { text: "Saved — restart OBaI to apply", sticky: true };
+    }
+    if (hub.envPinned) {
+        return { text: "Saved — an environment variable still overrides it", sticky: true };
+    }
+    return { text: "Saved", sticky: false };
+}
+
 async function openSettings() {
     if (!settingsOverlay) {
         return;
@@ -1075,6 +1224,8 @@ async function openSettings() {
     } catch (error) {
         console.error("Failed to load status:", error);
     }
+
+    await loadHubSettings();
 }
 
 function closeSettings() {
@@ -1089,31 +1240,47 @@ function closeSettings() {
     }
 }
 
-async function saveSettings() {
+async function savePreferences() {
     const body = {};
     for (const [key, el] of Object.entries(prefFields)) {
         const val = el.value.trim();
         body[key] = key === "initial_capital" ? (val ? parseFloat(val) : 0) : val;
     }
 
-    const statusEl = document.getElementById("settings-status");
     try {
         const res = await fetch("/api/preferences", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         });
-
-        if (res.ok) {
-            statusEl.textContent = "Saved";
-            setTimeout(() => {
-                statusEl.textContent = "";
-            }, 2000);
-        } else {
-            statusEl.textContent = "Failed to save";
-        }
+        return res.ok ? { ok: true } : { ok: false, error: "Failed to save" };
     } catch (error) {
         console.error("Failed to save preferences:", error);
-        statusEl.textContent = "Error saving";
+        return { ok: false, error: "Error saving" };
+    }
+}
+
+async function saveSettings() {
+    const statusEl = document.getElementById("settings-status");
+    if (!statusEl) {
+        return;
+    }
+
+    statusEl.textContent = "Saving...";
+    const prefs = await savePreferences();
+    const hub = await saveHubSettings();
+
+    if (!prefs.ok || !hub.ok) {
+        // The hub message names the offending field; the preferences one is generic.
+        statusEl.textContent = hub.error || prefs.error;
+        return;
+    }
+
+    const status = hubSaveStatus(hub);
+    statusEl.textContent = status.text;
+    if (!status.sticky) {
+        setTimeout(() => {
+            statusEl.textContent = "";
+        }, 2000);
     }
 }
