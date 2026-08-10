@@ -47,6 +47,16 @@ if ! uv run pytest -q ".claude/skills/obai-e2e-regression/tests" "$@"; then
     echo "FAIL: canonical OBaI regression harness"
 fi
 
+# The root `tests/` tree is the root pyproject's own testpaths, but the loop
+# above only visits services, so nothing here would ever reach it. It holds
+# the guards for setup.sh/install.sh, which no service suite can cover.
+echo
+echo "=== bootstrap shell scripts ==="
+if ! uv run pytest -q "tests" "$@"; then
+    fail_count=$((fail_count + 1))
+    echo "FAIL: bootstrap shell scripts"
+fi
+
 echo
 echo "=== OBaI broader evaluation contracts ==="
 if ! (cd "src/obai" && uv run pytest -q "evaluation/tests" "$@"); then

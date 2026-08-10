@@ -350,6 +350,17 @@ else
     ok "Preferences file exists"
 fi
 
+# Deliberately NOT seeding $OBAI_DIR/settings.json (hub model + reasoning
+# effort). HubSettingsStore.load() treats an absent or empty file as "use the
+# shipped defaults", so seeding buys nothing at install time and costs us at
+# upgrade time: setup.sh never overwrites an existing file, so a seeded copy
+# would pin every install to whatever the default was on the day they first
+# ran setup, and a later release that moves the hub default would silently
+# skip them. It would also duplicate the defaults from
+# core_agents/hub_settings.py into a heredoc that no test compares against.
+# The file appears on first write from the web UI settings modal or
+# `obai config set-model` / `set-effort`.
+
 # Record how this checkout was installed so `obai upgrade` can tell a managed
 # one-liner install (OBAI_MANAGED=1, set by install.sh) from a developer's
 # source clone. The CLI never resets/reclones a source checkout.
@@ -493,7 +504,10 @@ info "Installing OBaI as a global tool via uv (editable — source changes take 
 
 # Keep the install output instead of discarding it — a failure here (e.g. a
 # dependency building from source) is unactionable without the real error.
-INSTALL_LOG="$(mktemp -t obai-cli-install)"
+# An explicit template rather than `mktemp -t obai-cli-install`: BSD/macOS
+# accepts a bare prefix there, GNU requires three trailing X's and otherwise
+# exits 1, which under `set -e` aborts the install before steps 7 and 8 run.
+INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/obai-cli-install.XXXXXX")"
 trap 'rm -f "$INSTALL_LOG"' EXIT
 
 # Editable install so `obai` always runs from source — no reinstall needed after code changes.
@@ -645,8 +659,10 @@ echo "  Quick start:"
 echo "    obai status                              # Check server connectivity"
 echo "    obai query \"What is AAPL trading at?\"    # Single query"
 echo "    obai chat                                # Interactive REPL"
-echo "    obai config show                         # View API key status"
+echo "    obai config show                         # Keys + hub model/effort"
 echo "    obai config set-key TAVILY_API_KEY       # Add/update a key"
+echo "    obai config set-model gpt-5.6-terra      # Hub model (restart to apply)"
+echo "    obai config set-effort high              # Hub reasoning effort"
 echo ""
 echo "  MCP Inspector (optional, for MCP server testing):"
 echo "    Docs: https://modelcontextprotocol.io/docs/tools/inspector"

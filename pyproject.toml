@@ -224,7 +224,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*" = ["S101", "ARG", "FBT"]
+# S603/S607: this tree's whole job is running the repo's own scripts through
+# an interpreter found on PATH. The "untrusted input" is a hard-coded path.
+"tests/**/*" = ["S101", "ARG", "FBT", "S603", "S607"]
 "scripts/**/*" = ["T201", "S602", "S603"]
 "dev/**/*" = ["T201", "S602", "S603", "S607"]
 
