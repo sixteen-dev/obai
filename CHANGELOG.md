@@ -21,8 +21,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   comparison and the E2E regression gate pin the hub model by injecting env —
   so a stale export makes the UI and CLI appear to do nothing. Both surfaces
   warn when the matching variable is set.
-- Changes apply on the next hub construction (`obai restart`). Nothing
-  hot-swaps a live agent.
+- Saving in the web UI applies immediately: `PATCH /api/settings` retunes the
+  running hub in place (model, reasoning effort, and the compaction threshold,
+  which is a fraction of the model's window) under the query lock, so the
+  change lands on the next message without dropping the conversation or
+  re-initializing MCP. Env-pinned fields are skipped so precedence holds. Other
+  clients hold their own hub in their own process and pick the change up when
+  they next launch. Save is also a no-op when neither dropdown moved.
+- Saving mid-answer never blocks: the bridge queues the change instead of
+  waiting on the query lock, the next query applies it, and `/api/settings`
+  reports `pending_apply` so the UI says "applies once the current answer
+  finishes" rather than falsely asking for a restart.
 - No migration on upgrade: an absent or empty settings file means "use the
   shipped defaults", so existing installs behave exactly as before until
   someone changes a setting. A file that exists but does not parse or validate
@@ -32,6 +41,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `.env.example` files, and the `obai` skill. It worked before but appeared
   nowhere user-facing. The specialist and per-agent `*_REASONING_EFFORT`
   variables are documented alongside it.
+- `obai web --reload` restarts the server on Python source changes. Static
+  assets are deliberately not watched: they are read from disk per request, so
+  a browser refresh already suffices and a restart would spend a full hub
+  re-init to achieve nothing.
 
 ### Changed
 
@@ -46,6 +59,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   at config time, so on the new version every `obai` command that builds a
   config will fail validation until it is changed. `obai config show` flags an
   env value that is not accepted.
+
+### Fixed
+
+- Native `<select>` dropdowns in the web UI settings modal rendered
+  near-white text on the browser's white popup, unreadable except for the
+  hovered row. The stylesheet declared no `color-scheme`, so the browser
+  painted native controls in light mode while the options inherited the dark
+  theme's text colour. Affected the portfolio preference dropdowns too.
+- `setup.sh` aborted at step 6/8 with `mktemp: too few X's in template`. GNU
+  mktemp requires three trailing `X`s, and under `set -euo pipefail` the
+  failed substitution killed the run before the web UI and final
+  configuration steps. BSD/macOS accepts the bare prefix, which is why it
+  went unnoticed. Shell scripts now have test coverage for this.
 
 ## [1.6.0] - 2026-07-18
 

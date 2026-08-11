@@ -758,12 +758,17 @@ async def _check_server(
 def web(
     port: int = typer.Option(8090, "--port", "-p", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind address"),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Dev: restart on Python source changes (each restart re-inits the hub).",
+    ),
 ) -> None:
     """Launch the web UI in a browser."""
     from clients.web.server import run_server
 
     typer.echo(f"Starting OBaI Web UI at http://{host}:{port}")
-    run_server(host=host, port=port)
+    run_server(host=host, port=port, reload=reload)
 
 
 # --- Lifecycle subcommands ---
@@ -957,7 +962,10 @@ def _echo_hub_saved(label: str, value: str, path: Path, env_var: str) -> None:
                 fg=typer.colors.YELLOW,
             )
         )
-    typer.echo("Restart to apply: obai restart")
+    # Deliberately not "obai restart": that tears down and rebuilds the whole
+    # Docker stack for a two-field change. Only the hub reads these settings,
+    # and every client builds its own on startup.
+    typer.echo("Applies to clients started from now on; relaunch a running obai chat/tui.")
 
 
 @config_app.command("set-model")
@@ -1090,7 +1098,7 @@ def _echo_hub_settings() -> None:
             ),
         )
         typer.echo("\n".join(rejected))
-    typer.echo("\nChanges apply on the next start: obai restart\n")
+    typer.echo("\nChanges apply to clients started from now on.\n")
 
 
 @config_app.command("show")

@@ -45,6 +45,10 @@ _SESSION_DB = Path.home() / ".obai" / "sessions.db"
 _PREFS_FILE = Path.home() / ".obai" / "preferences.json"
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
+# Source packages `--reload` watches. Named explicitly rather than watching
+# their parent, which also contains .venv — see run_server.
+_RELOAD_PACKAGES: tuple[str, ...] = ("core_agents", "clients", "evaluation")
+
 # Environment variable that outranks each hub settings field (see
 # AgentConfig.settings_customise_sources: env > ~/.obai/settings.json).
 # A field with its variable exported keeps the exported value no matter
@@ -163,18 +167,34 @@ def _hub_choices() -> dict[str, list[str]]:
     }
 
 
-def _hub_settings_payload(store: HubSettingsStore) -> dict[str, Any]:
+def _pending_apply(app: FastAPI) -> bool:
+    """Return True when a saved change is queued behind a live query.
+
+    Args:
+        app: The application whose ``state.bridge`` owns the hub.
+
+    Returns:
+        True if the bridge is holding a settings change for the next query.
+    """
+    bridge: HubBridge | None = getattr(app.state, "bridge", None)
+    return bridge is not None and bridge.has_pending_settings
+
+
+def _hub_settings_payload(store: HubSettingsStore, *, pending_apply: bool) -> dict[str, Any]:
     """Build the hub settings body shared by GET and PATCH ``/api/settings``.
 
     Reports the saved values, the values the running hub actually resolved,
     and the environment overrides that sit between them, so the UI can tell
-    "restart to apply" apart from "an export is winning and always will".
+    "restart to apply" apart from "an export is winning and always will" and
+    from "it is queued behind the answer you are reading".
 
     Args:
         store: Store to read the saved settings from.
+        pending_apply: Whether the bridge is holding the change for the next
+            query, in which case no restart is needed to apply it.
 
     Returns:
-        Saved values, running values, choices, env overrides, restart flag.
+        Saved values, running values, choices, env overrides, apply flags.
 
     Raises:
         ValueError: The settings file exists but is not valid hub settings.
@@ -186,8 +206,9 @@ def _hub_settings_payload(store: HubSettingsStore) -> dict[str, Any]:
         "hub_reasoning_effort": config.orchestrator_reasoning_effort,
     }
     env_overrides = {field: _env_override(var) for field, var in _HUB_ENV_VARS.items()}
-    # A restart only applies fields the environment is not already pinning.
-    restart_required = any(
+    # A restart only applies fields the environment is not already pinning,
+    # and only matters for a change nothing else is going to apply.
+    restart_required = not pending_apply and any(
         env_overrides[field] is None and saved[field] != running[field] for field in _HUB_ENV_VARS
     )
     return {
@@ -197,7 +218,45 @@ def _hub_settings_payload(store: HubSettingsStore) -> dict[str, Any]:
         "env_vars": _HUB_ENV_VARS,
         "env_overrides": env_overrides,
         "restart_required": restart_required,
+        "pending_apply": pending_apply,
     }
+
+
+async def _apply_to_running_hub(app: FastAPI, settings: HubSettings) -> None:
+    """Retune the live hub so a saved change takes effect without a restart.
+
+    Fields the environment pins are left alone: ``ORCHESTRATOR_MODEL`` and
+    friends outrank the settings file, and applying the saved value would
+    make the running hub disagree with the documented precedence.
+
+    Does nothing before the hub finishes initializing — there is nothing to
+    retune yet, and the hub will read the saved file on the way up anyway.
+
+    Returns as soon as the bridge has taken the change: it applies at once
+    when the hub is idle and is queued for the next query when it is not, so
+    saving never waits on an answer that is still streaming.
+
+    Args:
+        app: The application whose ``state.bridge`` owns the hub.
+        settings: The settings just persisted.
+    """
+    bridge: HubBridge | None = getattr(app.state, "bridge", None)
+    if bridge is None or not getattr(app.state, "ready", False):
+        logger.info("Hub not ready; saved settings will apply when it starts")
+        return
+
+    config = get_config()
+    model = (
+        settings.hub_model
+        if _env_override(_HUB_ENV_VARS["hub_model"]) is None
+        else config.orchestrator_model
+    )
+    effort = (
+        settings.hub_reasoning_effort
+        if _env_override(_HUB_ENV_VARS["hub_reasoning_effort"]) is None
+        else config.orchestrator_reasoning_effort
+    )
+    await bridge.apply_hub_settings(model=model, reasoning_effort=effort)
 
 
 def _invalid_settings_body(error: ValidationError) -> dict[str, Any]:
@@ -367,7 +426,7 @@ def create_app(hub_settings_store: HubSettingsStore | None = None) -> FastAPI:
     async def get_settings() -> JSONResponse:
         """Report saved hub settings, choices, env overrides, running values."""
         try:
-            return JSONResponse(_hub_settings_payload(hub_store))
+            return JSONResponse(_hub_settings_payload(hub_store, pending_apply=_pending_apply(app)))
         except ValueError as e:
             logger.exception("Refusing to report hub settings")
             # Ship the choices alongside the error so the UI can still offer
@@ -377,7 +436,7 @@ def create_app(hub_settings_store: HubSettingsStore | None = None) -> FastAPI:
 
     @app.patch("/api/settings")
     async def update_settings(body: dict[str, Any]) -> JSONResponse:
-        """Validate and persist hub settings; they apply on the next restart."""
+        """Validate, persist, and hot-apply hub settings to the running hub."""
         try:
             merged = _merge_base(hub_store, body)
         except ValueError as e:
@@ -390,7 +449,8 @@ def create_app(hub_settings_store: HubSettingsStore | None = None) -> FastAPI:
             logger.info("Rejected hub settings patch: %s", e)
             return JSONResponse(_invalid_settings_body(e), status_code=400)
         hub_store.save(settings)
-        return JSONResponse(_hub_settings_payload(hub_store))
+        await _apply_to_running_hub(app, settings)
+        return JSONResponse(_hub_settings_payload(hub_store, pending_apply=_pending_apply(app)))
 
     # --- WebSocket ---
 
@@ -496,12 +556,13 @@ async def _ws_send(ws: WebSocket, data: dict[str, Any]) -> None:
             await ws.send_json(data)
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
+def run_server(host: str = "127.0.0.1", port: int = 8090, reload: bool = False) -> None:
     """Run the web UI server.
 
     Args:
         host: Bind address.
         port: Bind port.
+        reload: Restart the server when Python sources change (development).
     """
     import uvicorn
 
@@ -527,8 +588,31 @@ def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
             host,
         )
 
+    if not reload:
+        uvicorn.run(create_app(), host=host, port=port, log_level="info")
+        return
+
+    # The reloader re-imports the app in a spawned subprocess, so it needs an
+    # import string plus factory=True — handing it the live object built above
+    # would leave the child with nothing to re-create.
+    #
+    # Watch the source packages, not obai_root: that directory also holds
+    # .venv, whose ~9,700 installed .py files dwarf the ~90 real ones. Watching
+    # it recursively costs thousands of inotify handles and makes any `uv sync`
+    # tear down the hub for a 30-60s re-init. uvicorn's own default filter
+    # limits triggers to *.py, so static assets under clients/web/static are
+    # inside the tree but never fire — correctly, since they are read from disk
+    # per request and a browser refresh already picks them up.
+    logger.warning(
+        "Reload enabled: each Python edit restarts the server and rebuilds the "
+        "hub (30-60s of MCP re-init). Static asset edits need only a browser "
+        "refresh, and hub settings changes need only a restart, not this flag.",
+    )
     uvicorn.run(
-        create_app(),
+        "clients.web.server:create_app",
+        factory=True,
+        reload=True,
+        reload_dirs=[str(obai_root / pkg) for pkg in _RELOAD_PACKAGES],
         host=host,
         port=port,
         log_level="info",

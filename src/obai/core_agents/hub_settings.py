@@ -19,7 +19,9 @@ import tempfile
 from pathlib import Path
 from typing import Literal, get_args
 
-from pydantic import BaseModel, ValidationError
+import openai
+from openai.types.shared.reasoning_effort import ReasoningEffort as SdkReasoningEffort
+from pydantic import BaseModel, ValidationError, field_validator
 
 # The two choices offered in the UI and CLI. Sol is the shipped hub default;
 # Terra is the heavier-analysis model already used by strategy, crypto, and
@@ -34,6 +36,29 @@ HubReasoningEffort = Literal["medium", "high", "xhigh", "max"]
 
 HUB_MODELS: tuple[str, ...] = get_args(HubModel)
 HUB_REASONING_EFFORTS: tuple[str, ...] = get_args(HubReasoningEffort)
+
+# openai release that added the `max` tier. Named here because the error
+# below is the only place a user learns why their choice was refused.
+_MAX_EFFORT_MIN_OPENAI = "2.45.0"
+
+
+def _sdk_reasoning_efforts() -> frozenset[str]:
+    """Return the effort tiers the installed openai SDK accepts.
+
+    The SDK, not this module, builds the request: a tier it does not know
+    raises inside ``Reasoning(...)`` during hub construction, which surfaces
+    as a raw traceback at startup rather than as a settings error. Reading
+    its literal lets us refuse the value where the user can act on it.
+
+    Returns:
+        Accepted effort strings, empty if the literal cannot be read.
+    """
+    # ReasoningEffort is Optional[Literal[...]], so unwrap to the Literal.
+    for arg in get_args(SdkReasoningEffort):
+        values = get_args(arg)
+        if values:
+            return frozenset(str(value) for value in values)
+    return frozenset()
 
 
 def default_hub_settings_path() -> Path:
@@ -50,6 +75,33 @@ class HubSettings(BaseModel, extra="forbid"):
 
     hub_model: HubModel = "gpt-5.6-sol"
     hub_reasoning_effort: HubReasoningEffort = "medium"
+
+    @field_validator("hub_reasoning_effort")
+    @classmethod
+    def validate_sdk_supports_effort(cls, v: str) -> str:
+        """Reject a tier the installed openai SDK cannot send.
+
+        Args:
+            v: Effort tier being validated.
+
+        Returns:
+            The tier, unchanged, when the SDK accepts it.
+
+        Raises:
+            ValueError: The installed SDK is too old for this tier.
+        """
+        supported = _sdk_reasoning_efforts()
+        if not supported or v in supported:
+            return v
+
+        msg = (
+            f"Reasoning effort {v!r} is not supported by the installed "
+            f"openai {openai.__version__} SDK, which accepts "
+            f"{', '.join(sorted(supported))}. The {v!r} tier needs "
+            f"openai>={_MAX_EFFORT_MIN_OPENAI}. Upgrade the SDK, or pick a "
+            f"lower tier — otherwise the hub cannot start."
+        )
+        raise ValueError(msg)
 
 
 class HubSettingsStore:

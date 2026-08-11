@@ -45,26 +45,30 @@ def settings_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # --- set-model / set-effort happy paths ---
 
 
-def test_set_model_writes_file_and_asks_for_restart(settings_file: Path) -> None:
-    """A valid model is persisted, echoed with its path, and needs a restart."""
+def test_set_model_writes_file_and_says_when_it_applies(settings_file: Path) -> None:
+    """A valid model is persisted, echoed with its path, and scoped to new clients."""
     result = runner.invoke(cli, ["config", "set-model", "gpt-5.6-terra"])
 
     assert result.exit_code == 0
     assert json.loads(settings_file.read_text())["hub_model"] == "gpt-5.6-terra"
     assert "gpt-5.6-terra" in result.output
     assert str(settings_file) in result.output
-    assert "obai restart" in result.output
+    # "obai restart" would rebuild the Docker stack for a two-field change.
+    assert "obai restart" not in result.output
+    assert "relaunch a running obai chat/tui" in result.output
 
 
-def test_set_effort_writes_file_and_asks_for_restart(settings_file: Path) -> None:
-    """A valid effort is persisted, echoed with its path, and needs a restart."""
+def test_set_effort_writes_file_and_says_when_it_applies(settings_file: Path) -> None:
+    """A valid effort is persisted, echoed with its path, and scoped to new clients."""
     result = runner.invoke(cli, ["config", "set-effort", "xhigh"])
 
     assert result.exit_code == 0
     assert json.loads(settings_file.read_text())["hub_reasoning_effort"] == "xhigh"
     assert "xhigh" in result.output
     assert str(settings_file) in result.output
-    assert "obai restart" in result.output
+    # "obai restart" would rebuild the Docker stack for a two-field change.
+    assert "obai restart" not in result.output
+    assert "relaunch a running obai chat/tui" in result.output
 
 
 def test_set_model_preserves_the_stored_effort(settings_file: Path) -> None:

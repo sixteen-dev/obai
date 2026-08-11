@@ -54,6 +54,13 @@ function connectWebSocket() {
     state.ws = new WebSocket(wsUrl);
 
     state.ws.onopen = () => {
+        // A reconnect means the server process went away and came back, so it
+        // may have rebuilt its hub on different settings. The status poll
+        // stops once the hub is ready, so without this the tab would keep
+        // showing the pre-restart model until a manual reload.
+        if (state.reconnectAttempts > 0) {
+            refreshStatusSurfaces();
+        }
         state.reconnectAttempts = 0;
     };
 
@@ -70,6 +77,20 @@ function connectWebSocket() {
         state.reconnectAttempts += 1;
         setTimeout(connectWebSocket, delay);
     };
+}
+
+async function refreshStatusSurfaces() {
+    // Re-read /api/status without touching the loading overlay or restarting
+    // the readiness poll — used when the server comes back after a restart.
+    try {
+        const res = await fetch("/api/status");
+        const data = await res.json();
+        if (data.ready) {
+            updateStatusSurfaces(data);
+        }
+    } catch (error) {
+        console.error("Failed to refresh hub status:", error);
+    }
 }
 
 async function checkHubStatus() {
@@ -614,6 +635,11 @@ async function createSession() {
         state.sessions.unshift(session);
         renderSessionList();
         switchSession(session.id);
+        // The sidebar names the hub that will answer this chat. It is only
+        // re-read on page load, on WS reconnect, and after Save, so a tab left
+        // open across a model change would otherwise start a new chat still
+        // showing the old one.
+        refreshStatusSurfaces();
     } catch (error) {
         console.error("Failed to create session:", error);
     }
@@ -922,6 +948,36 @@ function compactModelName(name) {
     return preferred.slice(0, 27) + "...";
 }
 
+async function renderPendingHubHint() {
+    // Appended to the model summary, which reports the running hub. When the
+    // saved settings differ, say so where the user is already looking rather
+    // than only inside the settings modal.
+    if (!modelSummary) {
+        return;
+    }
+
+    try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) {
+            return;
+        }
+        const data = await res.json();
+        if (!data.restart_required) {
+            return;
+        }
+
+        const hint = document.createElement("div");
+        hint.className = "model-summary-pending";
+        hint.textContent =
+            "Restart to apply " + compactModelName(data.saved.hub_model) +
+            " / " + data.saved.hub_reasoning_effort;
+        hint.title = "Saved in settings but not yet running";
+        modelSummary.appendChild(hint);
+    } catch (error) {
+        console.error("Failed to check pending hub settings:", error);
+    }
+}
+
 function updateStatusSurfaces(data) {
     if (!data || !modelSummary) {
         return;
@@ -952,6 +1008,10 @@ function updateStatusSurfaces(data) {
             row.appendChild(valueEl);
             modelSummary.appendChild(row);
         }
+
+        // These rows show what is RUNNING. Without this, a saved-but-not-yet
+        // applied change looks like the save silently failed.
+        renderPendingHubHint();
         return;
     }
 
@@ -1039,9 +1099,11 @@ const prefFields = {
 };
 
 // Hub model + reasoning effort. These are the only agent settings the user
-// owns; specialists stay code-owned. Nothing hot-swaps a live agent, so a
-// saved change applies on the next restart — and an exported
-// ORCHESTRATOR_* variable outranks the file entirely, which the notes say.
+// owns; specialists stay code-owned. Saving retunes the running web hub in
+// place, so the change lands on the next message with no terminal restart.
+// An exported ORCHESTRATOR_* variable outranks the file entirely, which the
+// notes say; and separate `obai chat`/`obai tui` processes hold their own
+// hub, so those still pick the change up when they next launch.
 const hubFields = {
     hub_model: document.getElementById("hub-model"),
     hub_reasoning_effort: document.getElementById("hub-effort"),
@@ -1051,6 +1113,11 @@ const hubNotes = {
     hub_model: document.getElementById("hub-model-note"),
     hub_reasoning_effort: document.getElementById("hub-effort-note"),
 };
+
+// Values last reported by the server, used to skip a PATCH that would change
+// nothing. Saving is not free: it takes the hub's query lock, so an untouched
+// dropdown must not queue behind an in-flight answer.
+let hubSavedSnapshot = null;
 
 function setNote(el, text, warn) {
     if (!el) {
@@ -1086,6 +1153,7 @@ function isEnvOverride(value) {
 
 function renderHubSettings(data) {
     const saved = data.saved || {};
+    hubSavedSnapshot = { ...saved };
     const choices = data.choices || {};
     const overrides = data.env_overrides || {};
     const envVars = data.env_vars || {};
@@ -1105,7 +1173,14 @@ function renderHubSettings(data) {
     const running = data.running || {};
     const runningLine = "Running now: " + (running.hub_model || "unknown") +
         " / " + (running.hub_reasoning_effort || "unknown") + ".";
-    const applyLine = data.restart_required ? " Saved values apply after you restart OBaI." : "";
+    // The web hub retunes in place, so a lingering mismatch means the save
+    // landed mid-initialization and only a restart will pick it up.
+    let applyLine = "";
+    if (data.restart_required) {
+        applyLine = " Saved values apply after you restart OBaI.";
+    } else if (data.pending_apply) {
+        applyLine = " Saved values apply once the current answer finishes.";
+    }
     setNote(document.getElementById("hub-apply-note"), runningLine + applyLine, false);
 }
 
@@ -1120,6 +1195,9 @@ async function loadHubSettings() {
             // values over it, so still offer both dropdowns rather than
             // leaving the user stuck with an error and two empty selects.
             const choices = data.choices || {};
+            // Nothing trustworthy is on disk, so forget the last snapshot:
+            // every value must be sent to repair the file.
+            hubSavedSnapshot = null;
             for (const [key, el] of Object.entries(hubFields)) {
                 fillChoices(el, choices[key], null);
             }
@@ -1129,19 +1207,31 @@ async function loadHubSettings() {
         renderHubSettings(data);
     } catch (error) {
         console.error("Failed to load model settings:", error);
+        hubSavedSnapshot = null;
         setNote(applyNote, "Failed to load model settings.", true);
     }
 }
 
-async function saveHubSettings() {
+function changedHubFields() {
+    // Only the fields the user actually moved. A null snapshot means the load
+    // failed or the file was corrupt, in which case every value is sent — a
+    // complete pair is the repair path for a broken settings file.
     const body = {};
     for (const [key, el] of Object.entries(hubFields)) {
-        if (el && el.value) {
+        if (!el || !el.value) {
+            continue;
+        }
+        if (hubSavedSnapshot === null || hubSavedSnapshot[key] !== el.value) {
             body[key] = el.value;
         }
     }
+    return body;
+}
+
+async function saveHubSettings() {
+    const body = changedHubFields();
     if (!Object.keys(body).length) {
-        return { ok: true, restartRequired: false, envPinned: false };
+        return { ok: true, unchanged: true, restartRequired: false, pendingApply: false, envPinned: false };
     }
 
     try {
@@ -1159,6 +1249,7 @@ async function saveHubSettings() {
         return {
             ok: true,
             restartRequired: Boolean(data.restart_required),
+            pendingApply: Boolean(data.pending_apply),
             envPinned: Object.values(data.env_overrides || {}).some(isEnvOverride),
         };
     } catch (error) {
@@ -1168,10 +1259,11 @@ async function saveHubSettings() {
 }
 
 function hubSaveStatus(hub) {
-    // restartRequired already excludes env-pinned fields server-side, so both
-    // flags can be true at once — one field needs a restart while a different
-    // one is pinned. Report the restart first; hiding it behind the env
-    // warning would leave a change that a restart WOULD apply looking dead.
+    // restartRequired means the server could NOT hot-apply — the hub was
+    // still initializing when the save landed. It already excludes env-pinned
+    // fields, so both flags can be true at once: one field awaits a restart
+    // while a different one is pinned. Report the restart first; hiding it
+    // behind the env warning would leave a real pending change looking dead.
     if (hub.restartRequired && hub.envPinned) {
         return {
             text: "Saved — restart OBaI to apply; an environment variable pins the rest",
@@ -1184,7 +1276,15 @@ function hubSaveStatus(hub) {
     if (hub.envPinned) {
         return { text: "Saved — an environment variable still overrides it", sticky: true };
     }
-    return { text: "Saved", sticky: false };
+    if (hub.unchanged) {
+        return { text: "Saved", sticky: false };
+    }
+    if (hub.pendingApply) {
+        // The hub was mid-answer, so the change waits rather than switching
+        // models underneath the turn that is streaming.
+        return { text: "Saved — applies once the current answer finishes", sticky: false };
+    }
+    return { text: "Saved — applies to your next message", sticky: false };
 }
 
 async function openSettings() {
@@ -1283,4 +1383,9 @@ async function saveSettings() {
             statusEl.textContent = "";
         }, 2000);
     }
+
+    // The sidebar reports the running hub, so a save must refresh it — both
+    // to show the newly applied model and, if the hot-apply could not happen,
+    // to leave a pending trace after the modal is closed and forgotten.
+    refreshStatusSurfaces();
 }

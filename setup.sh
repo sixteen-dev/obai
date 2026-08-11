@@ -554,8 +554,19 @@ step "7/8 Launching Web UI"
 WEB_PORT=8090
 info "Starting OBaI Web UI on port $WEB_PORT..."
 
-if command -v obai &>/dev/null; then
-    obai web --port "$WEB_PORT" &
+# Prefer the binary step 6 just installed over whatever `obai` PATH resolves
+# to. An activated virtualenv shadows ~/.local/bin, and the repo-root .venv
+# carries older floors than src/obai — launching that one starts the hub
+# against a stale openai SDK, which fails on settings the current code
+# offers. The uv-tool install is editable, so it still runs from source.
+OBAI_BIN="$HOME/.local/bin/obai"
+if [ ! -x "$OBAI_BIN" ]; then
+    OBAI_BIN="$(command -v obai 2>/dev/null || true)"
+fi
+
+if [ -n "$OBAI_BIN" ]; then
+    info "Launching via $OBAI_BIN"
+    "$OBAI_BIN" web --port "$WEB_PORT" &
     WEB_PID=$!
 elif [ -f "$OBAI_SRC/clients/web/server.py" ]; then
     uv run --directory "$OBAI_SRC" obai web --port "$WEB_PORT" &

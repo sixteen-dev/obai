@@ -1,10 +1,10 @@
 """The /api/settings surface: hub model + reasoning effort over HTTP.
 
-These settings are user-owned and restart-scoped: the file the endpoint writes
-is read by the *next* hub, an exported ORCHESTRATOR_* variable outranks it, and
-a hand-broken file must fail loudly rather than quietly reverting the user to
-another billing tier. Every one of those is a way the endpoint could lie to the
-settings modal, so each gets a test.
+These settings are user-owned: the endpoint writes the file every hub reads on
+startup and hot-applies it to the running one, an exported ORCHESTRATOR_*
+variable outranks it, and a hand-broken file must fail loudly rather than
+quietly reverting the user to another billing tier. Every one of those is a way
+the endpoint could lie to the settings modal, so each gets a test.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
-from clients.web.server import create_app
-from core_agents.config import reset_config
+from clients.web.server import _hub_settings_payload, create_app
+from core_agents.config import get_config, reset_config
 from core_agents.hub_settings import (
     HUB_MODELS,
     HUB_REASONING_EFFORTS,
@@ -320,3 +320,114 @@ class TestOriginGuardCoversSettings:
             )
 
         assert res.status_code == 200
+
+
+class _FakeHub:
+    """Minimal stand-in for CentralHubAgent's live-retune surface."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+        self.applied: list[tuple[str, str]] = []
+
+    def apply_hub_settings(self, *, model: str, reasoning_effort: str) -> None:
+        self.applied.append((model, reasoning_effort))
+        self.config.orchestrator_model = model
+        self.config.orchestrator_reasoning_effort = reasoning_effort
+
+
+def _ready_client(path: Path) -> tuple[TestClient, _FakeHub]:
+    """Build a client whose app has a ready hub wired behind a real bridge.
+
+    Uses the production ``HubBridge`` so the lock-and-delegate path under
+    test is the one that ships; only the hub itself is faked.
+    """
+    from clients.web.hub_bridge import HubBridge
+
+    hub = _FakeHub(get_config())
+    app = create_app(hub_settings_store=HubSettingsStore(path=path))
+
+    @asynccontextmanager
+    async def _ready_lifespan(a: Any) -> AsyncIterator[None]:
+        a.state.bridge = HubBridge(hub)  # type: ignore[arg-type]
+        a.state.ready = True
+        yield
+
+    app.router.lifespan_context = _ready_lifespan
+    return TestClient(app), hub
+
+
+class TestLiveApply:
+    """A saved change retunes the running hub — no terminal restart.
+
+    Asking someone to go back to a terminal after clicking Save in a web UI
+    is the failure this path exists to prevent, so the assertions are about
+    the running hub, not just the file.
+    """
+
+    def test_patch_applies_to_the_running_hub(self, settings_path: Path) -> None:
+        client, hub = _ready_client(settings_path)
+        with client:
+            body = client.patch(
+                "/api/settings",
+                json={"hub_model": "gpt-5.6-terra", "hub_reasoning_effort": "xhigh"},
+            ).json()
+
+        assert hub.applied == [("gpt-5.6-terra", "xhigh")]
+        assert body["running"] == body["saved"]
+        assert body["restart_required"] is False
+
+    def test_env_pinned_fields_are_not_applied(
+        self, settings_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env outranks the file; hot-applying would break that precedence.
+
+        The pinned value is deliberately the non-default one, and the saved
+        value the default: if the code fell back to the shipped default
+        instead of the env-resolved running value, the two would be
+        indistinguishable and this test would pass over the bug.
+        """
+        monkeypatch.setenv("ORCHESTRATOR_MODEL", "gpt-5.6-terra")
+        reset_config()
+        client, hub = _ready_client(settings_path)
+        with client:
+            client.patch(
+                "/api/settings",
+                json={"hub_model": "gpt-5.6-sol", "hub_reasoning_effort": "high"},
+            )
+
+        # Effort moved; the env-pinned model kept the exported value.
+        assert hub.applied == [("gpt-5.6-terra", "high")]
+
+    def test_nothing_is_applied_before_the_hub_is_ready(self, settings_path: Path) -> None:
+        """Mid-init there is no agent to retune; the file is enough."""
+        with _client(settings_path) as client:
+            response = client.patch("/api/settings", json={"hub_model": "gpt-5.6-terra"})
+
+        assert response.status_code == 200
+        assert HubSettingsStore(path=settings_path).load().hub_model == "gpt-5.6-terra"
+
+
+class TestPendingApplyReporting:
+    """A change queued behind a live query must not be reported as a restart.
+
+    ``restart_required`` drives the modal's "restart OBaI" line and the
+    sidebar's pending badge. Telling someone to restart when the change is
+    already queued to apply by itself sends them to a terminal for nothing.
+    """
+
+    def test_pending_apply_suppresses_the_restart_flag(self, settings_path: Path) -> None:
+        # Materialize the config singleton before the save, standing in for a
+        # hub that booted on the defaults.
+        get_config()
+        store = HubSettingsStore(path=settings_path)
+        store.save(HubSettings(hub_model="gpt-5.6-terra", hub_reasoning_effort="xhigh"))
+
+        # Saved differs from running (the config singleton is at its defaults),
+        # which is exactly the state that otherwise reads as "restart needed".
+        queued = _hub_settings_payload(store, pending_apply=True)
+        stuck = _hub_settings_payload(store, pending_apply=False)
+
+        assert queued["saved"] != queued["running"]
+        assert queued["pending_apply"] is True
+        assert queued["restart_required"] is False
+        assert stuck["restart_required"] is True

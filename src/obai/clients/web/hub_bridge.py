@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from agents import Session
 
     from core_agents.central_hub_agent import CentralHubAgent
+    from core_agents.config import ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ class HubBridge:
         self._lock = asyncio.Lock()
         self._mcp_buffer: list[dict[str, Any]] = []
         self._tracker = ToolCallTracker()
+        # Settings that arrived mid-query, applied when that query ends.
+        self._pending_settings: tuple[str, ReasoningEffort] | None = None
 
     def install_mcp_callback(self) -> None:
         """Register the global MCP tool callback.
@@ -47,6 +50,50 @@ class HubBridge:
         from core_agents.central_hub_agent import set_mcp_tool_callback
 
         set_mcp_tool_callback(self._on_mcp_event)
+
+    @property
+    def has_pending_settings(self) -> bool:
+        """True when a settings change is waiting for the current query to end."""
+        return self._pending_settings is not None
+
+    async def apply_hub_settings(self, *, model: str, reasoning_effort: ReasoningEffort) -> bool:
+        """Retune the hub now if it is idle, else queue it for the next query.
+
+        Never waits on the query lock. ``run_query`` holds that lock for a
+        whole streamed answer, which can run for minutes, and blocking here
+        would leave the caller's HTTP request hanging for exactly as long.
+        Queuing instead keeps the model from changing underneath a running
+        turn: ``run_query`` applies the queued change as it releases the lock.
+
+        The ``locked()`` check and the acquire that follows it are not
+        separated by an await, so no other task can take the lock in between:
+        acquiring an unlocked ``asyncio.Lock`` completes without yielding.
+
+        Args:
+            model: Hub model name to switch to.
+            reasoning_effort: Hub reasoning effort tier to switch to.
+
+        Returns:
+            True if applied immediately, False if queued until the live
+            query finishes.
+        """
+        if self._lock.locked():
+            self._pending_settings = (model, reasoning_effort)
+            logger.info("Hub busy; queued model=%s effort=%s", model, reasoning_effort)
+            return False
+
+        async with self._lock:
+            self._pending_settings = None
+            self._hub.apply_hub_settings(model=model, reasoning_effort=reasoning_effort)
+        return True
+
+    def _apply_pending_settings(self) -> None:
+        """Apply settings queued mid-query. Caller must hold the lock."""
+        if self._pending_settings is None:
+            return
+        model, reasoning_effort = self._pending_settings
+        self._pending_settings = None
+        self._hub.apply_hub_settings(model=model, reasoning_effort=reasoning_effort)
 
     def _on_mcp_event(
         self,
@@ -342,3 +389,10 @@ class HubBridge:
                 else:
                     logger.exception("Query failed: %s", e)
                     yield {"type": "error", "message": str(e), "guardrail": False}
+
+            finally:
+                # A settings change that landed mid-answer waited rather than
+                # switching the model underneath the turn that was running.
+                # Applying it here, still under the lock, means the hub is
+                # already retuned by the time the answer lands on screen.
+                self._apply_pending_settings()

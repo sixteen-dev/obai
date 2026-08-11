@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from core_agents import hub_settings as hub_settings_module
 from core_agents.hub_settings import (
     HUB_MODELS,
     HUB_REASONING_EFFORTS,
@@ -33,6 +34,21 @@ class TestHubSettings:
         """The UI/CLI choice lists are the same set the model validates."""
         assert HUB_MODELS == ("gpt-5.6-sol", "gpt-5.6-terra")
         assert HUB_REASONING_EFFORTS == ("medium", "high", "xhigh", "max")
+
+    def test_every_offered_effort_is_accepted_by_the_installed_sdk(self) -> None:
+        """The SDK builds the request; offering a tier it rejects is a crash.
+
+        ``max`` landed in openai 2.45.0. Offering it against an older SDK
+        fails inside ``Reasoning(...)`` during hub construction — an
+        unreadable traceback at ASGI startup, not a config error.
+        """
+        from openai.types.shared.reasoning_effort import ReasoningEffort
+
+        unsupported = [e for e in HUB_REASONING_EFFORTS if e not in str(ReasoningEffort)]
+        assert not unsupported, (
+            f"offered but rejected by the installed openai SDK: {unsupported}. "
+            f"Raise the openai floor in src/obai/pyproject.toml."
+        )
 
     def test_every_choice_is_accepted(self) -> None:
         """Nothing offered in the UI can fail validation.
@@ -70,6 +86,40 @@ class TestHubSettings:
         """extra=forbid keeps typos from silently doing nothing."""
         with pytest.raises(ValueError):
             HubSettings(hub_modle="gpt-5.6-sol")  # type: ignore[call-arg]
+
+    def test_effort_the_sdk_cannot_accept_is_rejected_with_guidance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate an SDK too old for the stored tier.
+
+        This is what a stale environment does — the app previously died deep
+        inside ``Reasoning(...)`` during hub construction. It must instead say
+        which tier, which SDK version, and what to do.
+        """
+        monkeypatch.setattr(
+            hub_settings_module,
+            "_sdk_reasoning_efforts",
+            lambda: frozenset({"low", "medium", "high", "xhigh"}),
+        )
+
+        with pytest.raises(ValueError, match="openai") as excinfo:
+            HubSettings.model_validate({"hub_reasoning_effort": "max"})
+
+        message = str(excinfo.value)
+        assert "max" in message
+        assert "2.45.0" in message
+
+    def test_supported_effort_still_passes_under_the_same_guard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard must not reject tiers the SDK does support."""
+        monkeypatch.setattr(
+            hub_settings_module,
+            "_sdk_reasoning_efforts",
+            lambda: frozenset({"low", "medium", "high", "xhigh"}),
+        )
+
+        assert HubSettings.model_validate({"hub_reasoning_effort": "xhigh"})
 
 
 # ---------------------------------------------------------------------------

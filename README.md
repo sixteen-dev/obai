@@ -304,7 +304,12 @@ OBaI ships a browser-based client with a dark glassmorphism interface:
 ```bash
 obai web                  # Launch on http://127.0.0.1:8090
 obai web --port 3000      # Custom port
+obai web --reload         # Dev: restart on Python source changes
 ```
+
+`--reload` watches Python sources only. Static assets (CSS/JS/HTML) are read
+from disk per request, so a browser refresh is enough for those — and every
+Python reload rebuilds the hub, which costs 30-60s of MCP re-init.
 
 The web UI is automatically started by `setup.sh`. It runs a single-process FastAPI/uvicorn server with minimal resource overhead — the heavy computation happens in the MCP servers (Docker) and the OpenAI API (remote).
 
@@ -442,10 +447,34 @@ Both write the same `~/.obai/settings.json`. The file is created on first write;
 
 **Environment variables win.** Resolution order for these two settings is `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` → `~/.obai/settings.json` → shipped default. They are fully supported, not deprecated — the eval A/B comparison and the E2E regression gate both pin the hub model by injecting env. But that also means a stale `export ORCHESTRATOR_MODEL=...` in your shell profile, or a leftover `ORCHESTRATOR_MODEL=` line in `~/.obai/.env` (the CLI loads it into the environment at startup), makes the web UI and `obai config` appear to do nothing. Both surfaces warn you when the matching variable is set; if a change does not take, that is the first place to look.
 
-**Changes apply on the next hub start.** Nothing hot-swaps a running agent. After changing the model or effort — by any of the three routes — run:
+**Saving in the web UI applies immediately.** The web server retunes its own
+running hub in place, so the change lands on your next message — no restart, no
+lost conversation, no 30-60s of hub re-initialization. Everything else about
+the hub (skills, MCP connections, open WebSockets) is untouched.
+
+Other clients are separate processes holding their own hub, so they cannot be
+signalled from the browser. Only the hub reads these settings; the MCP servers
+and Opik are unaffected either way:
+
+| Client | What to do |
+|--------|------------|
+| Web UI | **Nothing.** Applies on your next message. |
+| `obai query` | **Nothing.** Each invocation is a new process that builds a fresh hub. |
+| `obai chat` / `obai tui` | Exit and relaunch. Both build the hub once at startup and hold it for the whole session, so `clear` does not pick up a change. |
+| Everything | `obai restart` — full `teardown.sh` + `setup.sh`, which rebuilds the Docker stacks too. Never needed for a settings change. |
+
+Saving while an answer is streaming is queued rather than applied mid-turn, so
+the model never changes underneath a running answer; the modal says "applies
+once the current answer finishes", and the next message uses the new settings.
+
+The one case where the web UI still asks you to restart is a save that lands
+while the hub is still initializing — there is no agent to retune yet. The
+modal and the sidebar both say so when it happens.
+
+To check what a new hub would pick up, without starting one:
 
 ```bash
-obai restart
+obai config show
 ```
 
 ---

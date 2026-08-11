@@ -320,6 +320,19 @@ body {
     color: var(--text-secondary);
 }
 
+/* Saved hub settings that are not yet running. Sits under the model rows,
+   which report the live hub. */
+.model-summary-pending {
+    flex-basis: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--danger);
+    font-size: 10px;
+}
+
 #settings-btn {
     display: flex;
     align-items: center;

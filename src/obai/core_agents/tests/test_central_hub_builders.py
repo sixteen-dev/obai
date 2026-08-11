@@ -7,19 +7,23 @@ wired correctly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agents import Agent
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 
 from core_agents.central_hub_agent import (
     HUB_SKILLS_DIR,
     CentralHubAgent,
+    _apply_hub_agent_settings,
     _build_hub_agent,
     _hub_context_management,
 )
+from core_agents.config import get_config, reset_config
 
 
 def test_hub_skills_dir_exists() -> None:
@@ -156,3 +160,136 @@ def test_hub_builder_wires_compaction_and_retained_reasoning() -> None:
     assert reasoning is not None
     assert reasoning.effort == "medium"
     assert reasoning.context == "all_turns"
+
+
+class TestApplyHubSettings:
+    """Live-applying a hub model/effort change without rebuilding the agent.
+
+    The SDK resolves ``agent.model`` and ``agent.model_settings`` per turn
+    (``run_internal/turn_preparation.get_model``), so mutating the built
+    agent takes effect on the next query — no process restart, no MCP
+    re-init, no dropped WebSocket.
+    """
+
+    @staticmethod
+    def _agent() -> Agent[None]:
+        return _build_hub_agent(
+            instructions="hub instructions",
+            model="gpt-5.6-sol",
+            specialist_tools=[],
+            guardrails=[],
+            reasoning_effort="medium",
+            verbosity="low",
+            compact_ratio=0.9,
+        )
+
+    def test_applies_model_and_effort(self) -> None:
+        agent = self._agent()
+
+        _apply_hub_agent_settings(
+            agent,
+            model="gpt-5.6-terra",
+            reasoning_effort="xhigh",
+            compact_ratio=0.9,
+        )
+
+        assert agent.model == "gpt-5.6-terra"
+        assert agent.model_settings.reasoning is not None
+        assert agent.model_settings.reasoning.effort == "xhigh"
+
+    def test_keeps_reasoning_context_pinned(self) -> None:
+        """context="all_turns" is what retains reasoning across hub turns.
+
+        Rebuilding Reasoning() without it would silently drop that.
+        """
+        agent = self._agent()
+
+        _apply_hub_agent_settings(
+            agent, model="gpt-5.6-terra", reasoning_effort="high", compact_ratio=0.9
+        )
+
+        assert agent.model_settings.reasoning is not None
+        assert agent.model_settings.reasoning.context == "all_turns"
+
+    def test_recomputes_the_compaction_threshold_for_the_new_model(self) -> None:
+        """The threshold is a fraction of the *model's* window."""
+        agent = self._agent()
+
+        _apply_hub_agent_settings(
+            agent, model="gpt-5.6-terra", reasoning_effort="medium", compact_ratio=0.5
+        )
+
+        expected = _hub_context_management(model="gpt-5.6-terra", compact_ratio=0.5)
+        assert agent.model_settings.context_management == expected
+
+    def test_leaves_everything_else_untouched(self) -> None:
+        """Only model and effort change; tools and prompt must survive."""
+        agent = self._agent()
+        assert isinstance(agent, SandboxAgent)
+        instructions, caps, verbosity = (
+            agent.instructions,
+            agent.capabilities,
+            agent.model_settings.verbosity,
+        )
+
+        _apply_hub_agent_settings(
+            agent, model="gpt-5.6-terra", reasoning_effort="max", compact_ratio=0.9
+        )
+
+        assert agent.instructions == instructions
+        assert agent.capabilities is caps
+        assert agent.model_settings.verbosity == verbosity
+        assert agent.model_settings.parallel_tool_calls is True
+
+
+class TestCentralHubApplyHubSettings:
+    """The public entry point: agent retune plus the config sync.
+
+    ``self.config`` is the ``get_config()`` singleton that ``/api/status`` and
+    ``/api/settings`` read. Retuning the agent without updating it would leave
+    every surface reporting the old model forever — indistinguishable, from
+    the user's side, from the save having failed.
+    """
+
+    @pytest.fixture
+    def hub(self) -> Iterator[CentralHubAgent]:
+        """A hub with a built agent and an isolated config singleton."""
+        reset_config()
+        hub = CentralHubAgent()
+        hub.agent = _build_hub_agent(
+            instructions="hub instructions",
+            model="gpt-5.6-sol",
+            specialist_tools=[],
+            guardrails=[],
+            reasoning_effort="medium",
+            verbosity="low",
+            compact_ratio=0.9,
+        )
+        yield hub
+        reset_config()
+
+    def test_retunes_the_agent(self, hub: CentralHubAgent) -> None:
+        hub.apply_hub_settings(model="gpt-5.6-terra", reasoning_effort="xhigh")
+
+        assert hub.agent is not None
+        assert hub.agent.model == "gpt-5.6-terra"
+        assert hub.agent.model_settings.reasoning is not None
+        assert hub.agent.model_settings.reasoning.effort == "xhigh"
+
+    def test_syncs_the_config_the_status_endpoints_read(self, hub: CentralHubAgent) -> None:
+        hub.apply_hub_settings(model="gpt-5.6-terra", reasoning_effort="xhigh")
+
+        assert hub.config.orchestrator_model == "gpt-5.6-terra"
+        assert hub.config.orchestrator_reasoning_effort == "xhigh"
+        # The same object /api/status reports from, not a copy of it.
+        assert get_config().orchestrator_model == "gpt-5.6-terra"
+
+    def test_refuses_before_initialize(self) -> None:
+        """Fail loud rather than pretend a change was applied to nothing."""
+        reset_config()
+        hub = CentralHubAgent()
+
+        with pytest.raises(RuntimeError, match="before initialize"):
+            hub.apply_hub_settings(model="gpt-5.6-terra", reasoning_effort="high")
+
+        reset_config()

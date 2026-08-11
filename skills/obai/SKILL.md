@@ -227,5 +227,5 @@ The web UI settings modal writes the same file.
 Three things to tell a user who asks why a change did not take effect:
 
 1. **Env wins.** Resolution is `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` → `~/.obai/settings.json` → shipped default. An export in the user's shell, or a leftover line in `~/.obai/.env` (the CLI loads it into the environment at startup), silently outranks the file. Check with `obai config show` before assuming the write failed.
-2. **A restart is required.** Nothing hot-swaps a running agent. `obai restart` after any change; `--model` on `obai query` is the only per-query override.
+2. **Only the web UI applies a change live.** Saving in its settings modal retunes that server's own hub in place. A CLI write reaches no running process, so restart the client you use — exit and relaunch `obai chat` / `obai tui`; `obai query` builds a fresh hub every invocation and needs nothing. `--model` on `obai query` is the only per-query override.
 3. **A missing file is normal.** Absent or empty means shipped defaults, on a fresh install and after an upgrade alike. Only a file that exists and does not parse or validate is an error — it is reported, never silently ignored, so fix or delete it.

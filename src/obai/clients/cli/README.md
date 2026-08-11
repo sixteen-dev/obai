@@ -69,7 +69,7 @@ obai config set-effort high           # medium | high | xhigh | max
 Two caveats:
 
 - **`ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` win over the file.** They remain supported — that is how the eval and regression harnesses pin a hub model — but if either is exported in your shell or sitting in `~/.obai/.env`, `obai config` writes the file and nothing changes. The command warns when it detects this.
-- **Changes apply on the next hub start.** Run `obai restart` afterwards; a running session keeps the model and effort it was built with.
+- **Changes apply on the next hub start.** A running `obai chat` / `obai tui` session keeps the model and effort it was built with — exit and relaunch. A running web server picks the file up only when *it* writes it (its settings modal hot-applies); a CLI write does not reach that process.
 
 With no file present, OBaI uses the shipped defaults (`gpt-5.6-sol`, `medium`), so there is nothing to create on a fresh install or an upgrade.
 

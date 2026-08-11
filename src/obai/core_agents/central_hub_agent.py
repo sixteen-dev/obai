@@ -1093,6 +1093,42 @@ def _build_hub_agent(
     )
 
 
+def _apply_hub_agent_settings(
+    agent: Agent[None],
+    *,
+    model: str,
+    reasoning_effort: ReasoningEffort,
+    compact_ratio: float | None,
+) -> None:
+    """Retune a built hub agent's model and reasoning effort in place.
+
+    The SDK resolves ``agent.model`` and ``agent.model_settings`` once per
+    turn (``agents.run_internal.turn_preparation``), so mutating them takes
+    effect on the next query. That is the whole point: a model change from
+    the settings UI applies without tearing down the MCP connections, the
+    loaded skills, or the open WebSockets.
+
+    Only the two user-owned fields move. Instructions, tools, guardrails and
+    verbosity are model-independent and are left exactly as built.
+
+    Args:
+        agent: The hub agent returned by :func:`_build_hub_agent`.
+        model: Hub model name to switch to.
+        reasoning_effort: Hub reasoning effort tier to switch to.
+        compact_ratio: Fraction of the *new* model's context window at which
+            to compact, or None to leave ``context_management`` unset.
+    """
+    agent.model = model
+    settings = agent.model_settings
+    # Rebuild rather than mutate: Reasoning is a pydantic model, and
+    # context="all_turns" must survive the swap or the hub silently stops
+    # carrying reasoning across turns.
+    settings.reasoning = Reasoning(effort=reasoning_effort, context="all_turns")
+    # The compaction threshold is a fraction of the model's window, so a
+    # model change invalidates it.
+    settings.context_management = _hub_context_management(model=model, compact_ratio=compact_ratio)
+
+
 class CentralHubAgent:
     """Central hub agent that coordinates specialist agents.
 
@@ -1364,6 +1400,39 @@ class CentralHubAgent:
             logger.exception("Central Hub initialization failed, cleaning up")
             await self._cleanup_agents()
             raise
+
+    def apply_hub_settings(self, *, model: str, reasoning_effort: ReasoningEffort) -> None:
+        """Retune the running hub to a new model and reasoning effort.
+
+        Applies to the next query. Specialists are code-owned and are not
+        touched. ``self.config`` is updated alongside the agent so every
+        surface that reports the running values (``/api/status``,
+        ``/api/settings``) stays honest instead of describing the agent the
+        process started with.
+
+        Callers must serialize this against in-flight queries — the web
+        client does so through ``HubBridge.apply_hub_settings``.
+
+        Args:
+            model: Hub model name to switch to.
+            reasoning_effort: Hub reasoning effort tier to switch to.
+
+        Raises:
+            RuntimeError: The hub has not been initialized yet.
+        """
+        if self.agent is None:
+            msg = "Cannot apply hub settings before initialize()"
+            raise RuntimeError(msg)
+
+        _apply_hub_agent_settings(
+            self.agent,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            compact_ratio=self.config.orchestrator_compact_ratio,
+        )
+        self.config.orchestrator_model = model
+        self.config.orchestrator_reasoning_effort = reasoning_effort
+        logger.info("Hub retuned live to model=%s effort=%s", model, reasoning_effort)
 
     async def _init_specialists_parallel(self) -> None:
         """Initialize all specialist agents in parallel.

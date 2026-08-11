@@ -228,7 +228,7 @@ The hub's model and reasoning effort — and only those two — are user-settabl
 
 An absent or empty file means "use the shipped defaults" (fresh installs and upgrades both land there — no migration). A file that exists but does not parse or validate raises `ValueError`; user-facing callers must report it rather than fall back, so nobody is silently moved to another price tier.
 
-Changes apply on the next hub construction — `obai restart`. Nothing hot-swaps a live agent.
+The web server hot-applies a saved change: `PATCH /api/settings` calls `HubBridge.apply_hub_settings`, which mutates `agent.model`, `agent.model_settings.reasoning`, and the compaction threshold on the live hub (the SDK re-resolves both per turn), plus the matching `AgentConfig` fields so `/api/status` stays honest. It never waits on the query lock — `run_query` holds that for a whole streamed answer — so a change that lands mid-answer is queued and applied by the next query, and the payload's `pending_apply` says so. Env-pinned fields are skipped, keeping the precedence above intact. Other clients each hold their own hub in their own process and pick the change up on the next launch.
 
 ### Prompts
 

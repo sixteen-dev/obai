@@ -9,26 +9,26 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-28T03:23:15.448504979Z"
+exclude-newer = "2026-08-03T02:48:32.954915199Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-openai-agents = { timestamp = "2026-08-04T03:23:15.44852146Z", span = "PT0S" }
-pytest = { timestamp = "2026-08-04T03:23:15.448520458Z", span = "PT0S" }
-pillow = { timestamp = "2026-08-04T03:23:15.448520789Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-08-04T03:23:15.448521911Z", span = "PT0S" }
-opik = { timestamp = "2026-08-04T03:23:15.448521681Z", span = "PT0S" }
-starlette = { timestamp = "2026-08-04T03:23:15.448522151Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-08-04T03:23:15.448519426Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-08-04T03:23:15.448519196Z", span = "PT0S" }
-litellm = { timestamp = "2026-08-04T03:23:15.448518955Z", span = "PT0S" }
-cryptography = { timestamp = "2026-08-04T03:23:15.448520007Z", span = "PT0S" }
-authlib = { timestamp = "2026-08-04T03:23:15.44852124Z", span = "PT0S" }
-idna = { timestamp = "2026-08-04T03:23:15.448522532Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-08-04T03:23:15.448521019Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-08-04T03:23:15.448514136Z", span = "PT0S" }
-pygments = { timestamp = "2026-08-04T03:23:15.448519767Z", span = "PT0S" }
-requests = { timestamp = "2026-08-04T03:23:15.448520238Z", span = "PT0S" }
+openai-agents = { timestamp = "2026-08-10T02:48:32.95494765Z", span = "PT0S" }
+pytest = { timestamp = "2026-08-10T02:48:32.954946668Z", span = "PT0S" }
+pillow = { timestamp = "2026-08-10T02:48:32.954946959Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-08-10T02:48:32.954948101Z", span = "PT0S" }
+opik = { timestamp = "2026-08-10T02:48:32.954947861Z", span = "PT0S" }
+starlette = { timestamp = "2026-08-10T02:48:32.954948352Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-08-10T02:48:32.954945526Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-08-10T02:48:32.954945316Z", span = "PT0S" }
+litellm = { timestamp = "2026-08-10T02:48:32.954945065Z", span = "PT0S" }
+cryptography = { timestamp = "2026-08-10T02:48:32.954946228Z", span = "PT0S" }
+authlib = { timestamp = "2026-08-10T02:48:32.95494743Z", span = "PT0S" }
+idna = { timestamp = "2026-08-10T02:48:32.954948742Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-08-10T02:48:32.954947199Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-08-10T02:48:32.954937631Z", span = "PT0S" }
+pygments = { timestamp = "2026-08-10T02:48:32.954945857Z", span = "PT0S" }
+requests = { timestamp = "2026-08-10T02:48:32.954946458Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1792,7 +1792,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langcache", marker = "extra == 'caching'", specifier = ">=0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "openai", specifier = ">=2.42.0" },
+    { name = "openai", specifier = ">=2.45.0" },
     { name = "openai-agents", specifier = ">=0.19.1" },
     { name = "opik", specifier = ">=2.1.31" },
     { name = "pydantic", specifier = ">=2.0.0" },
