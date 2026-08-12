@@ -17,7 +17,7 @@ all = [
     "fastmcp>=1.0.0",
     "openai>=1.98.0",
     "pydantic-settings>=2.14.2",
-    "mcp>=1.12.3",
+    "mcp>=1.28.1",
     "pydantic>=2.10.1",
     "structlog>=25.1.0",
     "tavily-python>=0.7.0",
@@ -71,7 +71,7 @@ test = [
 [tool.uv]
 exclude-newer = "7 days"
 # Security-pinned packages exempt from exclude-newer age gate
-exclude-newer-package = { pydantic-settings = "0 days", requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", h2 = "0 days", fastmcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days", click = "0 days" }
+exclude-newer-package = { pydantic-settings = "0 days", requests = "0 days", onnx = "0 days", anthropic = "0 days", cryptography = "0 days", h2 = "0 days", fastmcp = "0 days", mcp = "0 days", pygments = "0 days", aiohttp = "0 days", pytest = "0 days", pillow = "0 days", python-multipart = "0 days", authlib = "0 days", urllib3 = "0 days", starlette = "0 days", idna = "0 days", click = "0 days", setuptools = "0 days" }
 # Pin transitive deps to patched versions where fixes exist
 constraint-dependencies = [
     "python-multipart>=0.0.31",  # GHSA-pp6c-gr5w-3c5g + GHSA-v9pg-7xvm-68hf + GHSA-5rvq-cxj2-64vf + GHSA-vffw-93wf-4j4q: header DoS, negative Content-Length, querystring parsing, param smuggling
@@ -80,9 +80,10 @@ constraint-dependencies = [
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape
     "cryptography>=50.0.0",  # CVE-2026-34073 + GHSA-p423-j2cm-9vmq + GHSA-537c-gmf6-5ccf + GHSA-g6cj-pr64-35w5: buffer overflow + vulnerable OpenSSL bundled in wheels + PKCS#7 Bleichenbacher oracle
     "h2>=4.4.1",             # GHSA-6hr6-w5qg-qmwg: duplicate Host header enables request smuggling
+    "mcp>=1.28.1",  # GHSA-hvrp-rf83-w775 + GHSA-jpw9-pfvf-9f58 + GHSA-vj7q-gjh5-988w: OAuth token passthrough, DNS-rebinding auth bypass, unauthenticated session hijack
     "fastmcp>=3.2.0",        # GHSA-m8x7, GHSA-rww4, GHSA-vv7q: injection + SSRF
     "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
-    "aiohttp>=3.14.0",       # GHSA-jg22-mg44-37j8 + GHSA-hg6j-4rv6-33pg: untrusted deserialization + cross-origin redirect
+    "aiohttp>=3.14.3",       # GHSA-jg22-mg44-37j8 + GHSA-hg6j-4rv6-33pg + GHSA-mfx4-hv73-q22v + GHSA-mq44-7p77-q5h7 + GHSA-cq5v-8q36-5273: untrusted deserialization + cross-origin redirect + WebSocket-upgrade request smuggling + unnegotiated compressed frames + OOB heap read in the C response parser
     "litellm>=1.85.0",       # GHSA-r75f-5x8p-qvmc + GHSA-v4p8-mg3p-g94g + GHSA-xqmj-j6mv-4862 + GHSA-wxxx-gvqv-xp7p: SQLi, auth-RCE, SSTI, sandbox escape
     "authlib>=1.7.2",        # GHSA-jj8c-mmj3-mmgv (CSRF), GHSA-r95x-qfjj-fjj2 (OIDC open redirect)
     "urllib3>=2.7.0",        # GHSA-mf9v-mfxr-j63j + GHSA-qccp-gfcp-xxvc: decompression bomb + header forwarding
@@ -92,6 +93,7 @@ constraint-dependencies = [
     "joserfc>=1.6.8",        # GHSA-gg9x-qcx2-xmrh: HS256/384/512 verify accepts empty/nil HMAC key (fixed 1.6.8); also GHSA-wphv-vfrh-23q5
     "click>=8.3.3",          # PYSEC-2026-2132 (RHSA-2026:24761): fixed in click 8.3.3
     "pillow>=12.3.0",        # PYSEC-2026-2253/2254/2255/2256/2257: multiple fixes in Pillow 12.3.0
+    "setuptools>=83.0.0",    # GHSA-h35f-9h28-mq5c: MANIFEST.in exclusion bypass via NFC/NFD filename collision
 ]
 
 # Tool configurations for the entire monorepo

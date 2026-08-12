@@ -9,20 +9,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-28T03:23:18.344915786Z"
+exclude-newer = "2026-08-05T01:47:48.079882421Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-08-04T03:23:18.344930073Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-08-04T03:23:18.344930834Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-08-04T03:23:18.344930293Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-08-04T03:23:18.344924172Z", span = "PT0S" }
-starlette = { timestamp = "2026-08-04T03:23:18.344931165Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-08-04T03:23:18.344929532Z", span = "PT0S" }
-cryptography = { timestamp = "2026-08-04T03:23:18.344929271Z", span = "PT0S" }
-pygments = { timestamp = "2026-08-04T03:23:18.344929772Z", span = "PT0S" }
-authlib = { timestamp = "2026-08-04T03:23:18.344930544Z", span = "PT0S" }
-idna = { timestamp = "2026-08-04T03:23:18.344931385Z", span = "PT0S" }
+pytest = { timestamp = "2026-08-12T01:47:48.07989761Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-08-12T01:47:48.079898602Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-08-12T01:47:48.079897861Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-08-12T01:47:48.079892661Z", span = "PT0S" }
+starlette = { timestamp = "2026-08-12T01:47:48.079898892Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-08-12T01:47:48.079896678Z", span = "PT0S" }
+cryptography = { timestamp = "2026-08-12T01:47:48.079896398Z", span = "PT0S" }
+mcp = { timestamp = "2026-08-12T01:47:48.079896959Z", span = "PT0S" }
+pygments = { timestamp = "2026-08-12T01:47:48.079897319Z", span = "PT0S" }
+authlib = { timestamp = "2026-08-12T01:47:48.079898211Z", span = "PT0S" }
+idna = { timestamp = "2026-08-12T01:47:48.079899173Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -31,6 +32,7 @@ constraints = [
     { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "idna", specifier = ">=3.15" },
     { name = "joserfc", specifier = ">=1.6.8" },
+    { name = "mcp", specifier = ">=1.28.1" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
