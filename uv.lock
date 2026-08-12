@@ -19,29 +19,29 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-05T01:47:46.600327011Z"
+exclude-newer = "2026-08-05T03:24:19.621017985Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-setuptools = { timestamp = "2026-08-12T01:47:46.600341127Z", span = "PT0S" }
-pytest = { timestamp = "2026-08-12T01:47:46.600339163Z", span = "PT0S" }
-pillow = { timestamp = "2026-08-12T01:47:46.600339384Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-08-12T01:47:46.600340085Z", span = "PT0S" }
-h2 = { timestamp = "2026-08-12T01:47:46.600337851Z", span = "PT0S" }
-starlette = { timestamp = "2026-08-12T01:47:46.600340466Z", span = "PT0S" }
-authlib = { timestamp = "2026-08-12T01:47:46.600339845Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-08-12T01:47:46.600338101Z", span = "PT0S" }
-cryptography = { timestamp = "2026-08-12T01:47:46.60033757Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-08-12T01:47:46.600338933Z", span = "PT0S" }
-click = { timestamp = "2026-08-12T01:47:46.600340897Z", span = "PT0S" }
-onnx = { timestamp = "2026-08-12T01:47:46.600336949Z", span = "PT0S" }
-idna = { timestamp = "2026-08-12T01:47:46.600340686Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-08-12T01:47:46.600339634Z", span = "PT0S" }
-anthropic = { timestamp = "2026-08-12T01:47:46.60033722Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-08-12T01:47:46.600333282Z", span = "PT0S" }
-pygments = { timestamp = "2026-08-12T01:47:46.600338703Z", span = "PT0S" }
-mcp = { timestamp = "2026-08-12T01:47:46.600338352Z", span = "PT0S" }
-requests = { timestamp = "2026-08-12T01:47:46.600336709Z", span = "PT0S" }
+setuptools = { timestamp = "2026-08-12T03:24:19.621038013Z", span = "PT0S" }
+pytest = { timestamp = "2026-08-12T03:24:19.621036069Z", span = "PT0S" }
+pillow = { timestamp = "2026-08-12T03:24:19.62103629Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-08-12T03:24:19.621036971Z", span = "PT0S" }
+h2 = { timestamp = "2026-08-12T03:24:19.621034687Z", span = "PT0S" }
+starlette = { timestamp = "2026-08-12T03:24:19.621037342Z", span = "PT0S" }
+authlib = { timestamp = "2026-08-12T03:24:19.621036741Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-08-12T03:24:19.621034957Z", span = "PT0S" }
+cryptography = { timestamp = "2026-08-12T03:24:19.621034426Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-08-12T03:24:19.621035849Z", span = "PT0S" }
+click = { timestamp = "2026-08-12T03:24:19.621037783Z", span = "PT0S" }
+onnx = { timestamp = "2026-08-12T03:24:19.621033835Z", span = "PT0S" }
+idna = { timestamp = "2026-08-12T03:24:19.621037562Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-08-12T03:24:19.62103652Z", span = "PT0S" }
+anthropic = { timestamp = "2026-08-12T03:24:19.621034066Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-08-12T03:24:19.621027143Z", span = "PT0S" }
+pygments = { timestamp = "2026-08-12T03:24:19.621035538Z", span = "PT0S" }
+mcp = { timestamp = "2026-08-12T03:24:19.621035208Z", span = "PT0S" }
+requests = { timestamp = "2026-08-12T03:24:19.621033565Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1383,7 +1383,7 @@ all = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=1.0.0" },
     { name = "mcp", specifier = ">=1.28.1" },
-    { name = "openai", specifier = ">=1.98.0" },
+    { name = "openai", specifier = ">=2.45.0" },
     { name = "pydantic", specifier = ">=2.10.1" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "structlog", specifier = ">=25.1.0" },
@@ -1399,7 +1399,7 @@ dev = [
     { name = "langdetect", specifier = ">=1.0.9" },
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mypy", specifier = ">=1.17.1" },
-    { name = "openai", specifier = ">=1.98.0" },
+    { name = "openai", specifier = ">=2.45.0" },
     { name = "pdfplumber", specifier = ">=0.11.7" },
     { name = "pre-commit", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.10.1" },
@@ -1423,7 +1423,7 @@ test = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=1.0.0" },
     { name = "mcp", specifier = ">=1.28.1" },
-    { name = "openai", specifier = ">=1.98.0" },
+    { name = "openai", specifier = ">=2.45.0" },
     { name = "pydantic", specifier = ">=2.10.1" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -1471,7 +1471,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.29.0"
+version = "2.53.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1483,9 +1483,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/15/203d537e58986b5673e7f232453a2a2f110f22757b15921cbdeea392e520/openai-2.29.0.tar.gz", hash = "sha256:32d09eb2f661b38d3edd7d7e1a2943d1633f572596febe64c0cd370c86d52bec", size = 671128, upload-time = "2026-03-17T17:53:49.599Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/cf/36e3e7235fdf6d125c052acc0970924611b17a20a4fe580596faf4566a65/openai-2.53.0.tar.gz", hash = "sha256:baf5802ad08980e1d9d561e1b996e800c8bcd14af5847c6d0e7a5cc59e4d4116", size = 1099435, upload-time = "2026-08-03T21:42:01.664Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/b1/35b6f9c8cf9318e3dbb7146cc82dab4cf61182a8d5406fc9b50864362895/openai-2.29.0-py3-none-any.whl", hash = "sha256:b7c5de513c3286d17c5e29b92c4c98ceaf0d775244ac8159aeb1bddf840eb42a", size = 1141533, upload-time = "2026-03-17T17:53:47.348Z" },
+    { url = "https://files.pythonhosted.org/packages/78/0f/cc6afea3542a5142c5d8fc8211c5e059a8375105d004a41dfa2c7948dbb0/openai-2.53.0-py3-none-any.whl", hash = "sha256:c694ffc747a3c4d1663ef2b07b811315a476164ee5efa3a993967349ebca7618", size = 1659829, upload-time = "2026-08-03T21:41:59.581Z" },
 ]
 
 [[package]]

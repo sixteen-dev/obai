@@ -72,6 +72,15 @@ per-service `[tool.mypy]` block and venv apply.
 
 ## Known Pitfalls
 - Update this section every time the repo teaches you the same lesson twice.
+- **Never `uv sync` at the repo root.** The root venv carries an editable
+  install of `src/obai` that no root manifest declares, so `uv sync` prunes it
+  along with its deps: `.venv/bin/obai` disappears, `import core_agents` starts
+  failing, and the E2E gate suite silently loses two preflight tests. After any
+  root `uv lock`, restore it with `uv pip install -e src/obai`.
+- **The root openai floor must not sit below `src/obai`'s.** The gate shells
+  out to `uv run obai query` from the repo root (`run_one.py`), so the root venv
+  runs the same CLI. A lower floor there rejects hub settings the service
+  accepts — `max` reasoning effort needs `openai>=2.45.0` and aborted every case.
 
 ---
 _Every mistake is a rule waiting to be written._

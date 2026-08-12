@@ -15,7 +15,11 @@ dependencies = [
 all = [
     # MCP Server dependencies
     "fastmcp>=1.0.0",
-    "openai>=1.98.0",
+    # Must not sit below src/obai's floor. This venv runs the same CLI (the
+    # E2E gate shells out to `uv run obai query` from the repo root), so a
+    # lower floor here rejects hub settings the service accepts — `max`
+    # reasoning effort needs 2.45.0 and failed every case before this.
+    "openai>=2.45.0",
     "pydantic-settings>=2.14.2",
     "mcp>=1.28.1",
     "pydantic>=2.10.1",
