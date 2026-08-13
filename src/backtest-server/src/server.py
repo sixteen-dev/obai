@@ -1659,6 +1659,38 @@ async def health_check(_request: Request) -> JSONResponse:
     )
 
 
+@mcp.custom_route("/health/ready", methods=["GET"])
+async def health_check_ready(_request: Request) -> JSONResponse:
+    """Readiness endpoint — 200 once bootstrap() has wired every component.
+
+    Returns:
+        JSONResponse with status 200 when ready, 503 while still initializing.
+
+    """
+    missing = [
+        name
+        for name in (
+            "fmp_client",
+            "db_manager",
+            "data_store",
+            "downloader",
+            "cache",
+            "job_store",
+            "settings",
+        )
+        if getattr(_state, name) is None
+    ]
+    return JSONResponse(
+        {
+            "status": "not_ready" if missing else "ready",
+            "server": "backtest-server",
+            "version": __version__,
+            "missing": missing,
+        },
+        status_code=503 if missing else 200,
+    )
+
+
 # --- Bootstrap & Main ---
 
 
