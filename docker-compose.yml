@@ -134,8 +134,8 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - MASSIVE_BASE_URL=https://api.massive.com
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
@@ -196,8 +196,8 @@ services:
       - ECONOMIC_INDICATORS_CACHE_TTL_HOURS=4
       # Market Data Server (for price data)
       - MARKET_DATA_SERVER_URL=http://market-data-server:8000
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
