@@ -452,6 +452,143 @@ def test_only_when_asserted_must_be_boolean() -> None:
     assert "invalid-text-assertion" in codes(issues)
 
 
+def test_assertion_kind_values_are_accepted_on_both_text_fields() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "required_text": [{"regex": "JPY", "kind": "structural"}],
+                    "forbidden_text": [{"regex": "unlimited", "kind": "lexical"}],
+                },
+            )
+        ),
+        strict=True,
+    )
+
+    assert not {
+        "invalid-text-assertion",
+        "invalid-assertion-kind",
+        "missing-assertion-kind",
+    } & codes(issues)
+
+
+def test_bogus_assertion_kind_is_an_error() -> None:
+    issues = lint_suite(
+        _suite(_case("A1", assertions={"required_text": [{"regex": "JPY", "kind": "vibes"}]}))
+    )
+
+    assert "invalid-assertion-kind" in codes(issues)
+
+
+def test_missing_assertion_kind_is_an_error_only_under_strict() -> None:
+    # Fail-closed at runtime (absent kind is structural), fail-loud at authoring
+    # time so the corpus stays classified as cases are added.
+    suite = _suite(_case("A1", assertions={"required_text": [{"regex": "JPY"}]}))
+
+    assert "missing-assertion-kind" not in codes(lint_suite(suite))
+    assert "missing-assertion-kind" in codes(lint_suite(suite, strict=True))
+
+
+def test_bare_string_spec_needs_no_kind_under_strict() -> None:
+    issues = lint_suite(_suite(_case("A1", assertions={"required_text": ["JPY"]})), strict=True)
+
+    assert "missing-assertion-kind" not in codes(issues)
+
+
+def test_canonical_suite_classifies_every_text_assertion_spec() -> None:
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    raw = yaml.safe_load(cases_path.read_text())
+
+    issues = lint_suite(raw, as_of=date(2026, 7, 16), strict=True)
+
+    assert not {"invalid-assertion-kind", "missing-assertion-kind"} & codes(issues)
+
+
+def test_near_miss_kind_spelling_is_rejected_rather_than_read_as_lexical() -> None:
+    # judge_packet._is_lexical_spec matches "lexical" exactly, so anything else
+    # is a hard gate there. The linter has to reject the same spellings, or a
+    # capitalised kind would read as structural at runtime while the author
+    # believed they had marked it lexical.
+    for spelling in ("Lexical", "LEXICAL", " lexical "):
+        issues = lint_suite(
+            _suite(_case("A1", assertions={"required_text": [{"regex": "JPY", "kind": spelling}]}))
+        )
+
+        assert "invalid-assertion-kind" in codes(issues), spelling
+
+
+def test_forbidden_text_may_not_be_downgraded_to_lexical() -> None:
+    # A lexical miss routes to needs_semantic_review instead of failing the run.
+    # That is survivable for a phrasing check and not for "the answer must never
+    # claim it placed an order".
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"forbidden_text": [{"regex": r"\border placed\b", "kind": "lexical"}]},
+            )
+        )
+    )
+
+    assert "lexical-forbidden-text" in codes(issues)
+
+
+def test_forbidden_text_stays_valid_when_marked_structural() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "forbidden_text": [{"regex": r"\border placed\b", "kind": "structural"}]
+                },
+            )
+        )
+    )
+
+    assert "lexical-forbidden-text" not in codes(issues)
+
+
+def _canonical_suite() -> dict:
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    return yaml.safe_load(cases_path.read_text())
+
+
+def test_canonical_suite_keeps_every_forbidden_text_structural() -> None:
+    issues = lint_suite(_canonical_suite(), as_of=date(2026, 7, 16), strict=True)
+
+    assert "lexical-forbidden-text" not in codes(issues)
+
+
+# Anchors that tie an answer to the subject or fact under test rather than to a
+# choice of words. Missing one is a wrong answer, not a differently phrased one,
+# so none of them may be downgraded to a diagnostic. Pinned by regex so that
+# editing the pattern trips this test and forces the classification to be
+# re-argued rather than inherited.
+_SAFETY_CRITICAL_REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
+    "CORE-INVALID": (r"\bFAKESYM\b",),
+    "CORE-FX": (r"\b(?:JPY|Japanese yen)\b",),
+    "CORE-GUARD-OVERREFUSAL": (r"(?i)\b(?:NVDA|Nvidia)\b",),
+    "CORE-PORT-COVERAGE": (r"\bZZZZ\b",),
+    "CORE-CRYPTO-INSPECT": (r"(?i)\bjob[_ -]?id\b|\bcrypto_bt_[0-9a-f]{6,}\b",),
+    "CORE-PM-ROUTING": (r"(?i)\bprediction markets?\b|\bPolymarket\b",),
+    "CORE-CRYPTO-SCOPE": (r"\bCoinbase spot\b",),
+    "CORE-PREMISE": (r"\bNVDA\b", r"\bSPY\b"),
+    "CORE-RESEARCH": (r"https?://[^\s)]+",),
+}
+
+
+def test_canonical_suite_pins_safety_critical_required_text_as_structural() -> None:
+    by_id = {case["id"]: case for case in _canonical_suite()["test_cases"]}
+
+    for case_id, patterns in _SAFETY_CRITICAL_REQUIRED_TEXT.items():
+        specs = by_id[case_id]["assertions"]["required_text"]
+        kinds = {spec["regex"]: spec.get("kind") for spec in specs if isinstance(spec, dict)}
+        for pattern in patterns:
+            assert pattern in kinds, f"{case_id} no longer asserts {pattern!r}"
+            assert kinds[pattern] == "structural", f"{case_id} downgraded {pattern!r}"
+
+
 def test_text_assertion_regex_is_compiled_during_lint() -> None:
     issues = lint_suite(_suite(_case("A1", assertions={"required_text": [{"regex": "("}]})))
 

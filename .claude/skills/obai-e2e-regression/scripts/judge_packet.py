@@ -35,7 +35,9 @@ ALL_VERDICTS = PASS_VERDICTS | PRODUCT_VERDICTS | INCONCLUSIVE_VERDICTS
 # machine-unambiguous markers: a code in real HTTP context, or the original
 # textual signals. A bare number is excluded because it collides with financial
 # figures ("S&P 500", "504-session", "429 open positions", "403(b)").
-_HTTP_ERR_CODE = r"(?:401|403|408|425|429|500|502|503|504)"
+# 402 is included: an entitlement denial by definition, with no financial-prose
+# homograph the way 403 has in "403(b)", and still label-anchored below.
+_HTTP_ERR_CODE = r"(?:401|402|403|408|425|429|500|502|503|504)"
 # Separator: whitespace/punctuation/quotes only (\x22 is a double quote), so
 # '"status_code": 504' matches but a code trailing English words does not.
 _HTTP_LABEL_SEP = r"[\s:=#/.,()\x22'\[\]-]{0,5}"
@@ -58,7 +60,13 @@ PROVIDER_FAILURE_RE = re.compile(
     r"rate[ -]?limit|quota exceeded|provider (?:is )?unavailable|service unavailable|"
     r"provider.{0,30}(?:error|failed|failure|exploded|denied|timeout)|"
     r"(?:missing|invalid|incorrect|expired) api key|"
-    r"api key (?:missing|invalid|incorrect|expired|required)|"
+    # Entitlement wording deliberately stops at "api key". An entitlement
+    # denial reaches us as a labelled status code (402 in _HTTP_ERR_CODE),
+    # which is machine-emitted and cannot collide with prose. Matching
+    # "api <noun> required/expired" in free text would fire on ordinary
+    # coverage of a third party's pricing — "Reddit's API access required a
+    # paid plan", "Twitter's API subscription required re-verification" —
+    # and score a correct answer inconclusive_provider.
     r"authentication failed|upstream (?:error|timeout)|"
     r"connection (?:error|failed|refused|reset)|insufficient[_ ]quota|"
     r"internal server error|too many requests|"
@@ -195,6 +203,11 @@ ASYNC_MISSING_ECHO_STATUS = "job_id_missing"
 # as a second invocation unless it is recognised here.
 ARGUMENT_REJECTION_RE = re.compile(r"Invalid JSON input for tool\b", re.IGNORECASE)
 STRUCTURED_ERROR_STATUSES = frozenset({"error", "failed", "failure"})
+# A text assertion's declared kind. ``structural`` (a ticker, an ISO date, a
+# currency code, a contractually emitted field) stays a hard gate; ``lexical``
+# is one English phrasing of a property a correct answer may word differently,
+# so a miss is routed to semantic review instead of failing the case.
+LEXICAL_SPEC_KIND = "lexical"
 MAX_STRUCTURED_OUTPUT_JSON_CHARS = 65_536
 SKILL_LINE_RE = re.compile(r"^-\s+([A-Za-z0-9_.:-]+):\s+\w+", re.MULTILINE)
 _MISSING = object()
@@ -300,6 +313,7 @@ class JudgeResult:
     observed_tools: list[str] = field(default_factory=list)
     observed_skills: list[str] = field(default_factory=list)
     unexecuted_assertions: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -376,6 +390,28 @@ def _explicit_structured_error_output(output: object) -> dict[str, Any] | None:
     if isinstance(status, str) and status.strip().casefold() in STRUCTURED_ERROR_STATUSES:
         return payload
     return None
+
+
+def _span_output_error_payload(output: object) -> dict[str, Any] | None:
+    """Return a span output's explicit structured error payload, if any.
+
+    Real spans wrap the tool's own payload in an ``{"output": ...}`` envelope
+    whose value is usually a JSON-encoded string, so the error flag never sits
+    on the span's own dict. The envelope is unwrapped exactly once, never
+    recursively, and the flag is still read only from the payload's top level.
+
+    Args:
+        output: The raw value of a span's ``output`` field.
+
+    Returns:
+        The payload when the tool declared an explicit failure, else ``None``.
+    """
+    direct = _explicit_structured_error_output(output)
+    if direct is not None:
+        return direct
+    if not isinstance(output, dict):
+        return None
+    return _explicit_structured_error_output(output.get("output", _MISSING))
 
 
 def _span_error_evidence(span: dict[str, Any]) -> tuple[str, object] | None:
@@ -681,6 +717,73 @@ def _matches(text: str, spec: object) -> tuple[bool, str]:
     return False, repr(spec)
 
 
+def _is_lexical_spec(spec: object) -> bool:
+    """Report whether a text assertion is a phrasing choice, not a fact.
+
+    Args:
+        spec: One ``required_text`` or ``forbidden_text`` entry.
+
+    Returns:
+        True only when a dict spec declares exactly ``kind: lexical``. Bare
+        strings, specs with no ``kind``, and near-miss spellings the linter
+        rejects (``Lexical``, ``" lexical "``) are all structural, so an
+        unclassified assertion fails closed and keeps its hard-gate behaviour.
+    """
+    if not isinstance(spec, dict):
+        return False
+    return spec.get("kind") == LEXICAL_SPEC_KIND
+
+
+def _record_required_text_miss(
+    result: JudgeResult, spec: object, label: str, *, absence_only: bool
+) -> None:
+    """Record a required_text miss as a hard failure or a lexical diagnostic.
+
+    A lexical miss says only that the expected English did not appear, which a
+    correct answer may phrase differently, so it routes to semantic review
+    instead of failing. The absence-statement branch is the same judgement
+    about the same wording and is therefore treated the same way.
+
+    Args:
+        result: The result being accumulated; mutated in place.
+        spec: The assertion spec that did not match.
+        label: Human-readable label for the spec.
+        absence_only: True when the text matched only inside an absence clause.
+
+    Returns:
+        None.
+    """
+    detail = "only inside an absence statement" if absence_only else "missing"
+    if not _is_lexical_spec(spec):
+        result.checks_failed.append(f"required_text {detail}: {label}")
+        return
+    result.diagnostics.append(f"lexical required_text {detail}: {label}")
+    result.unexecuted_assertions.append(
+        f"lexical_text[{label}]: not matched literally; confirm the property holds in substance"
+    )
+
+
+def _record_forbidden_text_hit(result: JudgeResult, spec: object, label: str) -> None:
+    """Record a forbidden_text hit as a hard failure or a lexical diagnostic.
+
+    Args:
+        result: The result being accumulated; mutated in place.
+        spec: The assertion spec that matched.
+        label: Human-readable label for the spec.
+
+    Returns:
+        None.
+    """
+    if not _is_lexical_spec(spec):
+        result.checks_failed.append(f"forbidden_text present: {label}")
+        return
+    result.diagnostics.append(f"lexical forbidden_text present: {label}")
+    result.unexecuted_assertions.append(
+        f"lexical_text[{label}]: matched literally; "
+        "confirm the response does not assert the property in substance"
+    )
+
+
 def _first_occurrences_ordered(expected: list[str], observed: list[str]) -> bool:
     """Require required tools' first invocations to occur in declared order.
 
@@ -745,6 +848,13 @@ def _error_blob(packet: dict[str, Any], response: str) -> str:
             error = span.get("error_info")
             if error:
                 parts.append(error if isinstance(error, str) else json.dumps(error, sort_keys=True))
+            # Provider failures also arrive as a tool's own structured payload.
+            # Only an explicit top-level error flag contributes: dumping every
+            # span output here would hand PROVIDER_FAILURE_RE ordinary market
+            # prose narrating a third-party outage (see the module comment).
+            structured = _span_output_error_payload(span.get("output", _MISSING))
+            if structured is not None:
+                parts.append(json.dumps(structured, sort_keys=True))
     return "\n".join(parts)
 
 
@@ -1329,10 +1439,8 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
         matched, label = _matches(required_haystack, spec)
         if matched:
             result.checks_passed.append(f"required_text present: {label}")
-        elif _matches(asserted, spec)[0]:
-            result.checks_failed.append(f"required_text only inside an absence statement: {label}")
-        else:
-            result.checks_failed.append(f"required_text missing: {label}")
+            continue
+        _record_required_text_miss(result, spec, label, absence_only=_matches(asserted, spec)[0])
     for spec in assertions.get("forbidden_text", []) or []:
         # A claim the answer refuses shares its vocabulary with the same claim
         # asserted. Opting a spec in here scopes it to the clauses that assert,
@@ -1340,7 +1448,7 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
         scoped = isinstance(spec, dict) and spec.get("only_when_asserted") is True
         matched, label = _matches(asserting if scoped else asserted, spec)
         if matched:
-            result.checks_failed.append(f"forbidden_text present: {label}")
+            _record_forbidden_text_hit(result, spec, label)
         else:
             result.checks_passed.append(f"forbidden_text absent: {label}")
     for path in assertions.get("required_evidence", []) or []:

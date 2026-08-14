@@ -22,7 +22,7 @@ or reducing its estimate fails lint just as an overrun does.
 | Tier | Cases | Minimum planning estimate | Selection |
 |---|---:|---:|---|
 | `smoke` | 8 | 45 | Explicit cheaper route check |
-| `core` | 21 | 185 | Exact default release gate |
+| `core` | 21 | 187 | Exact default release gate |
 | `live` | 8 | 48 | Explicit provider/freshness canary |
 
 The legacy YAML/CLI field is named `estimated_api_calls`, but it is only a minimum planning estimate for billable model requests, including guardrail, hub, skill-load continuation, and specialist turns. `--max-api-calls` is a **between-case start limit**, not a hard cap: one already-started hub or specialist agent can exceed its estimate before control returns to the runner. The runner counts actual Opik `llm` spans after every case and refuses to start another case when accounting is unavailable or the next estimate would cross the limit. Use an OpenAI project budget/rate limit as the hard external spending backstop.
@@ -54,7 +54,7 @@ Core gate:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-e2e-regression/scripts/run_suite.py \
-  --execute --max-api-calls 185 --run-dir <new-run-dir>
+  --execute --max-api-calls 187 --run-dir <new-run-dir>
 ```
 
 Smoke gate, only when the user asks for smoke/cheaper coverage:
@@ -136,6 +136,24 @@ For `relative` and `live` cases, the manifest records one suite-wide calendar an
 - `inconclusive_provider`, `inconclusive_harness`, `inconclusive_missing_evidence`: no pass claim is allowed.
 - `skipped_dependency`: no paid child call occurred because its parent branch or verdict made it inapplicable.
 
+Every `required_text` / `forbidden_text` spec declares a `kind`. A `structural`
+spec pins a phrasing-independent fact — a ticker, currency code, ISO date,
+identifier, number, or a field name the product contractually emits — and a
+miss is a hard `fail_product`. A `lexical` spec pins an English phrasing of a
+free-form answer; a miss records a `diagnostics` entry and adds an unexecuted
+assertion, so the case routes to `needs_semantic_review` and the offline
+reviewer decides whether the property holds in substance. An absent `kind` is
+read as `structural`, so an unclassified spec keeps the hard-gate behavior;
+`--strict` lint requires the key so the corpus cannot drift back.
+
+This split exists because the deterministic layer cannot tell a wrong answer
+from a differently-worded right one. Across eight runs, 55 of 73 failed checks
+were a correct answer phrased differently than a regex expected, and each fix
+widened one regex until the next run found a new sentence. Never resolve a red
+`lexical` diagnostic by widening its regex — either the reviewer confirms the
+substance and the case passes, or the substance is genuinely missing and the
+review fails it.
+
 Unexpected undeclared financial specialists are listed for semantic review because they can indicate both routing drift and excess spend. Any financial-specialist error span is a failure or provider-inconclusive result, including errors from optional routes. An explicit top-level structured error in a specialist or required-skill output (`isError: true`, `is_error: true`, or exact status `error`/`failed`/`failure`) is treated like `error_info`, including when the output is a bounded JSON-object string; generic `error` keys and prose are not. For async cases, the declared financial specialist and required routing skill must execute successfully on the initial turn and every poll, and errors from any executed turn remain authoritative even though response assertions use the final completed poll. `cost.max_specialist_calls` is enforced separately on every authoritative CLI-turn trace (the initial turn and each async poll): each exact outer financial-specialist span counts, including `allowed_extras`, while nested LLM/provider spans do not. Missing raw spans make these checks evidence-inconclusive rather than falling back to curated or CLI claims.
 
 ## Required offline semantic closeout
@@ -208,5 +226,7 @@ handoff. Do not use `--open` unless the user asks to open the browser. Report se
 ## Maintaining cases
 
 Keep the paid corpus surgical. Each case must protect a distinct routing, quantitative correctness, source-grounding, freshness, safety, or state-handoff invariant. Use `live`/`relative` policy and an explicit timezone/freshness SLA for current requests; use old years only for intentional frozen historical windows with a versioned data contract, oracle, or immutable fixture. Replace unverified market premises with a premise check or conditional branch. Fully specify valuation conventions, costs, timestamps, portfolio constraints, and no-trade/refusal behavior so a real retail investor, quant analyst, or hedge-fund reviewer can tell correct from merely fluent.
+
+Classify every new `required_text` / `forbidden_text` spec as `structural` or `lexical` when you add it — `--strict` lint fails otherwise. Prefer a structural assertion: pin the ticker, the number, the identifier, or the emitted field name rather than the sentence the model wraps around it. Reach for `lexical` only when the property genuinely has no phrasing-independent form, and pair it with a `manual_assertions` entry that states the property in full, because the reviewer, not the regex, is what decides that case.
 
 Move near-duplicates, broad variants, and stochastic repeats to `src/obai/evaluation/test_cases/suite.yaml`; do not increase paid coverage unless it adds a materially new failure mode. In that broader corpus, every financial-data, backtest, portfolio, prediction-market, or research case must declare `live`, `relative`, or `frozen`; only genuinely timeless routing/capability checks may omit the policy. `live` requires a recent explicit as-of/provider timestamp, while `relative` binds interpretation to the trace's evaluation-time anchor without incorrectly treating legitimate historical or future horizon dates as stale quotes. Date scoring is not applicable to a correctly declared no-data/refusal/error outcome.

@@ -1912,3 +1912,266 @@ def test_success_wording_is_not_swept_into_a_refusal() -> None:
 
 # CORE-FX's own evidence: FMP answered the nested statement tool with an
 # entitlement denial, and the specialist degraded instead of inventing numbers.
+_CORE_FX_TOOL_OUTPUT = (
+    '{"isError": true, "error": "FMP: API subscription required for this endpoint",'
+    ' "error_type": "HTTPStatusError", "status_code": 402}'
+)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _CORE_FX_TOOL_OUTPUT,
+        '{"isError": true, "error": "Payment required", "status_code": 402}',
+        "HTTP 402",
+    ],
+)
+def test_provider_failure_re_matches_entitlement_denials(text: str) -> None:
+    """An entitlement denial is recognised by its labelled status code.
+
+    402 arrives machine-emitted next to a `status_code` / `http` label, which
+    is why the code is safe to match while the accompanying English is not.
+    """
+    assert PROVIDER_FAILURE_RE.search(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Ordinary coverage of a third party's API pricing is not an OBaI
+        # provider failure. A financial answer narrates exactly this, so
+        # entitlement wording must never be matched in free text -- only the
+        # labelled status code is safe.
+        "Subscription revenue grew 12% and the plan required no price increase.",
+        "Netflix's subscription base expanded; access required a paid tier.",
+        "The 402 companies screened were ranked by free cash flow yield.",
+        "Reddit's API access required a paid plan after the 2023 policy change.",
+        "Twitter's API subscription required advertisers to re-verify.",
+        "The company's API access expired for free-tier developers.",
+        "FMP: API subscription required for this endpoint",
+    ],
+)
+def test_provider_failure_re_ignores_subscription_prose(text: str) -> None:
+    assert PROVIDER_FAILURE_RE.search(text) is None
+
+
+def test_structured_error_in_span_output_json_string_is_inconclusive_provider() -> None:
+    # Real trace shape: the tool payload is a JSON string inside an
+    # ``{"output": ...}`` envelope, so the flag is not on the span's own dict.
+    packet = _packet("As of today, the JPY figures could not be verified.")
+    packet["trace"]["spans"] = [
+        {"name": "market_data_analysis", "output": {"output": "quote"}},
+        {"name": "fundamentals_get_statement_tool", "output": {"output": _CORE_FX_TOOL_OUTPUT}},
+        {
+            "name": "load_skill",
+            "input": {"skill_name": "obai-market-data-routing"},
+            "output": {"status": "loaded"},
+        },
+    ]
+
+    result = judge_packet(_case(), packet)
+
+    assert result.verdict == "inconclusive_provider"
+
+
+def test_span_output_without_an_error_flag_is_not_error_evidence() -> None:
+    # Ordinary tool prose narrating a venue outage carries no error flag and
+    # must not be swept into the blob PROVIDER_FAILURE_RE runs over.
+    packet = _packet("As of today, AAPL is 210.")
+    packet["trace"]["spans"] = [
+        {
+            "name": "market_data_analysis",
+            "output": {
+                "output": '{"summary": "the venue reported status_code: 503 during the outage"}'
+            },
+        },
+        {
+            "name": "load_skill",
+            "input": {"skill_name": "obai-market-data-routing"},
+            "output": {"status": "loaded"},
+        },
+    ]
+
+    result = judge_packet(_case(), packet)
+
+    assert result.verdict == "pass"
+
+
+def test_structural_required_text_miss_still_fails_hard() -> None:
+    case = _case(
+        assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*", "kind": "structural"}]}
+    )
+
+    result = judge_packet(case, _packet("As of today, the legs share one expiry."))
+
+    assert result.verdict == "fail_product"
+    assert any("required_text missing" in failure for failure in result.checks_failed)
+    assert result.diagnostics == []
+
+
+def test_required_text_without_a_kind_is_treated_as_structural() -> None:
+    case = _case(assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*"}]})
+
+    result = judge_packet(case, _packet("As of today, the legs share one expiry."))
+
+    assert result.verdict == "fail_product"
+    assert any("required_text missing" in failure for failure in result.checks_failed)
+
+
+def test_lexical_required_text_miss_routes_to_semantic_review() -> None:
+    case = _case(
+        assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*", "kind": "lexical"}]}
+    )
+
+    result = judge_packet(case, _packet("As of today, the legs settle on two different dates."))
+
+    assert result.verdict == "needs_semantic_review"
+    assert result.checks_failed == []
+    assert any("lexical" in note for note in result.diagnostics)
+    assert any(entry.startswith("lexical_text[") for entry in result.unexecuted_assertions)
+
+
+def test_lexical_required_text_match_needs_no_review() -> None:
+    case = _case(
+        assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*", "kind": "lexical"}]}
+    )
+
+    result = judge_packet(case, _packet("As of today, the spread carries mixed expiries."))
+
+    assert result.verdict == "pass"
+    assert result.diagnostics == []
+    assert result.unexecuted_assertions == []
+
+
+def test_lexical_required_text_inside_an_absence_statement_is_a_diagnostic() -> None:
+    # The absence branch is still not a disclosure, but for a lexical spec that
+    # is a phrasing observation for the reviewer, not a product failure.
+    case = _case(
+        assertions={"required_text": [{"regex": r"\b(?:JPY|Japanese yen)\b", "kind": "lexical"}]}
+    )
+    packet = _packet(
+        "Toyota's latest annual income statement was unavailable.\nFiscal period, "
+        "JPY units, revenue, operating income, and net income could not be verified."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "needs_semantic_review"
+    assert result.checks_failed == []
+    assert any("absence statement" in note for note in result.diagnostics)
+
+
+def test_lexical_forbidden_text_hit_does_not_fail_the_case() -> None:
+    # The judge stays total over its input space. lint_cases separately forbids
+    # authoring a lexical forbidden_text in the corpus, so this path describes
+    # behaviour for an out-of-corpus packet rather than a shape the suite ships.
+    case = _case(
+        assertions={
+            "required_text": ["as of"],
+            "forbidden_text": [{"regex": r"(?i)\bsingle\s+expiry\b", "kind": "lexical"}],
+        }
+    )
+
+    result = judge_packet(case, _packet("As of today, the spread trades on a single expiry."))
+
+    assert result.verdict == "needs_semantic_review"
+    assert result.checks_failed == []
+    assert any("lexical" in note for note in result.diagnostics)
+
+
+def test_structural_forbidden_text_hit_still_fails_hard() -> None:
+    case = _case(
+        assertions={
+            "required_text": ["as of"],
+            "forbidden_text": [{"regex": r"(?i)\bsingle\s+expiry\b", "kind": "structural"}],
+        }
+    )
+
+    result = judge_packet(case, _packet("As of today, the spread trades on a single expiry."))
+
+    assert result.verdict == "fail_product"
+    assert any("forbidden_text present" in failure for failure in result.checks_failed)
+
+
+def test_diagnostics_are_serialised_into_the_result_payload() -> None:
+    case = _case(
+        assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*", "kind": "lexical"}]}
+    )
+
+    result = judge_packet(case, _packet("As of today, the legs settle on two different dates."))
+
+    # The reviewer reads the report, not the JudgeResult, so the note has to
+    # survive serialisation carrying the pattern that went unmatched.
+    assert result.to_dict()["diagnostics"] == result.diagnostics
+    assert any("mixed" in note for note in result.to_dict()["diagnostics"])
+
+
+def test_only_an_exact_lexical_kind_downgrades_the_gate() -> None:
+    # lint_cases rejects these spellings outright. If one reached the judge
+    # anyway it must stay a hard gate, so a typo can never quietly disarm an
+    # assertion the author believed was still being enforced.
+    for spelling in ("Lexical", "LEXICAL", " lexical "):
+        case = _case(
+            assertions={"required_text": [{"regex": r"(?i)\bmixed\s+expir\w*", "kind": spelling}]}
+        )
+
+        result = judge_packet(case, _packet("As of today, the legs share one expiry."))
+
+        assert result.verdict == "fail_product", spelling
+        assert result.diagnostics == [], spelling
+
+
+def _packet_with_tool_error(payload: str) -> dict:
+    """Build a packet whose inner tool span returned a structured error."""
+    packet = _packet()
+    packet["trace"]["spans"] = [
+        {"name": "market_data_analysis", "output": {"output": payload}},
+        {
+            "name": "load_skill",
+            "input": {"skill_name": "obai-market-data-routing"},
+            "output": {"status": "loaded"},
+        },
+    ]
+    return packet
+
+
+def test_entitlement_span_error_is_provider_inconclusive_not_specialist_error() -> None:
+    """A 402 payload must not be reclassified as a specialist error.
+
+    _error_blob feeds two consumers: the provider check and _observed_outcome,
+    which runs SPECIALIST_ERROR_RE over the same text. Contributing span
+    payloads to the blob put entitlement failures within reach of that second
+    consumer, so the CORE-FX shape is pinned here: it resolves as a provider
+    outage, which is inconclusive, not as a product failure.
+    """
+    packet = _packet_with_tool_error(
+        '{"isError": true, "error": "FMP: API subscription required for this endpoint",'
+        ' "error_type": "HTTPStatusError", "status_code": 402}'
+    )
+
+    result = judge_packet(_case(), packet)
+
+    assert result.verdict == "inconclusive_provider"
+
+
+def test_span_error_naming_a_tool_error_classifies_the_outcome() -> None:
+    """A structured error that says so is a specialist error, by contract.
+
+    SKILL.md: any financial-specialist error span is a failure or a
+    provider-inconclusive result. Reaching _observed_outcome is therefore the
+    intended consequence of making structured span errors visible, not a leak.
+    """
+    packet = _packet_with_tool_error('{"isError": true, "error": "tool error: rule rejected"}')
+
+    result = judge_packet(_case(), packet)
+
+    assert result.observed_outcome == "specialist_error"
+
+
+def test_clean_span_output_leaves_the_outcome_untouched() -> None:
+    """A span output with no error flag must not reach the blob at all."""
+    packet = _packet_with_tool_error('{"data": [], "note": "provider error rates are low"}')
+
+    result = judge_packet(_case(), packet)
+
+    assert result.observed_outcome == "success"
