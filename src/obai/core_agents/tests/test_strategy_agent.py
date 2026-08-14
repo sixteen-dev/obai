@@ -13,63 +13,14 @@ from core_agents.config import AgentConfig, get_config, reset_config
 from core_agents.prompt_loader import load_prompt
 from core_agents.strategy_agent import StrategyAgent
 
-# Verbatim strategy_analysis inputs recorded in the CORE-WALKFORWARD run.
-# The first two were rejected for "concrete universe tickers"; the third
-# passed the gate but handed 'OOS' back as a ticker.
-_WALKFORWARD_USER_REQUEST = (
-    "User request:\n"
+# The user request from the CORE-WALKFORWARD gate case, verbatim.
+_WALKFORWARD_REQUEST = (
     "Run a frozen walk-forward test of a long-only SPY SMA(200) trend rule from "
     "2015-01-02 through 2024-12-31: five anchored training/test folds, at least 250 prior "
     "trading days of indicator warm-up for every test fold, next-open execution, 5 bps "
     "slippage and 1 bp commission per side. Report each fold's train and out-of-sample "
     "dates, warm-up coverage, trades, return, Sharpe and drawdown; then assess robustness "
-    "without mixing train and test metrics.\n\n"
-    "[OBaI regression correlation: regress:CORE-WALKFORWARD:00317b94. "
-    "Do not repeat this marker.]\n\n"
-    "Strategy context:\n"
-)
-_WALKFORWARD_CONTEXT_TAIL = (
-    "- Backtest dates: 2015-01-02 through 2024-12-31.\n"
-    "- Strategy family: long-only SMA(200) trend rule.\n"
-    "- Validation: five anchored training/test folds, frozen walk-forward.\n"
-    "- Indicator warm-up: at least 250 prior trading days for every test fold.\n"
-    "- Execution: next open.\n"
-    "- Costs: 5 bps slippage and 1 bp commission per side.\n"
-    "- Required fold-level reporting: train and out-of-sample dates, warm-up coverage, "
-    "trades, return, Sharpe, and drawdown.\n"
-    "- Robustness assessment must not mix train and test metrics.\n"
-    "- Defaults where relevant: USD 60,000 initial capital; moderate risk tolerance; "
-    "medium investment horizon; SPY benchmark; US market."
-)
-_WALKFORWARD_SCREENER_LABEL = (
-    _WALKFORWARD_USER_REQUEST
-    + "- Concrete tradable universe ticker resolved by screener: SPY.\n"
-    + "- Instrument: State Street SPDR S&P 500 ETF, USD, AMEX.\n"
-    + _WALKFORWARD_CONTEXT_TAIL
-)
-_WALKFORWARD_SUBJECT_LABEL = (
-    _WALKFORWARD_USER_REQUEST + "- Subject: SPY.\n" + _WALKFORWARD_CONTEXT_TAIL
-)
-_WALKFORWARD_UNLABELLED = (
-    "Run and report a completed frozen walk-forward backtest for SPY, long-only SMA(200) "
-    "trend rule, covering 2015-01-02 through 2024-12-31. Use exactly five anchored "
-    "(expanding-window) training/test folds, with parameters frozen before each OOS fold "
-    "and no train/test metric mixing. Ensure every test fold has at least 250 prior trading "
-    "days of indicator warm-up and explicitly report each fold’s warm-up date coverage. "
-    "Signal rule: hold SPY long when the daily close is above its 200-day simple moving "
-    "average; otherwise cash. Execute signal changes at the next session open. Costs: 5 bps "
-    "slippage plus 1 bp commission per side (6 bps total per side). Use the Strategy "
-    "Agent’s defensible default fold boundaries for five anchored folds if not otherwise "
-    "specified, but state those exact train and OOS dates and preserve strict chronology. "
-    "For every fold, separately report train metrics and out-of-sample metrics: dates, "
-    "warm-up coverage, trade count, total return, Sharpe ratio, and maximum drawdown. Then "
-    "assess robustness using OOS evidence only for the robustness conclusion, while "
-    "discussing train metrics separately and never pooling or blending train and test "
-    "metrics. Include methodology, assumptions (cash return treatment, Sharpe "
-    "annualization, trade-count definition, dividends/adjustment handling), and any data "
-    "limitations. User preferences available as defaults where relevant: moderate risk "
-    "tolerance, medium horizon, SPY benchmark, USD, US market, initial capital $60,000. "
-    "Do not include or repeat the user’s regression-correlation marker."
+    "without mixing train and test metrics."
 )
 
 
@@ -286,46 +237,48 @@ class TestHubIntegration:
 
         assert "do not normalize threshold language into crossover" in skill
 
-    def test_strategy_routing_skill_carries_handoff_template(self) -> None:
-        """Verbatim handoff template lives in the skill, not the base prompt."""
+    def test_strategy_routing_skill_documents_handoff_arguments(self) -> None:
+        """The argument contract lives in the skill, not the base prompt."""
         skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
         skill = skill_path.read_text()
 
-        assert "User request: [original user request, preserved verbatim]" in skill
-        assert "Strategy context:" in skill
+        assert "`user_request` — the user's wording, preserved verbatim." in skill
+        assert "`universe` — the resolved tradable tickers, as a list." in skill
+        assert "`context` — Hub-resolved facts, as bullet lines." in skill
 
-    def test_strategy_routing_skill_requires_both_headers(self) -> None:
-        """Both User request: and Strategy context: headers must always appear."""
-        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
-        skill = skill_path.read_text()
+    def test_strategy_routing_skill_states_the_runtime_assembles_the_handoff(self) -> None:
+        """The Hub must not be asked to reproduce a text template.
 
-        assert "Both `User request:` and `Strategy context:` headers appear on every call." in skill
-
-    def test_strategy_routing_skill_uses_header_allowlist(self) -> None:
-        """Skill must enforce a two-header allowlist instead of a denylist.
-
-        The denylist of forbidden hub-authored header names was removed in
-        favor of an explicit allowlist: only `User request:` and
-        `Strategy context:` are valid top-level headers in the handoff.
+        Reproducing an exact two-block layout in prose was the contract that
+        never held: across 157 recorded hand-offs the Hub produced 34
+        different universe labels and the mandated literal form zero times.
         """
         skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
         skill = skill_path.read_text()
 
-        assert "ONLY two top-level headers allowed" in skill
-        assert "Do not invent additional sections" in skill
+        assert "The runtime assembles the hand-off" in skill
+        assert "no text template to reproduce" in skill
 
-    def test_strategy_routing_skill_allows_followup_shorthand(self) -> None:
-        """Status checks and drill-downs may omit Strategy context bullets.
+    def test_strategy_routing_skill_keeps_user_rules_out_of_context(self) -> None:
+        """Entry/exit/risk rules belong in user_request, never in context."""
+        skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
+        skill = skill_path.read_text()
+
+        assert "It does not restate the user's entry/exit/risk rules" in skill
+        assert "those belong inside `user_request`" in skill
+
+    def test_strategy_routing_skill_allows_job_reference_follow_up(self) -> None:
+        """Status checks pass an empty universe and context.
 
         Reruns and parameter tweaks must NOT use the shorthand because the
-        Strategy Agent is stateless and needs prior strategy details in the
-        `Context:` bullet to resolve references like "that".
+        Strategy Agent is stateless and needs prior strategy details in
+        `context` to resolve references like "that".
         """
         skill_path = Path(__file__).parents[1] / "hub_skills" / "obai-strategy-routing" / "SKILL.md"
         skill = skill_path.read_text()
 
-        assert "Follow-up shorthand" in skill
-        assert "status checks or drill-downs" in skill
+        assert "leave `universe` and `context` empty" in skill
+        assert "needs no universe" in skill
         assert "Strategy Agent is stateless" in skill
 
     def test_strategy_routing_skill_states_runtime_relay(self) -> None:
@@ -349,7 +302,9 @@ class TestStrategyRoutingGuard:
         """Requests with tickers and objective should pass the guard."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        missing = _get_missing_strategy_inputs("Design a mean-reversion strategy for AAPL and MSFT")
+        missing = _get_missing_strategy_inputs(
+            "Design a mean-reversion strategy", ["AAPL", "MSFT"], ""
+        )
 
         assert missing == []
 
@@ -357,7 +312,15 @@ class TestStrategyRoutingGuard:
         """Theme-only requests should require a concrete ticker universe first."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        missing = _get_missing_strategy_inputs("Build a momentum strategy for tech stocks")
+        missing = _get_missing_strategy_inputs("Build a momentum strategy for tech stocks", [], "")
+
+        assert missing == ["concrete universe tickers"]
+
+    def test_blocks_whitespace_only_universe_entries(self) -> None:
+        """A list of blank strings is not a resolved universe."""
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
+        missing = _get_missing_strategy_inputs("Build a momentum strategy", ["", "  "], "")
 
         assert missing == ["concrete universe tickers"]
 
@@ -365,178 +328,80 @@ class TestStrategyRoutingGuard:
         """Ticker-only requests should require a strategy objective or rule set."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        missing = _get_missing_strategy_inputs("Design a strategy for AAPL and MSFT")
+        missing = _get_missing_strategy_inputs("Look at these names", ["AAPL"], "")
 
         assert missing == ["strategy objective or rule set"]
+
+    def test_objective_may_come_from_hub_context(self) -> None:
+        """The objective counts whether the user or the Hub context states it."""
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
+        missing = _get_missing_strategy_inputs(
+            "Look at these names", ["AAPL"], "- User objective: momentum"
+        )
+
+        assert missing == []
 
     def test_allows_explicit_rule_based_request(self) -> None:
         """Concrete rule-based requests should pass even without family label."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        missing = _get_missing_strategy_inputs("Backtest SMA 50/200 crossover on AAPL")
+        missing = _get_missing_strategy_inputs("Backtest SMA 50/200 crossover", ["AAPL"], "")
 
         assert missing == []
 
     def test_allows_job_id_follow_up(self) -> None:
-        """Async follow-up requests should not be blocked by the input gate."""
+        """A stored job id is a concrete target, so no universe is required."""
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
         missing = _get_missing_strategy_inputs(
-            "Check status for job_id bt_12345 and summarize the result"
+            "Check status for job bt_bc9e7b21 and summarize the result", [], ""
         )
 
         assert missing == []
 
-    def test_allows_check_job_followup_phrasing(self) -> None:
-        """The strategy agent's natural pending-response phrasing must pass.
+    def test_allows_bare_job_token_follow_up(self) -> None:
+        """The strategy agent tells users to ask for the bare token; accept it.
 
-        gpt-5.5 emits 'Ask: "Check job bt_<id>"' as the next-user-action
-        instruction. The hub regex must recognize this verbatim, plus the
-        bare bt_<hash> token, so users can follow the strategy agent's
-        own instructions without being blocked.
+        gpt-5.5 emits 'Ask: "Check job bt_<id>"' as its next-user-action
+        instruction, so users follow the specialist's own wording.
         """
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        for query in (
-            "Check job bt_bc9e7b21",
-            "check job bt_abcdef12",
-            "bt_1122e80d",
-            "Status of job bt_999000aa",
-        ):
-            assert _get_missing_strategy_inputs(query) == [], f"blocked: {query!r}"
+        for query in ("Check job bt_bc9e7b21", "bt_1122e80d", "Status of job bt_999000aa"):
+            assert _get_missing_strategy_inputs(query, [], "") == [], f"blocked: {query!r}"
 
-    def test_allows_fundamental_factor_strategy(self) -> None:
-        """Value/quality/growth factor strategies should pass the guard."""
+    def test_prose_follow_up_without_a_job_token_still_needs_inputs(self) -> None:
+        """Fuzzy follow-up intent is the specialist's call, not a hub gate.
+
+        The hub may only test hard syntactic facts. "Is it done yet?" names
+        nothing concrete, so the gate must fall through to the normal
+        requirements rather than guessing that a prior job was meant.
+        """
         from core_agents.central_hub_agent import _get_missing_strategy_inputs
 
-        # Value-quality strategy via hub handoff format
+        missing = _get_missing_strategy_inputs("Is it done yet?", [], "")
+
+        assert missing == ["concrete universe tickers", "strategy objective or rule set"]
+
+    def test_walkforward_prose_universe_no_longer_blocks_the_backtest(self) -> None:
+        """Replay of CORE-WALKFORWARD: a prose universe bullet must not block.
+
+        Every recorded gate run since 2026-07-17 rejected this hand-off for
+        "concrete universe tickers" because the Hub wrote the universe as
+        prose ("- SPY is the resolved US equity ETF universe.") instead of the
+        one shape the old regex extractor recognised. The universe is now a
+        typed argument, so how the Hub words its context cannot hide it.
+        """
+        from core_agents.central_hub_agent import _get_missing_strategy_inputs
+
         missing = _get_missing_strategy_inputs(
-            "User request: build a value quality strategy\n"
-            "- Universe: MSFT, ORCL, PLTR, CRM (source: screener)\n"
-            "- User objective: value + quality factor strategy"
+            _WALKFORWARD_REQUEST,
+            ["SPY"],
+            "- SPY is the resolved US equity ETF universe.",
         )
+
         assert missing == []
-
-        # Growth strategy with tickers
-        missing = _get_missing_strategy_inputs("Design a growth strategy for AAPL and NVDA")
-        assert missing == []
-
-        # Dividend income strategy
-        missing = _get_missing_strategy_inputs("Build a dividend income strategy for MSFT, JNJ")
-        assert missing == []
-
-    def test_allows_bracketed_universe_and_buy_and_hold(self) -> None:
-        """Bracketed universe list + buy-and-hold objective must pass the gate.
-
-        Reproduces a production trace (RV25) where the hub authored the
-        universe as `- Concrete universe tickers: [KO]` / `Resolved
-        instrument: KO` with a buy-and-hold objective and was wrongly rejected
-        for missing tickers, because the extractor only recognized `Universe:`
-        (colon-adjacent) and buy-and-hold was not a known objective.
-        """
-        from core_agents.central_hub_agent import _get_missing_strategy_inputs
-
-        handoff = (
-            "User request:\n"
-            "Backtest a buy-and-hold on KO from 2015 to 2024 and report the "
-            "total return.\n"
-            "Strategy context:\n"
-            "- Concrete universe tickers: [KO].\n"
-            "- Objective and rules: buy KO once and hold to the end.\n"
-        )
-        assert _get_missing_strategy_inputs(handoff) == []
-
-    def test_extracts_bracketed_ticker_list(self) -> None:
-        """Bracketed ticker lists must count as a concrete universe."""
-        from core_agents.central_hub_agent import _extract_strategy_symbols
-
-        assert "KO" in _extract_strategy_symbols("- Resolved instrument: [KO]")
-        assert {"AAPL", "MSFT"} <= _extract_strategy_symbols("Universe: [AAPL, MSFT]")
-
-    def test_extracts_ticker_from_a_paraphrased_universe_label(self) -> None:
-        """The gate must test whether a ticker is present, not how it was labelled.
-
-        Replay of the two rejected CORE-WALKFORWARD handoffs. Both name SPY
-        as the whole value of a context line, but the label reads "Concrete
-        tradable universe ticker resolved by screener:" and "Subject:"
-        instead of the literal "Universe:", so the extractor saw nothing and
-        the walk-forward test never ran.
-        """
-        from core_agents.central_hub_agent import (
-            _extract_strategy_symbols,
-            _get_missing_strategy_inputs,
-        )
-
-        for handoff in (_WALKFORWARD_SCREENER_LABEL, _WALKFORWARD_SUBJECT_LABEL):
-            assert "SPY" in _extract_strategy_symbols(handoff)
-            assert _get_missing_strategy_inputs(handoff) == []
-
-    def test_oos_acronym_is_not_a_ticker(self) -> None:
-        """`OOS` is walk-forward jargon; a fabricated universe is worse than none."""
-        from core_agents.central_hub_agent import _extract_strategy_symbols
-
-        symbols = _extract_strategy_symbols(_WALKFORWARD_UNLABELLED)
-
-        assert "SPY" in symbols
-        assert "OOS" not in symbols
-
-    def test_blocks_labelled_context_block_with_no_ticker(self) -> None:
-        """A context block of metadata is not a resolved universe.
-
-        Every value here is upper-case and ticker-shaped. Matching on the
-        colon alone read all of them as tickers, so a handoff whose universe
-        was explicitly unresolved passed the gate on its benchmark line --
-        the one thing this gate exists to refuse.
-        """
-        from core_agents.central_hub_agent import _get_missing_strategy_inputs
-
-        handoff = (
-            "User request:\n"
-            "Build a momentum strategy for large-cap technology names.\n"
-            "Strategy context:\n"
-            "- Universe: pending screener resolution.\n"
-            "- Objective: momentum ranking, rebalanced monthly.\n"
-            "- Region: US.\n"
-            "- Currency: USD.\n"
-            "- Exchange: NYSE.\n"
-            "- Sector: TECH.\n"
-            "- Execution: MOC.\n"
-            "- Benchmark: SPY.\n"
-        )
-
-        assert _get_missing_strategy_inputs(handoff) == ["concrete universe tickers"]
-
-    @pytest.mark.parametrize(
-        "line",
-        [
-            "- Region: US.",
-            "- Currency: USD.",
-            "- Exchange: NYSE.",
-            "- Sector: TECH.",
-            "- Benchmark: SPY.",
-            "- Frequency: DAILY.",
-            "- Execution: MOC.",
-            "- Data source: EODHD.",
-            "Note: TBD.",
-        ],
-    )
-    def test_non_universe_labels_never_yield_a_ticker(self, line: str) -> None:
-        """Only a label naming the universe may resolve one.
-
-        A benchmark or venue is not the thing being traded. Accepting one
-        starts a backtest against a universe the user never chose, which is
-        worse than refusing and asking.
-        """
-        from core_agents.central_hub_agent import _extract_strategy_symbols
-
-        assert _extract_strategy_symbols(line) == set()
-
-    def test_buy_and_hold_is_a_recognized_objective(self) -> None:
-        """Buy-and-hold must be a recognized objective on its own merit."""
-        from core_agents.central_hub_agent import _has_strategy_objective
-
-        assert _has_strategy_objective("buy-and-hold on KO")
-        assert _has_strategy_objective("a buy and hold strategy")
 
     def test_strategy_routing_hint_preserves_universe_resolution(self) -> None:
         """Routing hint should restore old nudge without bypassing screener."""
@@ -545,7 +410,7 @@ class TestStrategyRoutingGuard:
         hint = _build_strategy_routing_hint()
 
         assert "resolve the universe first with screener_lookup" in hint
-        assert "include `User request:` with the user's original wording verbatim" in hint
+        assert "pass `user_request` as the user's original wording" in hint
         assert "Do not rewrite signal conditions" in hint
 
     def test_strategy_handoff_fidelity_blocks_rewritten_signal_semantics(self) -> None:
@@ -569,68 +434,75 @@ class TestStrategyRoutingGuard:
         assert "rewrite a threshold condition into a crossover condition" in error
 
     def test_strategy_handoff_fidelity_accepts_preserved_user_request(self) -> None:
-        """Guard should allow added context when original wording is preserved."""
+        """A verbatim user_request argument satisfies the fidelity gate."""
         from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
 
         original = (
             "Backtest a 5-minute RSI mean-reversion strategy on NVDA from "
             "2026-01-02 to 2026-04-30. Enter when RSI(14) drops below 30."
         )
-        handoff = (
-            f"User request: {original}\n"
-            "Strategy context:\n"
-            "- Universe: [NVDA] (source: user)\n"
-            "- User objective: mean-reversion\n"
-            "- Timeframe: 5min"
+
+        assert _get_strategy_handoff_fidelity_error(original, original) is None
+
+    def test_strategy_handoff_fidelity_ignores_a_trailing_annotation(self) -> None:
+        """Metadata appended to the query is not part of the user's request.
+
+        The regression gate appends a bracketed correlation marker that also
+        tells the model not to repeat it. Demanding the Hub echo it back cost
+        one rejected hand-off on every strategy case in the suite while
+        proving nothing about signal fidelity.
+        """
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        request = "Backtest a buy-and-hold on KO from 2015 to 2024."
+        submitted = (
+            f"{request}\n\n"
+            "[OBaI regression correlation: regress:CORE-WALKFORWARD:00317b94. "
+            "Do not repeat this marker.]"
         )
 
-        assert _get_strategy_handoff_fidelity_error(handoff, original) is None
+        assert _get_strategy_handoff_fidelity_error(request, submitted) is None
 
-    def test_format_gate_blocks_missing_user_request_header(self) -> None:
-        """Hub-authored briefs without `User request:` must be rejected."""
-        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+    def test_buy_and_hold_is_a_recognized_objective(self) -> None:
+        """Buy-and-hold must be a recognized objective on its own merit."""
+        from core_agents.central_hub_agent import _has_strategy_objective
 
-        # Real failure pattern from a production trace: hub-authored brief
-        # with `Backtest request:` and `Universe:` sections, no `User request:`.
-        bad_handoff = (
-            "Backtest request:\n"
-            "- Universe/instrument: AAPL\n"
-            "- Strategy: RSI mean reversion\n"
-            "Strategy context:\n"
-            "- Universe: AAPL\n"
+        assert _has_strategy_objective("buy-and-hold on KO")
+        assert _has_strategy_objective("a buy and hold strategy")
+
+
+class TestStrategyHandoffRendering:
+    """The runtime renders the hand-off the Strategy Agent reads."""
+
+    def test_renders_canonical_two_block_structure(self) -> None:
+        """Both headers and a bracketed universe are produced deterministically."""
+        from core_agents.central_hub_agent import _render_strategy_handoff
+
+        handoff = _render_strategy_handoff(
+            "Backtest a buy-and-hold on KO.", ["KO"], "- Universe source: user."
         )
-        error = _get_strategy_handoff_format_error(bad_handoff)
-        assert error is not None
-        assert "STRATEGY_HANDOFF_FORMAT_ERROR" in error
-        assert "`User request:`" in error
 
-    def test_format_gate_blocks_missing_strategy_context_header(self) -> None:
-        """Bare follow-up passthrough without `Strategy context:` must be rejected."""
-        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+        assert handoff.startswith("User request:\nBacktest a buy-and-hold on KO.")
+        assert "Strategy context:" in handoff
+        assert "- Universe: [KO]" in handoff
+        assert "- Universe source: user." in handoff
 
-        # Real failure pattern: hub passed bare "Check job bt_..." without
-        # wrapping it in the template at all.
-        bad_handoff = "Check job bt_bc9e7b21"
-        error = _get_strategy_handoff_format_error(bad_handoff)
-        assert error is not None
-        assert "STRATEGY_HANDOFF_FORMAT_ERROR" in error
-        assert "`Strategy context:`" in error
+    def test_renders_multiple_tickers_as_one_bracketed_list(self) -> None:
+        """A resolved universe is rendered in the shape the specialist expects."""
+        from core_agents.central_hub_agent import _render_strategy_handoff
 
-    def test_format_gate_accepts_compliant_handoff(self) -> None:
-        """Properly formatted handoff (including follow-up shorthand) must pass."""
-        from core_agents.central_hub_agent import _get_strategy_handoff_format_error
+        handoff = _render_strategy_handoff("Rank these.", ["AAPL", "MSFT", "NVDA"], "")
 
-        full_handoff = (
-            "User request: Backtest a 50/200 SMA crossover on AAPL\n"
-            "Strategy context:\n"
-            "- Universe: AAPL (source: user)\n"
-            "- User objective: momentum\n"
-        )
-        assert _get_strategy_handoff_format_error(full_handoff) is None
+        assert "- Universe: [AAPL, MSFT, NVDA]" in handoff
 
-        # Follow-up shorthand: header-only Strategy context still has both headers.
-        shorthand_handoff = "User request: Check status for job bt_12345\nStrategy context:\n"
-        assert _get_strategy_handoff_format_error(shorthand_handoff) is None
+    def test_renders_follow_up_without_a_universe_line(self) -> None:
+        """A job-status follow-up carries no universe, and must not invent one."""
+        from core_agents.central_hub_agent import _render_strategy_handoff
+
+        handoff = _render_strategy_handoff("Check job bt_bc9e7b21", [], "")
+
+        assert "Universe" not in handoff
+        assert handoff == "User request:\nCheck job bt_bc9e7b21\nStrategy context:"
 
 
 class TestStrategyPassthrough:
