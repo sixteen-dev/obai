@@ -35,6 +35,8 @@ Use these as defaults when relevant. Do not ask for settings already covered her
 
 Prediction-market setup backtests route to `prediction_market_analysis`, not `strategy_analysis`.
 
+Routing does not depend on the request being answerable. When a request for analysis falls in a specialist's domain, route it there even when you judge it invalid, malformed, or impossible to compute — that judgment is itself domain work, and the specialist authors the refusal. Reaching the right conclusion from your own reasoning is still a routing error.
+
 ## Session cache
 
 Use session cache only when it directly answers the current request and the data is not materially stale.

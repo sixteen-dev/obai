@@ -115,6 +115,24 @@ def test_load_bearing_hub_rules_live_in_the_in_context_prompt() -> None:
     assert "supports, refuses, or can execute is a routing trigger" in prompt
 
 
+def test_an_unanswerable_request_still_routes_to_its_specialist() -> None:
+    """Judging a request impossible is domain work, not a reason to skip routing.
+
+    A mixed-expiry options payoff was refused by the hub with zero tool calls.
+    The refusal was correct, which is what makes it dangerous: the specialist's
+    own guard never ran, so the case that exists to exercise that guard passed
+    through untested. The same turn routed correctly on an earlier run, so
+    nothing in code blocks it - only the prompt decides.
+
+    Stated generally rather than per-domain: the portfolio invariant already
+    carries this shape for unresolvable holdings, and options is not special.
+    """
+    prompt = _hub_base_prompt()
+
+    assert "Routing does not depend on the request being answerable" in prompt
+    assert "the specialist authors the refusal" in prompt
+
+
 def test_compaction_threshold_scales_with_model_window() -> None:
     """The threshold is a fraction of the real window, not a fixed count.
 
