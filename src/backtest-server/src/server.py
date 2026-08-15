@@ -6,7 +6,7 @@ import asyncio
 import json
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -814,7 +814,13 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
         risk_free_rate=rate,
         risk_free_rate_source=source,
     )
-    return result.to_dict()
+    # Walk-forward reports pre-roll per fold, and the trimmed frames it receives
+    # no longer show it. The scarcest symbol governs: one unprimed symbol is
+    # what makes a fold's indicators unreliable, not the average across them.
+    return {
+        **result.to_dict(),
+        "warmup_bars": min(exec_result.warmup_bars.values(), default=None),
+    }
 
 
 # --- Internal Helpers ---
@@ -1118,6 +1124,9 @@ class _ExecutionResult:
     benchmark_df: pl.DataFrame | None = None
     symbol_dfs: dict[str, pl.DataFrame] = field(default_factory=dict)
     portfolio_result: PortfolioBacktestResult | None = None
+    # Pre-start bars that primed the indicators, per symbol. Counted before the
+    # warm-up is trimmed away, since nothing downstream can recover it after.
+    warmup_bars: dict[str, int] = field(default_factory=dict)
 
 
 def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
@@ -1313,6 +1322,9 @@ async def _execute_strategy(  # noqa: PLR0915
     # Warm-up bars prime indicators only. Coverage checks, the benchmark, and
     # the data-quality report all measure the REQUESTED window, so trim here.
     symbol_dfs = {sym: _trim_warmup(df, requested_start) for sym, df in extended_dfs.items()}
+    warmup_bars = {
+        sym: extended_dfs[sym].height - trimmed.height for sym, trimmed in symbol_dfs.items()
+    }
 
     # Check data coverage — warn prominently if FMP returned far less than requested
     data_warnings = _check_data_coverage(
@@ -1372,6 +1384,7 @@ async def _execute_strategy(  # noqa: PLR0915
             warnings=all_warnings,
             benchmark_df=benchmark_df,
             symbol_dfs=symbol_dfs,
+            warmup_bars=warmup_bars,
         )
 
     prepped: dict[str, Any] = {}
@@ -1386,7 +1399,12 @@ async def _execute_strategy(  # noqa: PLR0915
 
     # Route to portfolio backtester if allocation_mode is "portfolio"
     if strategy.position_sizing.allocation_mode == "portfolio":
-        return _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs)
+        # Stamped here rather than threaded through: only this scope ever saw
+        # the untrimmed frames, and portfolio mode has no other use for them.
+        return replace(
+            _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs),
+            warmup_bars=warmup_bars,
+        )
 
     # For multi-symbol independent mode, compute per-symbol spread estimates
     # and run each symbol with its own config (spread_estimates is per-symbol)
@@ -1435,6 +1453,7 @@ async def _execute_strategy(  # noqa: PLR0915
         warnings=all_warnings,
         benchmark_df=benchmark_df,
         symbol_dfs=symbol_dfs,
+        warmup_bars=warmup_bars,
     )
 
 

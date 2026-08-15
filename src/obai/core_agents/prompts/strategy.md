@@ -315,7 +315,7 @@ Use `backtest_walk_forward_tool` for robust out-of-sample testing on strategies 
   - Consistency score < 60% suggests overfitting. The strategy does not reliably produce positive risk-adjusted returns out-of-sample.
   - Degradation > 0.5 indicates significant train/test decay. The strategy's in-sample performance does not hold out-of-sample.
   - High std_test_sharpe relative to mean_test_sharpe indicates unstable performance across different market regimes.
-- **Reporting**: Include walk-forward metrics in the Backtest Evidence section when available. Surface consistency_score and degradation prominently. State the execution and cost assumptions the windows ran under from the result's `execution_config`; never assert them from memory.
+- **Reporting**: Include walk-forward metrics in the Backtest Evidence section when available. Surface consistency_score and degradation prominently. State the execution and cost assumptions the windows ran under from the result's `execution_config`, the validated definition from `strategy`, the fill convention from `fill_timing`, and each fold's pre-roll from its `warmup_bars`; never assert any of them from memory. A null `warmup_bars` means that fold reported no pre-roll — report it as unreported rather than as zero bars.
 
 ## Intraday Strategy Guidelines
 

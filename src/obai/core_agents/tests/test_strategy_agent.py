@@ -114,6 +114,24 @@ class TestStrategyPrompt:
         assert "completed job-status follow-up" in prompt
         assert "Format the stored results as a full Completed Strategy Response" in prompt
 
+    def test_walk_forward_reporting_names_every_stored_provenance_field(self) -> None:
+        """The prompt must claim the fields the job payload now carries.
+
+        The payload gained `strategy`, `fill_timing`, and per-fold
+        `warmup_bars` precisely so a polled job stops answering "not available
+        from stored result". That only helps if the reporting rule tells the
+        agent to read them, and null must stay distinguishable from zero: zero
+        pre-roll bars is a real finding about unprimed indicators.
+
+        Reads the markdown directly for the same reason as the guard above.
+        """
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+        prompt = prompt_path.read_text()
+
+        for field_name in ("`execution_config`", "`strategy`", "`fill_timing`", "`warmup_bars`"):
+            assert field_name in prompt, field_name
+        assert "rather than as zero" in prompt
+
 
 class TestStrategyAgentProperties:
     """Test StrategyAgent class properties."""

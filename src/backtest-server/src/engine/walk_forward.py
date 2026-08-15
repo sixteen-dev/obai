@@ -118,7 +118,8 @@ async def walk_forward_validate(
     # Resolve through the same parser the per-window backtests use, so the
     # reported assumptions are the ones actually applied — defaults included —
     # rather than a restatement of whatever the caller happened to send.
-    execution_config = StrategyDefinition.from_dict(strategy_dict).to_dict()["execution_config"]
+    resolved_strategy = StrategyDefinition.from_dict(strategy_dict).to_dict()
+    execution_config = resolved_strategy["execution_config"]
     data_config = strategy_dict.get("data_config", {})
     start_date = data_config.get("start_date", "")
     end_date = data_config.get("end_date", "")
@@ -178,7 +179,12 @@ async def walk_forward_validate(
     )
 
     elapsed = time.monotonic() - start_time
-    return _compute_aggregates(window_results, elapsed, execution_config=execution_config)
+    return _compute_aggregates(
+        window_results,
+        elapsed,
+        execution_config=execution_config,
+        strategy=resolved_strategy,
+    )
 
 
 def _modify_strategy_dates(
@@ -240,6 +246,10 @@ def _extract_metrics(result: dict[str, Any]) -> dict[str, Any]:
         "win_rate_pct": trading.get("win_rate_pct", 0.0),
         "total_trades": trading.get("total_trades", 0),
         "profit_factor": trading.get("profit_factor", 0.0),
+        # None, not 0 — zero means the indicators ran unprimed, which is a real
+        # and alarming finding. A backtest that simply did not report its
+        # pre-roll must not be made to assert it.
+        "warmup_bars": result.get("warmup_bars"),
     }
 
 
@@ -248,6 +258,7 @@ def _compute_aggregates(
     total_runtime: float,
     *,
     execution_config: dict[str, Any],
+    strategy: dict[str, Any],
 ) -> WalkForwardResult:
     """Compute aggregate statistics from per-window results.
 
@@ -260,6 +271,8 @@ def _compute_aggregates(
         total_runtime: Total elapsed time in seconds.
         execution_config: Resolved execution and cost assumptions the windows
             ran under, carried into the result so they survive serialization.
+        strategy: Resolved strategy definition the windows validated, carried
+            for the same reason - a polled job must describe what it ran.
 
     Returns:
         WalkForwardResult with all aggregate metrics.
@@ -288,6 +301,7 @@ def _compute_aggregates(
             degradation=0.0,
             total_runtime_seconds=total_runtime,
             execution_config=execution_config,
+            strategy=strategy,
             failed_windows=failed_count,
         )
 
@@ -319,5 +333,6 @@ def _compute_aggregates(
         degradation=mean_degradation,
         total_runtime_seconds=total_runtime,
         execution_config=execution_config,
+        strategy=strategy,
         failed_windows=failed_count,
     )
