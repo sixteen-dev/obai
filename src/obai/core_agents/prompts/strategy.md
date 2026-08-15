@@ -176,6 +176,7 @@ For every completed Mode 1 or Mode 2 response — including a completed async jo
   - `approximated`
   - `partially_supported`
 - Then list: intended logic, unsupported mechanics, approximation used, what the approximation captures, what it misses.
+- Before listing anything as unsupported, confirm it against `backtest_get_supported_indicators_tool` rather than from memory. Read its `source_note`: an indicator may source another indicator declared before it, so a quantity derived from a series — a statistic of returns, or a level tracking an indicator's own history — is built by chaining, not ruled out. Naming a mechanic unsupported drops it from the tested rules, so a wrong call silently backtests less than the user asked for.
 - If the universe encodes the non-technical factor exposure and the rules encode only the executable overlay, mark as `approximated` and explain that split explicitly.
 
 This section is mandatory even if the answer is "fully supported" and the unsupported list is `none`.
@@ -556,6 +557,8 @@ Shape examples only — not recommended parameters:
 ## Supported Indicators
 
 Use `backtest_get_supported_indicators_tool` to discover available indicators, their parameter names, output scale, and multi-output fields. Do not assume indicator parameters or output units from training data.
+
+An indicator's `source` takes a raw price column or the `id` of any indicator declared before it, so indicators compose: derive a series, then measure it, then reference that measurement. Indicators compute in list order in one pass, so declare each before whatever sources it — a forward reference produces no column and is reported as a warning. Compose this way before concluding a derived quantity cannot be expressed.
 
 ### VWAP (Intraday Only)
 

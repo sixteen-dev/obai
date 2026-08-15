@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import polars as pl
 import pytest
@@ -188,6 +188,95 @@ class TestGetSupportedIndicators:
         assert "high" in raw
         assert "low" in raw
         assert "volume" in raw
+
+    def test_chaining_a_prior_indicator_as_source_is_disclosed(self) -> None:
+        """The registry must say `source` accepts an earlier indicator's id.
+
+        Indicators compute in order into one frame, so an indicator can be
+        built on another - realized volatility is STDDEV over a ROC series.
+        Nothing announced that, and an agent asked for exactly that filter
+        declared it unrepresentable, dropped it, and backtested half the
+        requested rule. `second_source` documents the same capability for
+        dual-input indicators; plain `source` never did.
+        """
+        result = get_supported_indicators()
+
+        assert "source_note" in result
+        note = result["source_note"]
+        assert "id" in note
+        assert "order" in note
+
+
+class TestIndicatorChaining:
+    """An indicator may source the column another indicator produced."""
+
+    def _series(self, n: int = 400) -> pl.DataFrame:
+        closes = [100.0 + (i % 17) * 0.5 for i in range(n)]
+        return pl.DataFrame(
+            {
+                "date": [date(2020, 1, 1) + timedelta(days=i) for i in range(n)],
+                "open": closes,
+                "high": [c + 1.0 for c in closes],
+                "low": [c - 1.0 for c in closes],
+                "close": closes,
+                "volume": [1_000_000] * n,
+            }
+        )
+
+    def test_indicator_can_source_an_earlier_indicator(self) -> None:
+        """Realized volatility: STDDEV over a ROC series, no warnings."""
+        result, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+            ],
+        )
+
+        assert warnings == []
+        assert "vol_20d" in result.columns
+        assert result["vol_20d"].drop_nulls().len() > 0
+
+    def test_an_adaptive_reference_chains_three_deep(self) -> None:
+        """A volatility series can carry its own rolling reference level.
+
+        This is what makes a threshold adaptive rather than a tuned constant,
+        and it is the capability whose absence was wrongly assumed.
+        """
+        result, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+                IndicatorConfig(id="vol_ref", type="SMA", params={"length": 100}, source="vol_20d"),
+            ],
+        )
+
+        assert warnings == []
+        assert result["vol_ref"].drop_nulls().len() > 0
+
+    def test_sourcing_an_indicator_declared_later_is_reported(self) -> None:
+        """Order matters, and getting it wrong must not pass silently.
+
+        Compute is a single forward pass, so a forward reference has no column
+        to read. That has to surface as a warning rather than a missing filter
+        the backtest then runs without.
+        """
+        _, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+            ],
+        )
+
+        assert any("vol_20d" in w for w in warnings), warnings
 
 
 class TestVWAPIndicator:

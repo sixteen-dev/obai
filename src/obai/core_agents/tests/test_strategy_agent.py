@@ -114,6 +114,28 @@ class TestStrategyPrompt:
         assert "completed job-status follow-up" in prompt
         assert "Format the stored results as a full Completed Strategy Response" in prompt
 
+    def test_unsupported_claims_must_be_checked_against_the_registry(self) -> None:
+        """A wrong "unsupported" call silently backtests less than was asked.
+
+        Asked for a volatility-regime filter, the agent declared return-based
+        realized volatility unrepresentable, dropped the gate, and tested a
+        trend-only proxy. The engine supports it: indicators compute in order
+        into one frame, so `source` reaches an earlier indicator's column and
+        a statistic of returns is a chain. The capability was real, undisclosed,
+        and guessed at from memory.
+
+        Reads the markdown directly, as the guards above do.
+        """
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+        prompt = prompt_path.read_text()
+
+        assert "Before listing anything as unsupported" in prompt
+        assert "backtest_get_supported_indicators_tool" in prompt
+        assert "`source_note`" in prompt
+        # The composition rule has to be stated where indicators are described,
+        # not only where the claim is made, so it is present while building too.
+        assert "the `id` of any indicator declared before it" in prompt
+
     def test_walk_forward_reporting_names_every_stored_provenance_field(self) -> None:
         """The prompt must claim the fields the job payload now carries.
 

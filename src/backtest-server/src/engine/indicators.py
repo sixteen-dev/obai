@@ -354,6 +354,13 @@ def get_supported_indicators() -> dict[str, Any]:
             'in conditions (e.g., {"indicator": "close"} to compare price '
             "against a computed indicator like VWAP)."
         ),
+        "source_note": (
+            "An indicator's `source` accepts a raw column or the `id` of any "
+            "indicator declared before it, so indicators can be built on one "
+            "another. Indicators are computed in list order in a single pass: "
+            "a source naming an indicator declared later has no column to read "
+            "and is reported as a warning."
+        ),
     }
 
 
