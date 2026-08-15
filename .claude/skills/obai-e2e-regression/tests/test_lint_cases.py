@@ -572,7 +572,7 @@ _SAFETY_CRITICAL_REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     "CORE-PORT-COVERAGE": (r"\bZZZZ\b",),
     "CORE-CRYPTO-INSPECT": (r"(?i)\bjob[_ -]?id\b|\bcrypto_bt_[0-9a-f]{6,}\b",),
     "CORE-PM-ROUTING": (r"(?i)\bprediction markets?\b|\bPolymarket\b",),
-    "CORE-CRYPTO-SCOPE": (r"\bCoinbase spot\b",),
+    "CORE-CRYPTO-SCOPE": (r"\bCoinbase\b[^.\n]{0,40}\bspot\b",),
     "CORE-PREMISE": (r"\bNVDA\b", r"\bSPY\b"),
     "CORE-RESEARCH": (r"https?://[^\s)]+",),
 }

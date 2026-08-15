@@ -188,9 +188,14 @@ SPECIALIST_ERROR_RE = re.compile(
 # running" from being mistaken for an id. The pipe is needed because the product
 # renders async handles as a two-column markdown row, where the value is
 # separated from its label by a cell boundary and never by a colon.
+# A backtick-quoted value is the fourth separator. The product also writes the
+# handle inline mid-sentence ("job_id `bt_1a2b3c` - BTC-USD daily"), where the
+# code span is what delimits the id and no colon appears at all. The quoting is
+# what keeps this branch safe: prose like "job_id was missing" has no backtick,
+# so the lookahead fails and no id is invented from the following word.
 ASYNC_JOB_ID_RE = re.compile(
     r"\bjob[_ ]?id\b[*_`]{0,2}[ \t]*"
-    r"(?:[:=|][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
+    r"(?:[:=|][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*|(?=`))`?"
     r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
     re.IGNORECASE,
 )

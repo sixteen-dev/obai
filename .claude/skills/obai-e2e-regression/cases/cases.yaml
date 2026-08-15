@@ -307,7 +307,11 @@ test_cases:
     assertions:
       required_text:
         - {regex: "\\bimplied volatility\\b", kind: structural}
-        - {regex: "\\bdividend yield\\b", kind: structural}
+        # Structural: the dividend input must be disclosed, not that it be
+        # spelled out. `q` is the Black-Scholes symbol for it and the product
+        # answers with `q = 3.0000000000%`; the oracle below re-solves every
+        # Greek, which is what actually catches a dropped dividend.
+        - {regex: "(?i)\\bdividend[- ]?yield\\b|\\bq\\s*[=:]", kind: structural}
         - {regex: "\\b(?:delta|gamma|vega|theta|rho)\\b", kind: structural}
       manual_assertions:
         - "Using the exact trace time and submitted expiry_date, run the same wall-clock-to-4pm-ET convention and compare solved IV and every returned Greek within the tool's rounding; verify no invented convergence status."
@@ -701,7 +705,11 @@ test_cases:
     assertions:
       required_text:
         - {regex: "\\b(?:unsupported|not supported|cannot)\\b", kind: lexical}
-        - {regex: "\\bCoinbase spot\\b", kind: structural}
+        # Structural: naming the supported venue and its spot scope is the fact
+        # under test. The words need not be adjacent - the product answers with
+        # the real product name ("Coinbase Advanced Trade **spot**"), which is
+        # more precise than the bigram and used to fail this case outright.
+        - {regex: "\\bCoinbase\\b[^.\\n]{0,40}\\bspot\\b", kind: structural}
         - {regex: "\\b(?:derivatives?|perpetual|DeFi|on[- ]chain)\\b", kind: lexical}
       forbidden_text:
         - {regex: "\\b(?:successfully|has been|was) exported\\b", kind: structural}

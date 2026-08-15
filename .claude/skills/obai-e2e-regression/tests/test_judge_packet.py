@@ -310,12 +310,31 @@ def test_job_id_is_parsed_from_a_markdown_table_cell() -> None:
     assert _extract_async_job_ids(row) == ["crypto_bt_05cd4f3002879408"]
 
 
-def test_job_id_table_parsing_does_not_swallow_prose() -> None:
-    # The delimiter requirement is what keeps narration from being read as a
-    # handle; adding the cell pipe must not relax that.
+def test_job_id_is_parsed_from_an_inline_code_span() -> None:
+    # The product also states the handle mid-sentence with no colon at all, as
+    # a code span. Requiring a separator cost a run four cases: the backtest
+    # answered correctly, the runner saw no handle, and three chained cases
+    # were skipped behind it.
     from judge_packet import _extract_async_job_ids
 
-    assert _extract_async_job_ids("The job id is still running.") == []
+    summary = "job_id `crypto_bt_6027f0394259c3ec` — BTC-USD daily, 2025-01-01 to 2025-12-31"
+
+    assert _extract_async_job_ids(summary) == ["crypto_bt_6027f0394259c3ec"]
+
+
+def test_job_id_parsing_does_not_swallow_prose() -> None:
+    # The delimiter requirement is what keeps narration from being read as a
+    # handle; neither the cell pipe nor the code span may relax that. The
+    # quoting is the guard - unquoted prose has no backtick to key on.
+    from judge_packet import _extract_async_job_ids
+
+    for prose in (
+        "The job id is still running.",
+        "job_id was missing",
+        "Job ID is running",
+        "no job_id yet",
+    ):
+        assert _extract_async_job_ids(prose) == [], prose
 
 
 def _case(**overrides: object) -> dict:
