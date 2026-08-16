@@ -191,37 +191,33 @@ def test_show_reports_shipped_defaults_without_a_settings_file(settings_file: Pa
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-5.6-sol (from shipped default)"
-    assert (
-        _row(result.output, "reasoning effort") == "reasoning effort medium (from shipped default)"
-    )
+    assert _row(result.output, "hub model") == "hub model gpt-5.6-terra (from shipped default)"
+    assert _row(result.output, "reasoning effort") == "reasoning effort max (from shipped default)"
 
 
 def test_show_reports_the_settings_file_as_the_source(settings_file: Path) -> None:
     """After a setter runs, both fields are attributed to the settings file."""
-    assert runner.invoke(cli, ["config", "set-model", "gpt-5.6-terra"]).exit_code == 0
+    assert runner.invoke(cli, ["config", "set-model", "gpt-5.6-sol"]).exit_code == 0
 
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
     assert str(settings_file) in result.output
-    assert _row(result.output, "hub model") == "hub model gpt-5.6-terra (from settings file)"
-    assert _row(result.output, "reasoning effort") == "reasoning effort medium (from settings file)"
+    assert _row(result.output, "hub model") == "hub model gpt-5.6-sol (from settings file)"
+    assert _row(result.output, "reasoning effort") == "reasoning effort max (from settings file)"
 
 
 def test_show_distinguishes_a_chosen_default_from_the_shipped_default(
     settings_file: Path,
 ) -> None:
     """A field written to the file reads as chosen even when it equals the default."""
-    settings_file.write_text(json.dumps({"hub_model": "gpt-5.6-sol"}))
+    settings_file.write_text(json.dumps({"hub_model": "gpt-5.6-terra"}))
 
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-5.6-sol (from settings file)"
-    assert (
-        _row(result.output, "reasoning effort") == "reasoning effort medium (from shipped default)"
-    )
+    assert _row(result.output, "hub model") == "hub model gpt-5.6-terra (from settings file)"
+    assert _row(result.output, "reasoning effort") == "reasoning effort max (from shipped default)"
 
 
 def test_show_reports_env_vars_as_the_source(

@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Default hub model → `gpt-5.6-terra` at `max` reasoning effort** (from
+  `gpt-5.6-sol` / `medium`). A fresh install now answers at the deepest setting
+  the hub offers rather than the balanced one; `gpt-5.6-sol` and the lower
+  effort tiers remain one click away in the web UI settings modal, one command
+  away via `obai config set-model` / `set-effort`, and unchanged via
+  `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT`. This is the most
+  expensive and slowest combination — `gpt-5.6-sol` / `high` is the balanced
+  pairing for anyone who would rather trade depth for cost and latency.
+  Existing `~/.obai/settings.json` files are untouched, so only installs that
+  never wrote one see the change. `max` requires `openai>=2.45.0`, already the
+  floor in both the root and `src/obai` manifests.
+
 ### Added
 
 - **User-settable hub model and reasoning effort**, persisted in

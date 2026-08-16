@@ -72,7 +72,7 @@ class TestGetSettings:
         with _client(settings_path) as client:
             body = client.get("/api/settings").json()
 
-        assert body["saved"] == {"hub_model": "gpt-5.6-sol", "hub_reasoning_effort": "medium"}
+        assert body["saved"] == {"hub_model": "gpt-5.6-terra", "hub_reasoning_effort": "max"}
         assert body["restart_required"] is False
         assert not settings_path.exists()
 
@@ -99,11 +99,11 @@ class TestGetSettings:
             # The first GET materializes the config singleton at the defaults,
             # standing in for a hub that booted before the user changed anything.
             client.get("/api/settings")
-            client.patch("/api/settings", json={"hub_model": "gpt-5.6-terra"})
+            client.patch("/api/settings", json={"hub_model": "gpt-5.6-sol"})
             body = client.get("/api/settings").json()
 
-        assert body["saved"]["hub_model"] == "gpt-5.6-terra"
-        assert body["running"]["hub_model"] == "gpt-5.6-sol"
+        assert body["saved"]["hub_model"] == "gpt-5.6-sol"
+        assert body["running"]["hub_model"] == "gpt-5.6-terra"
         assert body["restart_required"] is True
 
     def test_corrupt_file_error_still_carries_the_choices(self, settings_path: Path) -> None:
@@ -151,15 +151,15 @@ class TestEnvOverrides:
     def test_override_is_reported_and_suppresses_restart_flag(
         self, settings_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("ORCHESTRATOR_MODEL", "gpt-5.6-terra")
+        monkeypatch.setenv("ORCHESTRATOR_MODEL", "gpt-5.6-sol")
         reset_config()
 
         with _client(settings_path) as client:
             body = client.get("/api/settings").json()
 
-        assert body["saved"]["hub_model"] == "gpt-5.6-sol"
-        assert body["running"]["hub_model"] == "gpt-5.6-terra"
-        assert body["env_overrides"]["hub_model"] == "gpt-5.6-terra"
+        assert body["saved"]["hub_model"] == "gpt-5.6-terra"
+        assert body["running"]["hub_model"] == "gpt-5.6-sol"
+        assert body["env_overrides"]["hub_model"] == "gpt-5.6-sol"
         # Restarting would not close this gap — only unsetting the export does.
         assert body["restart_required"] is False
         assert body["env_vars"]["hub_model"] == "ORCHESTRATOR_MODEL"
@@ -191,15 +191,15 @@ class TestPatchSettings:
             client.get("/api/settings")
             res = client.patch(
                 "/api/settings",
-                json={"hub_model": "gpt-5.6-terra", "hub_reasoning_effort": "max"},
+                json={"hub_model": "gpt-5.6-sol", "hub_reasoning_effort": "high"},
             )
 
         assert res.status_code == 200
         body = res.json()
-        assert body["saved"] == {"hub_model": "gpt-5.6-terra", "hub_reasoning_effort": "max"}
+        assert body["saved"] == {"hub_model": "gpt-5.6-sol", "hub_reasoning_effort": "high"}
         assert body["restart_required"] is True
         assert HubSettingsStore(path=settings_path).load() == HubSettings(
-            hub_model="gpt-5.6-terra", hub_reasoning_effort="max"
+            hub_model="gpt-5.6-sol", hub_reasoning_effort="high"
         )
 
     def test_partial_patch_keeps_the_other_field(self, settings_path: Path) -> None:
@@ -215,7 +215,7 @@ class TestPatchSettings:
     def test_saving_the_running_values_requires_no_restart(self, settings_path: Path) -> None:
         with _client(settings_path) as client:
             client.get("/api/settings")
-            body = client.patch("/api/settings", json={"hub_model": "gpt-5.6-sol"}).json()
+            body = client.patch("/api/settings", json={"hub_model": "gpt-5.6-terra"}).json()
 
         assert body["restart_required"] is False
 

@@ -23,10 +23,11 @@ import openai
 from openai.types.shared.reasoning_effort import ReasoningEffort as SdkReasoningEffort
 from pydantic import BaseModel, ValidationError, field_validator
 
-# The two choices offered in the UI and CLI. Sol is the shipped hub default;
-# Terra is the heavier-analysis model already used by strategy, crypto, and
-# prediction markets. Luna is deliberately absent — it is the specialist tier
-# and is not a sensible hub.
+# The two choices offered in the UI and CLI. Terra is the shipped hub default —
+# the heavier-analysis model already used by strategy, crypto, and prediction
+# markets — paired with `max` effort below, so the hub ships at its deepest
+# setting and users trade down to Sol if they want cheaper, faster answers.
+# Luna is deliberately absent — it is the specialist tier, not a sensible hub.
 HubModel = Literal["gpt-5.6-sol", "gpt-5.6-terra"]
 
 # Verified against the live API: every gpt-5.6 model accepts none/low/medium/
@@ -73,8 +74,8 @@ def default_hub_settings_path() -> Path:
 class HubSettings(BaseModel, extra="forbid"):
     """Hub model and reasoning effort as chosen by the user."""
 
-    hub_model: HubModel = "gpt-5.6-sol"
-    hub_reasoning_effort: HubReasoningEffort = "medium"
+    hub_model: HubModel = "gpt-5.6-terra"
+    hub_reasoning_effort: HubReasoningEffort = "max"
 
     @field_validator("hub_reasoning_effort")
     @classmethod

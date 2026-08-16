@@ -40,7 +40,7 @@ obai query "<question>" [OPTIONS]
 |------|-------|---------|-------------|
 | `--json` | `-j` | `false` | Structured JSON output (always use this) |
 | `--session` | `-s` | ephemeral | Named session for multi-turn conversation |
-| `--model` | `-m` | configured hub model | Override the orchestrator model for this query only. The default resolves `ORCHESTRATOR_MODEL` → `~/.obai/settings.json` → `gpt-5.6-sol` |
+| `--model` | `-m` | configured hub model | Override the orchestrator model for this query only. The default resolves `ORCHESTRATOR_MODEL` → `~/.obai/settings.json` → `gpt-5.6-terra` |
 
 ### JSON Output Structure
 
@@ -53,7 +53,7 @@ obai query "<question>" [OPTIONS]
   "elapsed_ms": 2340,
   "session_id": "cli_a1b2c3d4",
   "timestamp": "2026-03-16T10:30:00Z",
-  "model": "gpt-5.6-sol",
+  "model": "gpt-5.6-terra",
   "guardrail_rejected": false,
   "faithfulness": {"numeric_accuracy": 0.95, "faithfulness_pass": true},
   "completeness": {"coverage_score": 0.88, "completeness_pass": true}
@@ -190,7 +190,7 @@ uv run python -m evaluation evaluate --suite --category A
 | Variable | Default | What it does |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key for all agents |
-| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Central Hub model. Wins over `~/.obai/settings.json` (see below) |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-terra` | Central Hub model. Wins over `~/.obai/settings.json` (see below) |
 | `ORCHESTRATOR_REASONING_EFFORT` | `medium` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Wins over `~/.obai/settings.json` |
 | `SPECIALIST_MODEL` | `gpt-5.6-luna` | Default specialist model |
 | `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent model |
@@ -209,12 +209,12 @@ The hub model and reasoning effort are user-settable and persist across sessions
 
 ```json
 {
-  "hub_model": "gpt-5.6-sol",
-  "hub_reasoning_effort": "medium"
+  "hub_model": "gpt-5.6-terra",
+  "hub_reasoning_effort": "max"
 }
 ```
 
-`hub_model` is `gpt-5.6-sol` or `gpt-5.6-terra`. `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max`. Specialist models and efforts are not settable here.
+`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`. `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts are not settable here.
 
 ```bash
 obai config set-model gpt-5.6-terra   # write hub model

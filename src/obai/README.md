@@ -148,7 +148,7 @@ uv run python test_connection.py
 
 **Input Guardrail** (gpt-5.6-luna): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub** (gpt-5.6-sol): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-5.6-terra, `max` effort): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
 **Specialists** (9 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
@@ -171,7 +171,7 @@ When a query needs data from multiple domains, the **Central Hub orchestrates**:
 ```
 User: "What's my portfolio worth? I have AAPL 50%, MSFT 50%"
                     ↓
-            Central Hub (gpt-5.6-sol)
+           Central Hub (gpt-5.6-terra)
             /                  \
    portfolio_analysis      market_data_analysis
    (parse positions)         (get prices)
@@ -191,14 +191,14 @@ Key points:
 ### Models
 
 ```bash
-export ORCHESTRATOR_MODEL=gpt-5.6-sol    # Needs strong reasoning
+export ORCHESTRATOR_MODEL=gpt-5.6-terra  # Needs strong reasoning (shipped default)
 export SPECIALIST_MODEL=gpt-5.6-luna     # Cost-effective for tools
 ```
 
 Per-agent overrides:
 ```bash
 export MARKET_DATA_MODEL=gpt-5.6-luna       # Override for specific agent
-export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; cheaper than the hub's gpt-5.6-sol with comparable backtest output
+export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; same model the hub ships with
 ```
 
 ### Reasoning Effort
@@ -217,12 +217,12 @@ The hub's model and reasoning effort — and only those two — are user-settabl
 
 ```json
 {
-  "hub_model": "gpt-5.6-sol",
-  "hub_reasoning_effort": "medium"
+  "hub_model": "gpt-5.6-terra",
+  "hub_reasoning_effort": "max"
 }
 ```
 
-`hub_model` is `gpt-5.6-sol` or `gpt-5.6-terra`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max`. Specialist models and efforts stay code-owned.
+`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts stay code-owned.
 
 `AgentConfig.settings_customise_sources` inserts this file **below** the environment, so resolution is init kwargs > env > `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` therefore still win — deliberately, since the eval A/B comparison and the E2E gate pin the hub model by injecting env. Any surface that writes the file must warn when the matching variable is set, or the write looks like a no-op.
 

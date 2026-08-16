@@ -199,7 +199,7 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.6-sol",
+        default="gpt-5.6-terra",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
@@ -260,7 +260,7 @@ class AgentConfig(BaseSettings):
     # additionally settable from the web UI and `obai config`, which write
     # ~/.obai/settings.json (see _HubSettingsSource).
     orchestrator_reasoning_effort: ReasoningEffort = Field(
-        default="medium",
+        default="max",
         description="Hub reasoning effort: none|low|medium|high|xhigh|max",
     )
     orchestrator_verbosity: Verbosity = Field(

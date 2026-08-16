@@ -66,7 +66,7 @@ class TestAgentConfig:
     def test_default_models(self) -> None:
         """Test default model values."""
         config = AgentConfig()
-        assert config.orchestrator_model == "gpt-5.6-sol"
+        assert config.orchestrator_model == "gpt-5.6-terra"
         assert config.specialist_model == "gpt-5.6-luna"
 
     def test_every_default_model_is_gpt_5_6(self) -> None:
@@ -91,9 +91,9 @@ class TestAgentConfig:
         assert not off_tier, f"default models off the gpt-5.6 tier: {off_tier}"
 
     def test_default_reasoning_effort(self) -> None:
-        """Every tier sits at the balanced medium starting point."""
+        """The hub ships at max; every specialist tier stays at medium."""
         config = AgentConfig()
-        assert config.orchestrator_reasoning_effort == "medium"
+        assert config.orchestrator_reasoning_effort == "max"
         assert config.specialist_reasoning_effort == "medium"
         assert config.strategy_reasoning_effort == "medium"
         assert config.crypto_reasoning_effort == "medium"
@@ -256,8 +256,8 @@ class TestHubSettingsFilePrecedence:
     def test_missing_file_falls_back_to_shipped_defaults(self) -> None:
         """Fresh install and upgraded install both land here — no migration."""
         config = get_config()
-        assert config.orchestrator_model == "gpt-5.6-sol"
-        assert config.orchestrator_reasoning_effort == "medium"
+        assert config.orchestrator_model == "gpt-5.6-terra"
+        assert config.orchestrator_reasoning_effort == "max"
 
     def test_settings_file_does_not_touch_specialists(self, tmp_path: Path) -> None:
         """The toggle is hub-only; specialist tiers stay code-owned."""
