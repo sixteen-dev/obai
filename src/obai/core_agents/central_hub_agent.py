@@ -493,6 +493,11 @@ _CRYPTO_ARTIFACT_REFERENCE_PATTERN = re.compile(
     r"\b[a-z0-9]+_[a-z0-9]+_coinbase_[a-z0-9]+(?:_[a-z0-9]+)*_v\d+\b",
     re.IGNORECASE,
 )
+# What the export tool actually mints today: artifact_id and fingerprint are
+# bare SHA-256 hex digests. Exactly 64 hex characters is as hard a syntactic
+# fact as the readable shape above, and a handoff that names one gives the
+# specialist a concrete stored target to resolve or reject with real state.
+_CRYPTO_ARTIFACT_DIGEST_PATTERN = re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE)
 _CRYPTO_ASSET_PATTERN = re.compile(
     r"\b(BTC|ETH|SOL|XRP|DOGE|ADA|AVAX|LINK|LTC|BCH|UNI|AAVE|MATIC|DOT"
     r"|bitcoin|ethereum|solana|ripple|dogecoin|cardano|avalanche|chainlink"
@@ -610,6 +615,7 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
         or _CRYPTO_ASSET_PATTERN.search(input_text)
         or _CRYPTO_JOB_REFERENCE_PATTERN.search(input_text)
         or _CRYPTO_ARTIFACT_REFERENCE_PATTERN.search(input_text)
+        or _CRYPTO_ARTIFACT_DIGEST_PATTERN.search(input_text)
     )
     if not has_resolvable_target:
         return (

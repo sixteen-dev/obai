@@ -162,6 +162,26 @@ class TestCryptoAgentInitialization:
 
         assert _get_crypto_preflight_error(handoff) is None
 
+    def test_crypto_preflight_accepts_digest_artifact_id_as_target(self) -> None:
+        """The engine mints artifact ids as bare SHA-256 hex digests.
+
+        Verbatim replay of the CORE-CRYPTO-VALIDATE handoff captured in two
+        independent gate runs (2026-08-15 benchmark): the export tool returned
+        a 64-hex artifact_id, the hub handed exactly that id over, and the
+        gate demanded a product symbol because its artifact pattern only knew
+        a readable `..._coinbase_..._v1` shape the engine does not emit.
+        """
+        handoff = (
+            "Validate exact internal Coinbase paper-ledger artifact_id "
+            "61a437355293574b3054ab5e9f7a09d0e96264a8eab237872e85f5f2e49c605d. "
+            "Verify its stored fingerprint against every load-bearing venue, product, "
+            "strategy, risk and execution field. Return artifact_id, fingerprint, "
+            "validation status and reasons; do not reconstruct an artifact from "
+            "conversational memory."
+        )
+
+        assert _get_crypto_preflight_error(handoff) is None
+
     def test_crypto_preflight_reads_future_as_a_date_word_not_an_instrument(self) -> None:
         """The word "future" describes a date far more often than a contract.
 

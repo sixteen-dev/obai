@@ -16,3 +16,4 @@
 ## Known Pitfalls
 - Update this section every time the repo teaches you the same lesson twice.
 - Hub pre-flight gates may check hard scope facts only (unsupported venue/instrument, missing symbol). Never regex-classify fuzzy intent (export eligibility, follow-ups) in the hub — context words ("paper", "artifact") false-positive; that classification belongs to the skill + specialist.
+- When a preflight pattern matches a generated identifier, fixture the id from a captured run, never an invented shape. The crypto artifact gate was "fixed" once against a made-up readable id (`..._coinbase_..._v1`) while the engine mints bare SHA-256 digests, so stored-artifact validation stayed broken until a benchmark replayed the real handoff.
