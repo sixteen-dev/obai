@@ -126,6 +126,10 @@ scripts/*
 !.claude/skills/obai-model-benchmark/tests/*.py
 # Paid E2E gate artifacts: packets carry full responses and raw trace spans.
 .e2e-runs/
+# Same artifacts again, under the path an explicit `--run-dir runs/<name>`
+# produces. run_suite.py only defaults to <skill>/runs/, which the rule above
+# covers, so a caller-chosen relative run dir lands at the repo root instead.
+runs/
 # Local working directory for analysis scripts; never part of a change.
 scratchpad/
 .claude/skills/obai-e2e-regression/**/__pycache__/
