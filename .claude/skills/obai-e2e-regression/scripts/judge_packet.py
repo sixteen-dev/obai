@@ -199,6 +199,10 @@ ASYNC_JOB_ID_RE = re.compile(
     r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
     re.IGNORECASE,
 )
+# The only outcomes _observed_outcome derives from the response text. hub_reject
+# comes from the guardrail flag and specialist_error from an error payload, so
+# neither can be missed through phrasing and neither may be softened.
+PROSE_CLASSIFIED_OUTCOMES = frozenset({"data_unavailable", "partial_refusal"})
 ASYNC_PENDING_STATUSES = frozenset({"queued", "running", "pending", "in_progress"})
 ASYNC_FAILURE_STATUSES = frozenset({"failed", "cancelled", "expired", "not_found"})
 # The runner's label for a poll that answered without echoing its job ID back.
@@ -863,6 +867,42 @@ def _error_blob(packet: dict[str, Any], response: str) -> str:
     return "\n".join(parts)
 
 
+def _record_unrecognised_degraded_outcome(result: JudgeResult, acceptable: set[str]) -> None:
+    """Route an unrecognised degraded branch to review instead of failing it.
+
+    Only reached when the case declared a branch from ``PROSE_CLASSIFIED_OUTCOMES``.
+    Those are the outcomes ``_observed_outcome`` recognises by reading the
+    response, so a ``success`` fallthrough against one of them means the wording
+    was not recognised — and wording drifts: one gate run opened "Refused:
+    invalid shared-expiry profile" and passed, the next said the same thing as
+    "is invalid ... are undefined" and failed.
+
+    ``hub_reject`` and ``specialist_error`` are excluded in *both* directions.
+    Neither has a prose path at all — one is read from the guardrail flag, the
+    other from an error payload — so ``success`` against a case contracted for
+    them is a machine fact (the guardrail never fired), never a phrasing.
+
+    Structural ``forbidden_text`` has already hard-failed a response that did
+    the forbidden thing. A ``kind: lexical`` ``required_text`` miss has not,
+    which is exactly why this hands the reviewer an explicit outcome assertion
+    rather than leaving the case looking clean.
+
+    Args:
+        result: Judgement being built; its verdict and pending list are set.
+        acceptable: Outcomes the case contract declared.
+    """
+    branches = "|".join(sorted(acceptable))
+    result.verdict = "needs_semantic_review"
+    result.diagnostics.append(
+        f"outcome not recognised from wording: expected one of {sorted(acceptable)}"
+    )
+    result.unexecuted_assertions.append(
+        f"outcome[{branches}]: no declared branch matched literally; confirm the response "
+        "took one of them rather than answering the request in full"
+    )
+    result.reason = "declared outcome was not recognisable from wording"
+
+
 def _observed_outcome(case: dict[str, Any], packet: dict[str, Any], response: str) -> str:
     """Classify only structured failures and explicitly declared degraded branches.
 
@@ -885,7 +925,7 @@ def _observed_outcome(case: dict[str, Any], packet: dict[str, Any], response: st
         declared_outcomes.update(value for value in alternatives if isinstance(value, str))
     degraded_patterns = case.get("degraded_outcome_patterns")
     if isinstance(degraded_patterns, dict):
-        for outcome in ("data_unavailable", "partial_refusal"):
+        for outcome in sorted(PROSE_CLASSIFIED_OUTCOMES):
             pattern = degraded_patterns.get(outcome)
             if outcome in declared_outcomes and isinstance(pattern, str) and pattern:
                 if re.search(pattern, response):
@@ -1716,6 +1756,13 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
             outcome for outcome in declared_alternatives if isinstance(outcome, str)
         )
     outcome_matches = observed_outcome in acceptable_outcomes
+    if (
+        not outcome_matches
+        and observed_outcome == "success"
+        and acceptable_outcomes & PROSE_CLASSIFIED_OUTCOMES
+    ):
+        _record_unrecognised_degraded_outcome(result, acceptable_outcomes)
+        return result
     if not outcome_matches:
         result.verdict = "fail_product"
         result.checks_failed.append(

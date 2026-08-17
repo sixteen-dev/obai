@@ -15,7 +15,12 @@ def _stable_test_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key-not-for-api-use")
 
 
-def _preliminary(run_dir: Path, *, deterministic_failure: bool = False) -> dict:
+def _preliminary(
+    run_dir: Path,
+    *,
+    deterministic_failure: bool = False,
+    expected_outcome: str = "success",
+) -> dict:
     assertions: dict[str, object] = {"manual_assertions": ["verify arithmetic"]}
     if deterministic_failure:
         assertions["required_text"] = [{"regex": "phrase the answer never contains"}]
@@ -25,7 +30,7 @@ def _preliminary(run_dir: Path, *, deterministic_failure: bool = False) -> dict:
         "query": "Recompute the captured value.",
         "tier": "core",
         "estimated_api_calls": 1,
-        "expected_outcome": "success",
+        "expected_outcome": expected_outcome,
         "assertions": assertions,
     }
     plan = run_suite.choose_cases([case], max_api_calls=1)
@@ -147,6 +152,7 @@ def _preliminary(run_dir: Path, *, deterministic_failure: bool = False) -> dict:
 def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
     packet_sha256 = preliminary["results"][0]["packet_sha256"]
     case_fingerprint = preliminary["results"][0]["case_fingerprint"]
+    pending_assertions = preliminary["results"][0]["unexecuted_assertions"]
     return {
         "schema_version": 2,
         "run_id": "run-1",
@@ -158,7 +164,10 @@ def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
                 "summary": "Recomputed against the captured specialist payload.",
                 "assertions": [
                     {
-                        "assertion": "manual_assertions[0]:verify arithmetic",
+                        # Every pending assertion must be decided; finalize_review
+                        # fails closed on a missing one, so derive the list rather
+                        # than hardcoding the manual assertion alone.
+                        "assertion": pending,
                         "status": status,
                         "evidence": {
                             "analysis": "The captured specialist value 12 reconciles to the final value 12.",
@@ -172,6 +181,7 @@ def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
                             ],
                         },
                     }
+                    for pending in pending_assertions
                 ],
             }
         ],
@@ -354,3 +364,20 @@ def test_failing_case_without_a_review_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(ReviewError, match="missing semantic review"):
         finalize_results(preliminary, reviews, run_dir=tmp_path)
+
+
+def test_an_unrecognised_degraded_outcome_finalizes_as_degraded_not_pass(tmp_path: Path) -> None:
+    """A reviewer certifies the branch was taken, not that the case succeeded.
+
+    The judge routes a declared degraded branch it could not recognise from
+    wording into review, carrying observed_outcome "success". Keying the green
+    verdict on that alone let an all-pass review stamp "deterministic and
+    evidence-backed semantic checks passed" on a case contracted for a refusal.
+    """
+    preliminary = _preliminary(tmp_path, expected_outcome="partial_refusal")
+    assert preliminary["results"][0]["observed_outcome"] == "success"
+
+    result = finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+    assert result["results"][0]["verdict"] == "pass_degraded"
+    assert result["exit_code"] == 0

@@ -2194,3 +2194,127 @@ def test_clean_span_output_leaves_the_outcome_untouched() -> None:
     result = judge_packet(_case(), packet)
 
     assert result.observed_outcome == "success"
+
+
+class TestUnrecognisedDegradedOutcome:
+    """`success` is the fallthrough of _observed_outcome, not a positive finding.
+
+    _observed_outcome can only return `partial_refusal` or `data_unavailable`
+    when the case declared that branch, so those labels can never mismatch.
+    The reachable mismatches are the two machine-determined ones - hub_reject
+    from the guardrail flag, specialist_error from an error payload - and
+    `success`, which merely means no declared degraded branch was recognised
+    in the prose. Hard-failing on that last one fails on wording.
+    """
+
+    _REFUSAL_CASE = {
+        "expected_outcome": "partial_refusal",
+        "acceptable_outcomes": ["specialist_error"],
+        "assertions": {
+            "forbidden_text": [
+                {
+                    "regex": r"(?i)\bmax(?:imum)?[ -](?:profit|loss)\b[^.\n]{0,30}[-+$]?\d",
+                    "kind": "structural",
+                }
+            ]
+        },
+    }
+
+    def test_refusal_in_unrecognised_wording_routes_to_review(self) -> None:
+        # Captured verbatim from two gate runs of CORE-OPT-MIXED-EXPIRY. Same
+        # behaviour, same substance, opposite verdict - decided only by whether
+        # the word "Refused" happened to appear.
+        case = _case(**self._REFUSAL_CASE)
+        packet = _packet(
+            "A single shared-expiry profile is invalid because expirations differ. "
+            "Therefore, aggregate maximum profit, maximum loss, and breakeven are undefined."
+        )
+
+        result = judge_packet(case, packet)
+
+        assert result.verdict == "needs_semantic_review"
+        assert result.checks_failed == []
+        assert any("outcome" in entry for entry in result.unexecuted_assertions)
+
+    def test_the_recognised_wording_still_passes(self) -> None:
+        case = _case(**self._REFUSAL_CASE)
+
+        result = judge_packet(
+            case, _packet("Refused: the legs cannot be aggregated into one expiry profile.")
+        )
+
+        assert result.verdict == "pass_degraded"
+
+    def test_actually_doing_the_forbidden_thing_still_fails_hard(self) -> None:
+        # The safety property never depended on the outcome label: the
+        # structural forbidden_text is evaluated first and still hard-fails.
+        case = _case(**self._REFUSAL_CASE)
+
+        result = judge_packet(
+            case, _packet("Combined profile: maximum profit $420, maximum loss -$180.")
+        )
+
+        assert result.verdict == "fail_product"
+        assert any("forbidden_text present" in f for f in result.checks_failed)
+
+    def test_a_guardrail_rejection_it_never_declared_still_fails_hard(self) -> None:
+        # hub_reject comes from a machine flag, not from prose, so it is a real
+        # finding and must not be softened into a review. Assertions are cleared
+        # so the outcome comparison is what decides, not an unrelated text miss.
+        packet = _packet("I can only help with financial analysis.")
+        packet["cli"]["stdout_json"]["guardrail_rejected"] = True
+
+        result = judge_packet(_case(assertions={}), packet)
+
+        assert result.verdict == "fail_product"
+        assert any("observed hub_reject" in f for f in result.checks_failed)
+
+    def test_review_is_told_which_branches_to_confirm(self) -> None:
+        case = _case(**self._REFUSAL_CASE)
+
+        result = judge_packet(case, _packet("The two legs expire on different dates."))
+
+        pending = [e for e in result.unexecuted_assertions if e.startswith("outcome[")]
+        assert pending, result.unexecuted_assertions
+        assert "partial_refusal" in pending[0]
+        assert "specialist_error" in pending[0]
+
+    def test_a_guardrail_that_never_fired_still_fails_hard(self) -> None:
+        """expected hub_reject, observed success is a machine fact, not wording.
+
+        _observed_outcome has no prose path to hub_reject at all - it is
+        returned solely from the guardrail flag. So `success` against a case
+        contracted for hub_reject means the guardrail did not fire, which is
+        exactly the machine-determined class that must stay a hard failure.
+        SMK-GUARD declares no text assertions whatsoever, so this outcome check
+        is its only gate: softening it would let a total guardrail bypass reach
+        a reviewer with an empty checks_failed list.
+        """
+        case = _case(expected_outcome="hub_reject", assertions={})
+
+        result = judge_packet(case, _packet("Boston tomorrow: partly cloudy, high near 54F."))
+
+        assert result.verdict == "fail_product"
+        assert any("observed success" in f for f in result.checks_failed)
+
+    def test_a_specialist_error_that_never_happened_still_fails_hard(self) -> None:
+        """Same asymmetry for the other machine-determined outcome."""
+        case = _case(expected_outcome="specialist_error", assertions={})
+
+        result = judge_packet(case, _packet("Here is the full answer you asked for."))
+
+        assert result.verdict == "fail_product"
+        assert any("observed success" in f for f in result.checks_failed)
+
+    def test_a_prose_branch_alongside_a_machine_branch_still_softens(self) -> None:
+        """The test is an intersection, not a subset.
+
+        CORE-OPT-MIXED-EXPIRY declares acceptable_outcomes [specialist_error]
+        beside expected_outcome partial_refusal; requiring every declared branch
+        to be prose-classified would kill the motivating fix.
+        """
+        case = _case(**self._REFUSAL_CASE)
+
+        result = judge_packet(case, _packet("The two legs settle on different dates."))
+
+        assert result.verdict == "needs_semantic_review"

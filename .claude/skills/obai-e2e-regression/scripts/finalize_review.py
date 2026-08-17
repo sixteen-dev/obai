@@ -384,7 +384,12 @@ def _validate_case_review(
     elif any_inconclusive:
         verdict = "inconclusive_missing_evidence"
         reason = "one or more semantic assertions lacked sufficient captured evidence"
-    elif result.get("observed_outcome") == "success":
+    elif result.get("observed_outcome") == result.get("expected_outcome") == "success":
+        # Both terms, because observed "success" is also the judge's fallthrough
+        # when a declared degraded branch went unrecognised. A reviewer clearing
+        # that case certifies the branch was taken, not that the case succeeded,
+        # so it caps at pass_degraded rather than stamping a full green pass on
+        # a contract the response did not visibly satisfy.
         verdict = "pass"
         reason = "deterministic and evidence-backed semantic checks passed"
     else:
