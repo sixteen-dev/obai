@@ -116,6 +116,14 @@ scripts/*
 !.claude/skills/obai-e2e-regression/tests/*.py
 .claude/skills/obai-e2e-regression/runs/
 .claude/skills/obai-e2e-regression/backup/
+!.claude/skills/obai-model-benchmark/
+!.claude/skills/obai-model-benchmark/SKILL.md
+!.claude/skills/obai-model-benchmark/config/
+!.claude/skills/obai-model-benchmark/config/*.yaml
+!.claude/skills/obai-model-benchmark/scripts/
+!.claude/skills/obai-model-benchmark/scripts/*.py
+!.claude/skills/obai-model-benchmark/tests/
+!.claude/skills/obai-model-benchmark/tests/*.py
 # Paid E2E gate artifacts: packets carry full responses and raw trace spans.
 .e2e-runs/
 # Local working directory for analysis scripts; never part of a change.

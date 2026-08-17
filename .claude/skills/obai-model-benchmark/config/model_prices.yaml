@@ -1,0 +1,23 @@
+# USD per 1M tokens for every model that can appear in a benchmarked run's
+# spans (hub combo models plus shipped specialist/guardrail models).
+#
+# Standard-tier, short-context rates from
+# https://developers.openai.com/api/docs/pricing as of 2026-08-15 (reflects
+# the 2026-07-30 terra/luna price cut). Each model also has a long-context
+# tier (~2x input, ~1.5x output) that no gate turn has ever approached
+# (largest observed case: ~52k total tokens); if a benchmarked case ever
+# crosses that threshold, these rates undercount and the tier split needs
+# modeling. Reasoning tokens bill as `output` and need no separate rate.
+prices:
+  gpt-5.6-sol:
+    input: 5.00
+    cached_input: 0.50
+    output: 30.00
+  gpt-5.6-terra:
+    input: 2.00
+    cached_input: 0.20
+    output: 12.00
+  gpt-5.6-luna:
+    input: 0.20
+    cached_input: 0.02
+    output: 1.20
