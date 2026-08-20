@@ -1,6 +1,8 @@
 """Tavily API client for market news search with exponential backoff retry logic."""
 
 import asyncio
+from datetime import UTC
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 from tavily import (
@@ -24,6 +26,33 @@ RETRY_DELAYS = [0.5, 1.0, 2.0]  # Exponential backoff in seconds
 SearchDepth = Literal["basic", "advanced"]
 Topic = Literal["general", "news", "finance"]
 TimeRange = Literal["day", "week", "month", "year", "d", "w", "m", "y"]
+
+
+def _normalize_published_date(raw: object) -> str:
+    """Return an article's publication date as an ISO-8601 UTC string.
+
+    Tavily reports ``published_date`` in RFC 2822 ("Wed, 19 Aug 2026 13:25:41
+    GMT"), which neither sorts nor compares against the ISO dates the rest of
+    the server emits.
+
+    Args:
+        raw: The provider's ``published_date`` value, if it supplied one.
+
+    Returns:
+        The ISO-8601 UTC timestamp, the original string when it does not
+        parse, or "" when the provider supplied nothing.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        logger.warning("published_date_unparsed", value=raw)
+        return raw
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
 
 # Curated finance-news allowlist. Kept available for callers that
 # explicitly want to restrict results to mainstream financial press,
@@ -84,7 +113,7 @@ class TavilyClient:
         self,
         query: str,
         ticker: str | None = None,
-        topic: Topic = "finance",
+        topic: Topic = "news",
         time_range: TimeRange | None = "week",
         max_results: int = 5,
         search_depth: SearchDepth = "basic",
@@ -95,7 +124,9 @@ class TavilyClient:
         Args:
             query: Search query (e.g., 'latest earnings report', 'market outlook')
             ticker: Optional ticker symbol to focus the search (e.g., 'AAPL')
-            topic: Search topic - 'finance' for market data, 'news' for general news
+            topic: Search topic. 'news' is the default and the only topic
+                Tavily returns published_date for; 'finance' answers a news
+                query with quote and option-contract pages.
             time_range: Time filter - 'day', 'week', 'month', 'year'
             max_results: Maximum number of results (1-20, default: 5)
             search_depth: 'basic' (1 credit) or 'advanced' (2 credits)
@@ -194,9 +225,9 @@ class TavilyClient:
     def _time_range_to_tavily(self, time_range: TimeRange) -> str:
         """Map a requested recency window to Tavily's supported time_range token.
 
-        Tavily's ``/search`` filters recency for ``topic="finance"`` via the
-        ``time_range`` parameter (``d``/``w``/``m``/``y``). The legacy ``days``
-        parameter is ignored for the finance topic, so it is not used.
+        Tavily's ``/search`` filters recency via the ``time_range`` parameter
+        (``d``/``w``/``m``/``y``). The legacy ``days`` parameter is ignored,
+        so it is not used.
 
         Args:
             time_range: Requested recency window
@@ -237,7 +268,7 @@ class TavilyClient:
                 "title": result.get("title", ""),
                 "url": result.get("url", ""),
                 "content": result.get("content", ""),
-                "publishedDate": result.get("published_date", ""),
+                "publishedDate": _normalize_published_date(result.get("published_date")),
                 "score": result.get("score", 0.0),
                 "source": self._extract_domain(result.get("url", "")),
             }

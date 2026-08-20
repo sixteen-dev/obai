@@ -223,9 +223,72 @@ class TestTavilyRecencyFilter:
 
             mock_search.assert_called_once()
             params = mock_search.call_args.kwargs
-            assert params["topic"] == "finance"
+            # "news" is the only topic Tavily returns published_date for, and it
+            # is the only one that returns journalism: "finance" answers a news
+            # query with Yahoo quote pages and option-contract pages.
+            assert params["topic"] == "news"
             assert params["time_range"] == "d"
             assert "days" not in params
+
+
+class TestPublishedDateNormalization:
+    """Article dates survive the client and arrive ISO-8601 (guards trace 01a01d20)."""
+
+    @pytest.mark.asyncio
+    async def test_published_date_is_normalized_to_iso(self, mock_settings: Settings) -> None:
+        """Tavily returns RFC 2822; the specialist needs a comparable ISO date."""
+        async with TavilyClient(mock_settings) as client:
+            with patch.object(client.client, "search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {
+                    "results": [
+                        {
+                            "title": "Moderna stock nearly doubles",
+                            "url": "https://www.biospace.com/x",
+                            "content": "...",
+                            "published_date": "Wed, 19 Aug 2026 13:25:41 GMT",
+                            "score": 0.9,
+                        }
+                    ]
+                }
+
+                articles = await client.search_market_news(query="melanoma", ticker="MRNA")
+
+        assert articles[0]["publishedDate"] == "2026-08-19T13:25:41+00:00"
+
+    @pytest.mark.asyncio
+    async def test_missing_published_date_stays_empty(self, mock_settings: Settings) -> None:
+        """A result with no date must not invent one."""
+        async with TavilyClient(mock_settings) as client:
+            with patch.object(client.client, "search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {
+                    "results": [{"title": "t", "url": "https://x.com/y", "content": "c"}]
+                }
+
+                articles = await client.search_market_news(query="q", ticker="MRNA")
+
+        assert articles[0]["publishedDate"] == ""
+
+    @pytest.mark.asyncio
+    async def test_unparseable_published_date_is_kept_verbatim(
+        self, mock_settings: Settings
+    ) -> None:
+        """An unexpected format is passed through, never dropped or guessed."""
+        async with TavilyClient(mock_settings) as client:
+            with patch.object(client.client, "search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {
+                    "results": [
+                        {
+                            "title": "t",
+                            "url": "https://x.com/y",
+                            "content": "c",
+                            "published_date": "last Tuesday",
+                        }
+                    ]
+                }
+
+                articles = await client.search_market_news(query="q", ticker="MRNA")
+
+        assert articles[0]["publishedDate"] == "last Tuesday"
 
 
 class TestEarningsReportedBeforeEstimated:
