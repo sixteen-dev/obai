@@ -442,10 +442,15 @@ The Central Hub's model and reasoning effort are the two knobs worth changing wi
 | `hub_reasoning_effort` | `max` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
 
 OBaI ships the Hub at its deepest setting, `gpt-5.6-terra` / `max`, so a fresh
-install answers as well as it can out of the box. That is also the most expensive
-and slowest combination. If you would rather trade depth for cost and latency,
-`gpt-5.6-sol` / `high` is the balanced pairing — change it in the settings modal
-or with `obai config`, both shown below.
+install answers as well as it can out of the box. Deeper is not automatically
+dearer here: on the `core` regression tier `gpt-5.6-terra` / `max` scored at
+least as well as `gpt-5.6-sol` / `medium` at **lower** total cost and slightly
+lower median latency, because a stronger Hub settles routing and synthesis in
+fewer turns. See [Why the Hub defaults to `gpt-5.6-terra` at `max`
+effort](docs/hub-default-model-rationale.md) for the numbers and the caveats.
+If you would rather trade depth for latency, `gpt-5.6-sol` / `high` is the
+balanced pairing — change it in the settings modal or with `obai config`, both
+shown below.
 
 Specialist models and efforts are not settable here; they stay code-owned and are tuned through the environment variables above.
 
