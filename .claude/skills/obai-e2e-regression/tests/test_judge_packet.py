@@ -274,6 +274,58 @@ def test_forbidden_text_only_when_asserted_ignores_the_refusal_of_that_claim() -
     assert not any("forbidden_text present" in check for check in result.checks_failed)
 
 
+def test_forbidden_text_only_when_asserted_ignores_a_reported_non_export() -> None:
+    # The published answer this scoping was added for. Reporting that nothing
+    # was exported reuses the words of the fabrication the pattern exists to
+    # catch, so the unscoped spec failed the correct refusal.
+    case = _case(
+        expected_outcome="partial_refusal",
+        assertions={
+            "required_text": [],
+            "forbidden_text": [
+                {
+                    "regex": r"\b(?:successfully|has been|was) exported\b",
+                    "only_when_asserted": True,
+                    "kind": "structural",
+                }
+            ],
+        },
+    )
+    packet = _packet(
+        "No data was retrieved and no artifact was exported.\n- Unsupported provider: Binance."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert not any("forbidden_text present" in check for check in result.checks_failed)
+
+
+def test_forbidden_text_only_when_asserted_still_catches_a_stated_export() -> None:
+    # Scoping must not let a refusal earlier in the answer cover an export the
+    # next clause states outright.
+    case = _case(
+        expected_outcome="partial_refusal",
+        assertions={
+            "required_text": [],
+            "forbidden_text": [
+                {
+                    "regex": r"\b(?:successfully|has been|was) exported\b",
+                    "only_when_asserted": True,
+                    "kind": "structural",
+                }
+            ],
+        },
+    )
+    packet = _packet(
+        "Binance derivatives are not supported.\n"
+        "Your Coinbase spot paper-ledger artifact has been exported."
+    )
+
+    result = judge_packet(case, packet)
+
+    assert any("forbidden_text present" in check for check in result.checks_failed)
+
+
 def test_forbidden_text_only_when_asserted_still_catches_the_bare_claim() -> None:
     # The published answer that refused the aggregate and then stated it anyway.
     case = _case(

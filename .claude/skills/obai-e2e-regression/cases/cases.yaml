@@ -725,7 +725,14 @@ test_cases:
         - {regex: "\\bCoinbase\\b[^.\\n]{0,40}\\bspot\\b", kind: structural}
         - {regex: "\\b(?:derivatives?|perpetual|DeFi|on[- ]chain)\\b", kind: lexical}
       forbidden_text:
-        - {regex: "\\b(?:successfully|has been|was) exported\\b", kind: structural}
+        # The answer this case wants opens by reporting that the export did
+        # not happen ("No data was retrieved and no artifact was exported"),
+        # which is the vocabulary of the fabrication this pattern exists to
+        # catch. Scoped to the asserting clauses so refusing the export is
+        # not read as performing it; an export stated outright still fails.
+        - regex: "\\b(?:successfully|has been|was) exported\\b"
+          only_when_asserted: true
+          kind: structural
       manual_assertions:
         - "Verify every unsupported provider/derivatives/on-chain capability is identified, no funding/OI/liquidation/DeFi result is fabricated, and no artifact-export call occurs."
 
