@@ -96,6 +96,26 @@ def _build_date_chunks(
     return chunks
 
 
+# The adjustment basis stored prices sit on. Changing the endpoint above must
+# change this value too: a cache written on the old basis is not comparable
+# with rows fetched on the new one, and mixing them fabricates price moves.
+DAILY_PRICE_BASIS = "dividend_adjusted"
+INTRADAY_PRICE_BASIS = "raw"
+
+
+def price_basis_for(timeframe: str) -> str:
+    """Return the adjustment basis prices are stored on for a timeframe.
+
+    Args:
+        timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
+
+    Returns:
+        The basis identifier persisted alongside the cached rows.
+
+    """
+    return DAILY_PRICE_BASIS if timeframe == "daily" else INTRADAY_PRICE_BASIS
+
+
 class FMPClient:
     """Client for fetching historical OHLCV data from FMP API."""
 
