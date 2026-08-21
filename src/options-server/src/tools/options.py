@@ -34,6 +34,47 @@ logger = get_logger(__name__)
 # =============================================================================
 
 
+def _chain_stats(contracts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize a whole option chain into truncation-proof scalars.
+
+    The chain-wide readings a caller actually asks for -- put/call balance,
+    where open interest sits, how wide implied volatility runs -- are only
+    meaningful over every contract. Reducing them here keeps them right even
+    when the contract list is trimmed to fit a response limit.
+
+    Args:
+        contracts: Filtered contract snapshots for the full fetched chain.
+
+    Returns:
+        Counts, totals and ranges. Ratios and ranges are None when the chain
+        has no contracts on the relevant side, rather than a fabricated zero.
+
+    """
+    calls = [c for c in contracts if c.get("contract_type") == "call"]
+    puts = [c for c in contracts if c.get("contract_type") == "put"]
+    call_oi = sum(int(c.get("open_interest") or 0) for c in calls)
+    put_oi = sum(int(c.get("open_interest") or 0) for c in puts)
+    ivs = [float(c["implied_volatility"]) for c in contracts if c.get("implied_volatility")]
+    strikes = [float(c["strike_price"]) for c in contracts if c.get("strike_price")]
+    open_interests = [int(c.get("open_interest") or 0) for c in contracts]
+
+    return {
+        "contracts_total": len(contracts),
+        "calls": len(calls),
+        "puts": len(puts),
+        "open_interest_total": call_oi + put_oi,
+        "call_open_interest": call_oi,
+        "put_open_interest": put_oi,
+        "put_call_open_interest_ratio": (put_oi / call_oi) if call_oi else None,
+        "volume_total": sum(int(c.get("volume") or 0) for c in contracts),
+        "max_open_interest": max(open_interests) if open_interests else None,
+        "implied_volatility_min": min(ivs) if ivs else None,
+        "implied_volatility_max": max(ivs) if ivs else None,
+        "strike_min": min(strikes) if strikes else None,
+        "strike_max": max(strikes) if strikes else None,
+    }
+
+
 async def get_option_chain_snapshot(
     underlying_asset: str,
     expiration_date: str | None = None,
@@ -72,6 +113,12 @@ async def get_option_chain_snapshot(
 
             results = data.get("results", [])
             filtered_results = filter_option_chain_snapshot(results)
+            # Computed over every fetched contract, before the MCP layer trims
+            # the payload. truncate_response drops contracts off the tail to
+            # fit the character cap, so a put/call ratio or IV range derived
+            # from the surviving list describes a prefix of the chain rather
+            # than the chain. These stay correct whatever survives.
+            chain_stats = _chain_stats(filtered_results)
 
             response: dict[str, Any] = {
                 "underlying_asset": underlying_asset.upper(),
@@ -81,6 +128,7 @@ async def get_option_chain_snapshot(
                     "contract_type": contract_type,
                 },
                 "count": len(filtered_results),
+                "chain_stats": chain_stats,
                 "contracts": filtered_results,
                 "pages_fetched": data["pages_fetched"],
                 "truncated": data["truncated"],
