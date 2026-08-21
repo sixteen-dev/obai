@@ -692,10 +692,18 @@ def _render_strategy_handoff(user_request: str, universe: list[str], context: st
     return "\n".join(blocks)
 
 
-# Metadata appended around a request — correlation tags, tooling notes — is not
-# part of what the user asked for, so requiring the Hub to echo it back proves
-# nothing about signal fidelity and fails an otherwise faithful hand-off.
-_TRAILING_ANNOTATION_RE = re.compile(r"\s*\[[^\[\]]*\]\s*\Z")
+# The regression gate appends this correlation tag to the submitted query so a
+# run can be tied back to its trace. It is tooling metadata, not part of what
+# the user asked for, so requiring the Hub to echo it back proves nothing about
+# signal fidelity and failed an otherwise faithful hand-off.
+#
+# Matched by its own wording rather than as "any trailing bracket": a strategy
+# rule can legitimately end in brackets, and stripping those made "buy when RSI
+# is in [30, 40]" normalize to the same text as the same request carrying
+# [70, 80], or none at all, so a materially different strategy passed the gate.
+_TRAILING_ANNOTATION_RE = re.compile(
+    r"\s*\[OBaI regression correlation:[^\[\]]*\]\s*\Z", re.IGNORECASE
+)
 
 
 def _normalize_strategy_handoff_text(text: str) -> str:

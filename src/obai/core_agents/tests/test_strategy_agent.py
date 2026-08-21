@@ -503,6 +503,45 @@ class TestStrategyRoutingGuard:
 
         assert _get_strategy_handoff_fidelity_error(request, submitted) is None
 
+    def test_strategy_handoff_fidelity_keeps_a_bracketed_rule(self) -> None:
+        """A threshold range in brackets is the rule, not metadata.
+
+        Stripping every trailing bracket meant "RSI is in [30, 40]" and the
+        same request carrying a different range normalized to identical text,
+        so a materially different strategy passed the gate. A trailing period
+        happened to save it; a terse query has none.
+        """
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        original = "Backtest AAPL: buy when RSI is in [30, 40]"
+        rewritten = "Backtest AAPL: buy when RSI is in [70, 80]"
+
+        assert _get_strategy_handoff_fidelity_error(rewritten, original) is not None
+
+    def test_strategy_handoff_fidelity_rejects_a_dropped_range(self) -> None:
+        """Dropping the range outright must not normalize to the same request."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        original = "Backtest AAPL: buy when RSI is in [30, 40]"
+        stripped = "Backtest AAPL: buy when RSI is in"
+
+        assert _get_strategy_handoff_fidelity_error(stripped, original) is not None
+
+    def test_strategy_handoff_fidelity_ignores_the_marker_after_a_bracketed_rule(
+        self,
+    ) -> None:
+        """Both at once: the rule survives, the correlation tag is still ignored."""
+        from core_agents.central_hub_agent import _get_strategy_handoff_fidelity_error
+
+        request = "Backtest AAPL: buy when RSI is in [30, 40]"
+        submitted = (
+            f"{request}\n\n"
+            "[OBaI regression correlation: regress:CORE-STRAT:00317b94. "
+            "Do not repeat this marker.]"
+        )
+
+        assert _get_strategy_handoff_fidelity_error(request, submitted) is None
+
     def test_buy_and_hold_is_a_recognized_objective(self) -> None:
         """Buy-and-hold must be a recognized objective on its own merit."""
         from core_agents.central_hub_agent import _has_strategy_objective
