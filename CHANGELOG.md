@@ -6,19 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Changed
+## [1.6.0] - 2026-08-21
 
-- **Default hub model → `gpt-5.6-terra` at `max` reasoning effort** (from
-  `gpt-5.6-sol` / `medium`). A fresh install now answers at the deepest setting
-  the hub offers rather than the balanced one; `gpt-5.6-sol` and the lower
-  effort tiers remain one click away in the web UI settings modal, one command
-  away via `obai config set-model` / `set-effort`, and unchanged via
-  `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT`. This is the most
-  expensive and slowest combination — `gpt-5.6-sol` / `high` is the balanced
-  pairing for anyone who would rather trade depth for cost and latency.
-  Existing `~/.obai/settings.json` files are untouched, so only installs that
-  never wrote one see the change. `max` requires `openai>=2.45.0`, already the
-  floor in both the root and `src/obai` manifests.
+Minor: user-settable hub model and reasoning effort, with `gpt-5.6-terra` at
+`max` effort as the new shipped default; a cost-aware evaluation suite with
+deterministic outcome contracts; and a regression gate that no longer
+false-fails correct answers.
 
 ### Added
 
@@ -60,40 +53,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   a browser refresh already suffices and a restart would spend a full hub
   re-init to achieve nothing.
 
-### Changed
-
-- The accepted reasoning-effort set is now `none|low|medium|high|xhigh|max`.
-  `minimal` has been removed: it is a valid value in the OpenAI SDK's own type
-  but every `gpt-5.6` model rejects it at request time, so accepting it only
-  traded a config-time error for a mid-query one.
-
-  **Upgrading:** if you have `ORCHESTRATOR_REASONING_EFFORT=minimal` (or any
-  other `*_REASONING_EFFORT=minimal`) exported or set in `~/.obai/.env`, unset
-  it or change it to `low` before upgrading. The value was previously accepted
-  at config time, so on the new version every `obai` command that builds a
-  config will fail validation until it is changed. `obai config show` flags an
-  env value that is not accepted.
-
-### Fixed
-
-- Native `<select>` dropdowns in the web UI settings modal rendered
-  near-white text on the browser's white popup, unreadable except for the
-  hovered row. The stylesheet declared no `color-scheme`, so the browser
-  painted native controls in light mode while the options inherited the dark
-  theme's text colour. Affected the portfolio preference dropdowns too.
-- `setup.sh` aborted at step 6/8 with `mktemp: too few X's in template`. GNU
-  mktemp requires three trailing `X`s, and under `set -euo pipefail` the
-  failed substitution killed the run before the web UI and final
-  configuration steps. BSD/macOS accepts the bare prefix, which is why it
-  went unnoticed. Shell scripts now have test coverage for this.
-
-## [1.6.0] - 2026-07-18
-
-Minor: cost-aware evaluation suite with deterministic outcome contracts, plus a
-regression gate that no longer false-fails correct answers.
-
-### Added
-
 - Cost-aware evaluation corpus: 210 cases across 8 categories (185 default + 25
   opt-in `extended_only`). New `--include-extended`, `--ids`, and `--limit`
   options allow surgical, cost-capped paid suite runs.
@@ -118,6 +77,35 @@ regression gate that no longer false-fails correct answers.
   guessing a threshold. Hub-only — specialists carry no `Session`.
 
 ### Changed
+
+- **Default hub model → `gpt-5.6-terra` at `max` reasoning effort** (from
+  `gpt-5.6-sol` / `medium`). A fresh install now answers at the deepest setting
+  the hub offers rather than the balanced one; `gpt-5.6-sol` and the lower
+  effort tiers remain one click away in the web UI settings modal, one command
+  away via `obai config set-model` / `set-effort`, and unchanged via
+  `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT`. Deeper is not
+  automatically dearer: on the `core` regression tier `gpt-5.6-terra` / `max`
+  scored at least as well as `gpt-5.6-sol` / `medium` at lower total cost and
+  slightly lower median latency, because a stronger hub settles routing and
+  synthesis in fewer turns — see `docs/hub-default-model-rationale.md` for the
+  numbers and caveats. `gpt-5.6-sol` / `high` remains the balanced pairing for
+  anyone who would rather trade depth for latency.
+  Existing `~/.obai/settings.json` files are untouched, so only installs that
+  never wrote one see the change. `max` requires `openai>=2.45.0`, already the
+  floor in both the root and `src/obai` manifests.
+
+
+- The accepted reasoning-effort set is now `none|low|medium|high|xhigh|max`.
+  `minimal` has been removed: it is a valid value in the OpenAI SDK's own type
+  but every `gpt-5.6` model rejects it at request time, so accepting it only
+  traded a config-time error for a mid-query one.
+
+  **Upgrading:** if you have `ORCHESTRATOR_REASONING_EFFORT=minimal` (or any
+  other `*_REASONING_EFFORT=minimal`) exported or set in `~/.obai/.env`, unset
+  it or change it to `low` before upgrading. The value was previously accepted
+  at config time, so on the new version every `obai` command that builds a
+  config will fail validation until it is changed. `obai config show` flags an
+  env value that is not accepted.
 
 - **Every agent model moved onto the `gpt-5.6` price tier.** `SPECIALIST_MODEL`
   and the guardrail model `gpt-5-mini → gpt-5.6-luna`; strategy, crypto, and
@@ -170,6 +158,17 @@ regression gate that no longer false-fails correct answers.
   PYSEC-2026-3447, fixed in 83.0.0).
 
 ### Fixed
+
+- Native `<select>` dropdowns in the web UI settings modal rendered
+  near-white text on the browser's white popup, unreadable except for the
+  hovered row. The stylesheet declared no `color-scheme`, so the browser
+  painted native controls in light mode while the options inherited the dark
+  theme's text colour. Affected the portfolio preference dropdowns too.
+- `setup.sh` aborted at step 6/8 with `mktemp: too few X's in template`. GNU
+  mktemp requires three trailing `X`s, and under `set -euo pipefail` the
+  failed substitution killed the run before the web UI and final
+  configuration steps. BSD/macOS accepts the bare prefix, which is why it
+  went unnoticed. Shell scripts now have test coverage for this.
 
 - **Empty replies from `strategy_analysis` are fixed at the runtime layer.** The
   relay only surfaced output containing `#### 1. Verdict` or `Job ID` +
@@ -747,6 +746,7 @@ only after beta validation completes; do not move the beta tag.
 - Research agent with Exa semantic search
 - Automated setup/teardown scripts
 
-[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.5.5...HEAD
+[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/sixteen-dev/obai/compare/v1.5.5...v1.6.0
 [1.4.0b1]: https://github.com/sixteen-dev/obai/releases/tag/v1.4.0b1
 [0.9.0]: https://github.com/sixteen-dev/obai/releases/tag/v0.9.0
