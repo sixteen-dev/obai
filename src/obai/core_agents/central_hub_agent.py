@@ -847,6 +847,31 @@ _specialist_start_times: dict[str, float] = {}
 _tool_start_times: dict[str, float] = {}  # tool_call_id -> start_time
 _tool_names: dict[str, str] = {}  # tool_call_id -> tool_name
 _inner_tool_outputs: list[dict[str, Any]] = []  # raw MCP outputs for scoring
+# Evidence retrieved by the specialist invocation running on this task.
+# Citation checks used to take their evidence as a slice of the shared list
+# above, from its length before the call to its length after. That cannot
+# separate two research calls the hub issues in parallel: each one's slice
+# also holds the other's appends, so a fabricated citation passed verification
+# whenever the sibling call happened to retrieve that URL. A ContextVar
+# follows the invocation instead of its position in a shared list.
+_invocation_tool_outputs: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "invocation_tool_outputs",
+    default=None,
+)
+
+
+def _record_inner_tool_output(entry: dict[str, Any]) -> None:
+    """Record one raw MCP output for scoring and for the running invocation.
+
+    Args:
+        entry: Captured output with specialist, tool_name and output keys.
+
+    """
+    _inner_tool_outputs.append(entry)
+    own = _invocation_tool_outputs.get()
+    if own is not None:
+        own.append(entry)
+
 
 # Callback for MCP tool events (set by CLI/client)
 _mcp_tool_callback: Any = None
@@ -964,7 +989,7 @@ def _create_stream_handler(tool_name: str, display_name: str) -> Any:
                         if raw_output is None and isinstance(raw_item, dict):
                             raw_output = raw_item.get("output")
                         if raw_output is not None:
-                            _inner_tool_outputs.append(
+                            _record_inner_tool_output(
                                 {
                                     "specialist": display_name,
                                     "tool_name": mcp_tool,
@@ -1693,15 +1718,20 @@ class CentralHubAgent:
             strict_mode=True,
         )
         async def research_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
-            captured_before = len(get_inner_tool_outputs())
-
-            result = Runner.run_streamed(
-                starting_agent=research_agent,
-                input=input,
-                context=ctx.context,
-            )
-            async for event in result.stream_events():
-                await stream_handler({"agent": research_agent, "event": event})
+            # Scoped to this invocation, so a sibling research call running in
+            # parallel cannot lend its retrieved URLs to this one's citations.
+            captured: list[dict[str, Any]] = []
+            token = _invocation_tool_outputs.set(captured)
+            try:
+                result = Runner.run_streamed(
+                    starting_agent=research_agent,
+                    input=input,
+                    context=ctx.context,
+                )
+                async for event in result.stream_events():
+                    await stream_handler({"agent": research_agent, "event": event})
+            finally:
+                _invocation_tool_outputs.reset(token)
 
             final_output = getattr(result, "final_output", None)
             output = final_output if isinstance(final_output, str) else str(final_output or "")
@@ -1709,9 +1739,7 @@ class CentralHubAgent:
                 return output
 
             own_outputs = [
-                entry
-                for entry in get_inner_tool_outputs()[captured_before:]
-                if entry.get("specialist") == "Research Agent"
+                entry for entry in captured if entry.get("specialist") == "Research Agent"
             ]
             verified, dropped = _redact_unretrieved_urls(
                 output, _collect_retrieved_urls(own_outputs)
