@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
+from core_agents.response_assembly import AnswerAccumulator
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -185,7 +186,14 @@ class HubBridge:
             # start). Becomes the final answer once the run completes; any
             # text closed off by a hub tool_call_item was intermediate
             # narration and is signalled to the UI via thinking_break.
-            response_text = ""
+            # Assembled the way chat.py assembles it: text is grouped by
+            # message id and a message the model labels commentary is dropped
+            # instead of glued onto the answer. Appending every delta persisted
+            # those status lines into the saved conversation, and everything
+            # replayed from it inherited them.
+            answer = AnswerAccumulator()
+            passthrough: str | None = None
+            streamed_since_break = False
             query_start = time.perf_counter()
             specialists_used: list[str] = []
             tool_events: list[dict[str, Any]] = []
@@ -212,7 +220,7 @@ class HubBridge:
                         | CryptoPassthroughEvent
                         | StrategyPassthroughEvent,
                     ):
-                        response_text = event.content
+                        passthrough = event.content
                         yield {"type": "text_delta", "delta": event.content}
                         continue
 
@@ -266,9 +274,10 @@ class HubBridge:
                             # the raw_item check so a missing raw_item still
                             # prevents narration from leaking into the saved
                             # response.
-                            if response_text:
+                            if streamed_since_break:
                                 yield {"type": "thinking_break"}
-                                response_text = ""
+                                streamed_since_break = False
+                            answer.reset()
 
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
@@ -313,9 +322,10 @@ class HubBridge:
                             # any text accumulated since the last reset as
                             # narration so it doesn't leak into the saved
                             # response.
-                            if response_text:
+                            if streamed_since_break:
                                 yield {"type": "thinking_break"}
-                                response_text = ""
+                                streamed_since_break = False
+                            answer.reset()
 
                             raw_item = getattr(item, "raw_item", None)
                             if raw_item:
@@ -337,10 +347,14 @@ class HubBridge:
                                     tool_events.append(tc_evt)
 
                         elif item_type == "message_output_item":
-                            if isinstance(item, MessageOutputItem) and not response_text:
-                                msg_text = ItemHelpers.text_message_output(item)
-                                if msg_text:
-                                    response_text = msg_text
+                            if isinstance(item, MessageOutputItem):
+                                # Carries the phase label, and the whole text
+                                # when no deltas arrived.
+                                answer.note_message(
+                                    item.raw_item.id,
+                                    ItemHelpers.text_message_output(item),
+                                    item.raw_item.phase,
+                                )
 
                     # --- Streaming text ---
                     elif isinstance(event, RawResponsesStreamEvent):
@@ -348,7 +362,8 @@ class HubBridge:
                         if isinstance(data, ResponseTextDeltaEvent):
                             delta = data.delta
                             if delta:
-                                response_text += delta
+                                answer.add_delta(data.item_id, delta)
+                                streamed_since_break = True
                                 yield {"type": "text_delta", "delta": delta}
 
                     # Drain MCP buffer after each hub event
@@ -366,7 +381,7 @@ class HubBridge:
                     "type": "complete",
                     "duration_ms": total_ms,
                     "specialists": specialists_used,
-                    "response_text": response_text,
+                    "response_text": (passthrough if passthrough is not None else answer.text()),
                     "tool_data": tool_events,
                 }
 
