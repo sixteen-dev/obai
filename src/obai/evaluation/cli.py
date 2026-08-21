@@ -263,8 +263,6 @@ async def run_query_with_trace(
     """
     # Import agent components
     try:
-        from agents import Runner
-
         from core_agents.central_hub_agent import (
             clear_agent_activity_tracking,
             create_central_hub,
@@ -310,19 +308,15 @@ async def run_query_with_trace(
             console.print("[red]Agent not initialized[/red]")
             raise typer.Exit(1)
 
-        result = Runner.run_streamed(
-            starting_agent=hub.agent,
-            input=query,
-        )
-
-        # Process streaming events
-        async for event in result.stream_events():
+        # Drive the hub through the same entry point the web, CLI and TUI use.
+        # Running hub.agent directly skipped the sandbox run config the hub
+        # builds, and a SandboxAgent without one raises UserError, so no case
+        # scored at all. It also skipped the phase-aware answer assembly,
+        # terminal passthrough and cache behaviour that decide what a user
+        # actually receives -- scoring a different execution path than the one
+        # that ships is the single thing this harness must not do.
+        async for event in hub.run(query):
             capture.process_sdk_event(event)
-
-            # Print progress if verbose
-            if verbose:
-                # We'll print the full trace at the end
-                pass
 
         # Attach raw MCP outputs from specialist inner calls
         capture.set_inner_tool_outputs(get_inner_tool_outputs())
