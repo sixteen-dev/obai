@@ -54,6 +54,7 @@ def compute_metrics(  # noqa: PLR0913
     requested_end: str = "",
     timeframe: str = "daily",
     risk_free_rate: float = RISK_FREE_RATE,
+    risk_free_rate_source: str = "assumed_zero",
 ) -> BacktestResult:
     """Compute all performance and risk metrics from backtest results.
 
@@ -68,6 +69,8 @@ def compute_metrics(  # noqa: PLR0913
         requested_end: Requested end date (YYYY-MM-DD).
         timeframe: Bar timeframe for annualization (Phase 3.6).
         risk_free_rate: Annual risk-free rate (default 0.0).
+        risk_free_rate_source: Provenance of the rate (e.g. "treasury_3m",
+            "fallback", "assumed_zero") — surfaced on the result for disclosure.
 
     Returns:
         BacktestResult with all metrics computed.
@@ -97,6 +100,7 @@ def compute_metrics(  # noqa: PLR0913
         bars_per_year,
         timeframe,
         risk_free_rate,
+        risk_free_rate_source,
     )
     result.data_quality = _compute_data_quality(
         symbol_dfs or {},
@@ -120,6 +124,7 @@ def _build_result(  # noqa: PLR0913
     bars_per_year: int = TRADING_DAYS_PER_YEAR,
     timeframe: str = "daily",
     risk_free_rate: float = RISK_FREE_RATE,
+    risk_free_rate_source: str = "assumed_zero",
 ) -> BacktestResult:
     """Build BacktestResult from computed components."""
     total_return = (
@@ -165,6 +170,8 @@ def _build_result(  # noqa: PLR0913
             pl.DataFrame({"date": dates, "equity": equity.tolist()}),
         ),
         data_points_processed=len(equity),
+        risk_free_rate=risk_free_rate,
+        risk_free_rate_source=risk_free_rate_source,
     )
 
 
@@ -657,6 +664,8 @@ def compute_portfolio_metrics(  # noqa: PLR0913
     timeframe: str = "daily",
     strategy_name: str = "",
     symbols: list[str] | None = None,
+    risk_free_rate: float = RISK_FREE_RATE,
+    risk_free_rate_source: str = "assumed_zero",
 ) -> dict[str, Any]:
     """Compute metrics for a portfolio backtest result.
 
@@ -670,6 +679,8 @@ def compute_portfolio_metrics(  # noqa: PLR0913
         timeframe: Bar timeframe for annualization.
         strategy_name: Name of the strategy.
         symbols: List of symbols traded.
+        risk_free_rate: Annual risk-free rate (default 0.0).
+        risk_free_rate_source: Provenance of the rate for disclosure.
 
     Returns:
         Dict with all standard and portfolio-specific metrics.
@@ -694,6 +705,8 @@ def compute_portfolio_metrics(  # noqa: PLR0913
         strategy_name=strategy_name,
         symbols=symbols or [],
         timeframe=timeframe,
+        risk_free_rate=risk_free_rate,
+        risk_free_rate_source=risk_free_rate_source,
     )
 
     output = base_result.to_dict()

@@ -10,7 +10,7 @@ import pytest
 from src.data import HistoryDownloader
 from src.engine.edge import EdgeEstimate
 from src.storage import PredictionDuckDBManager, PredictionStore
-from src.tools.market_edge import _build_response, estimate_market_edge
+from src.tools.market_edge import _build_response, _yes_price, estimate_market_edge
 
 
 def _now() -> datetime:
@@ -215,6 +215,28 @@ def _fixed_estimate() -> EdgeEstimate:
         market_count=12,
         low_n=False,
     )
+
+
+def test_yes_price_matches_label() -> None:
+    """A No-first market returns the YES-labeled price, not positional outcome_prices[0].
+
+    Gamma markets are not always ordered ['Yes', 'No']; reading prices[0]
+    positionally would report the No-side price against the YES-side contract
+    and flip the edge sign.
+    """
+    market = {"outcomes": ["No", "Yes"], "outcome_prices": [0.7, 0.3]}
+    assert _yes_price(market) == 0.3  # YES-labeled price, not prices[0] (0.7)
+
+
+def test_none_price_raises_clear_error() -> None:
+    """An unparseable (None) YES price raises a descriptive ValueError, not TypeError.
+
+    The Gamma normalizer preserves parse failures as None; float(None) would
+    raise an opaque TypeError, so the tool must fail loud with a clear message.
+    """
+    market = {"outcomes": ["Yes", "No"], "outcome_prices": [None, 0.4]}
+    with pytest.raises(ValueError, match="YES price"):
+        _yes_price(market)
 
 
 def test_market_edge_fingerprint_tracks_calibration_buckets() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -156,3 +156,69 @@ class TestExaClientNormalization:
         assert len(results) == 1
         assert results[0].content == "Fallback text content"
         assert results[0].freshness == "unknown"
+
+
+class TestDedicatedIndexCategories:
+    """`company` and `people` run on indices that reject a recency filter.
+
+    Exa answers the combination with a 400, so every call a tool made with
+    both set failed outright. Rejecting it here names the conflict instead of
+    spending a request to be told, and stops a caller silently losing either
+    the category or the window.
+    """
+
+    @pytest.mark.asyncio
+    async def test_company_with_recency_filter_is_rejected(self) -> None:
+        client = ExaClient(api_key="k")
+        with pytest.raises(ValueError, match="startPublishedDate"):
+            await client.search(
+                query="Moderna business model",
+                category="company",
+                start_published_date="2025-08-20T00:00:00.000Z",
+            )
+
+    @pytest.mark.asyncio
+    async def test_people_with_recency_filter_is_rejected(self) -> None:
+        client = ExaClient(api_key="k")
+        with pytest.raises(ValueError, match="startPublishedDate"):
+            await client.search(
+                query="CEO track record",
+                category="people",
+                start_published_date="2024-08-20T00:00:00.000Z",
+            )
+
+    @pytest.mark.asyncio
+    async def test_keyword_type_with_company_is_rejected(self) -> None:
+        """Exa: 'The "company" category is not supported for type "keyword"'."""
+        client = ExaClient(api_key="k")
+        with pytest.raises(ValueError, match="keyword"):
+            await client.search(
+                query="Moderna official website",
+                search_type="keyword",
+                category="company",
+            )
+
+    @pytest.mark.asyncio
+    async def test_category_without_recency_is_allowed(self) -> None:
+        """The category alone is valid and must still reach the API."""
+        client = ExaClient(api_key="k")
+        with patch.object(client, "_post", new_callable=AsyncMock) as post:
+            post.return_value = {"results": []}
+            await client.search(query="Moderna", category="company")
+
+        assert post.await_args is not None
+        assert post.await_args.args[1]["category"] == "company"
+
+    @pytest.mark.asyncio
+    async def test_recency_without_category_is_allowed(self) -> None:
+        """A dateless index is only a constraint when the category selects one."""
+        client = ExaClient(api_key="k")
+        with patch.object(client, "_post", new_callable=AsyncMock) as post:
+            post.return_value = {"results": []}
+            await client.search(
+                query="Moderna",
+                start_published_date="2025-08-20T00:00:00.000Z",
+            )
+
+        assert post.await_args is not None
+        assert "startPublishedDate" in post.await_args.args[1]

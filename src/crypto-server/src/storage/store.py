@@ -212,6 +212,33 @@ class CryptoStore:
             )
             self._mark_write()
 
+    async def get_artifact(self, fingerprint: str) -> dict[str, Any] | None:
+        """Return a stored artifact and the key it was filed under.
+
+        Args:
+            fingerprint: Artifact fingerprint used as the storage key.
+
+        Returns:
+            Dict with ``fingerprint``, ``artifact``, and ``created_at``, or
+            None when no row exists for that key.
+
+        """
+        row = self._conn.execute(
+            """
+            SELECT fingerprint, artifact_json, created_at
+            FROM artifacts
+            WHERE fingerprint = ?
+            """,
+            [fingerprint],
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fingerprint": row[0],
+            "artifact": json.loads(row[1]),
+            "created_at": row[2],
+        }
+
     def _create_schema(self) -> None:
         self._conn.execute(
             """

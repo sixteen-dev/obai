@@ -42,11 +42,13 @@ from agents.items import ItemHelpers, MessageOutputItem
 from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
 from agents.sandbox import Manifest, SandboxAgent, SandboxPathGrant, SandboxRunConfig
+from agents.sandbox.capabilities import CompactionModelInfo
 from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 from agents.sandbox.entries import LocalDir
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import ResponseTextDeltaEvent
+from openai.types.responses.response_create_params import ContextManagement
 from openai.types.shared import Reasoning
 
 if TYPE_CHECKING:
@@ -71,6 +73,7 @@ from .preferences import _store as _prefs_store
 from .preferences import get_preferences, set_preferences
 from .prompt_loader import load_prompt
 from .research_agent import ResearchAgent
+from .response_assembly import AnswerAccumulator
 from .screener_agent import ScreenerAgent
 from .strategy_agent import StrategyAgent
 from .tracing import init_opik
@@ -91,7 +94,7 @@ class StrategyPassthrough:
     """
 
     content: str
-    kind: str  # "completed" or "pending"
+    kind: str  # marker label only: "completed", "pending", or "other"
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,19 @@ class PredictionPassthroughEvent:
 @dataclass(frozen=True)
 class CryptoPassthroughEvent:
     """Emitted by hub.run() for terminal crypto specialist output."""
+
+    content: str
+
+
+@dataclass(frozen=True)
+class StrategyPassthroughEvent:
+    """Emitted by hub.run() for terminal strategy specialist output.
+
+    Makes strategy relay deterministic like prediction/crypto: the client
+    renders ``content`` verbatim so hub-authored preamble (e.g. retry
+    narration after a handoff-format rejection) can never prefix the
+    nine-section deliverable.
+    """
 
     content: str
 
@@ -261,6 +277,27 @@ def _is_pending_strategy_output(output: str) -> bool:
     return "Job ID" in output and "Estimated Time" in output
 
 
+def _strategy_relay_kind(output: str) -> str:
+    """Label relayed strategy output for the hub-visible marker.
+
+    Purely descriptive. Every non-empty specialist response is relayed
+    verbatim regardless of shape, so this only selects the marker suffix and
+    never decides whether the relay happens.
+
+    Args:
+        output: Raw specialist response text.
+
+    Returns:
+        "completed" for the nine-section deliverable, "pending" for an async
+        stub, otherwise "other".
+    """
+    if _is_completed_strategy_output(output):
+        return "completed"
+    if _is_pending_strategy_output(output):
+        return "pending"
+    return "other"
+
+
 _STRATEGY_TOOL_DESCRIPTION = (
     "Design, backtest, and refine trading strategies. "
     "Acts as a quantitative analyst that uses provided market "
@@ -270,13 +307,27 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "system questions. "
     "MANDATORY PRE-CONDITION: before calling this tool, you MUST first "
     "call load_skill('obai-strategy-routing') in the same turn. The "
-    "skill body holds the handoff template and rules that govern this "
-    "call. Calling this tool without loading that skill first is "
-    "incorrect and will produce wrong handoffs. "
+    "skill body holds the routing rules that govern this call. Calling "
+    "this tool without loading that skill first is incorrect. "
+    "Pass `user_request` as the user's wording verbatim, never a rewrite or "
+    "summary of it. Pass `universe` as the resolved tradable tickers, and "
+    "`context` as Hub-resolved facts only — never the user's entry, exit, or "
+    "risk rules, which belong in `user_request`. "
     "Do not call with unresolved critical inputs. "
     "This tool may return a finished user-facing deliverable. "
     "If it does, your final answer must be exactly the tool output. "
     "Do not summarize it, reformat it, or add commentary."
+)
+_RESEARCH_TOOL_DESCRIPTION = (
+    "Deep company and thematic research via web sources. "
+    "Use for qualitative, structural, or long-horizon questions "
+    "requiring synthesis across multiple non-news sources, "
+    "including business model analysis, leadership quality, "
+    "product sentiment, competitive dynamics, and industry "
+    "structure. Not for breaking news, earnings data, SEC "
+    "filings, insider activity, valuation metrics, or live "
+    "market data. Resolve company_name first when only a ticker "
+    "is provided."
 )
 _TERMINAL_STRATEGY_OUTPUT_PREFIX = "__TERMINAL_TOOL_OUTPUT__:strategy_analysis:"
 _TERMINAL_PREDICTION_PREFIX = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
@@ -360,6 +411,9 @@ _STRATEGY_OBJECTIVE_PATTERNS = (
         r"\b(value|quality|growth|income|dividend|factor|rotation|swing|covered[- ]call|wheel)\b",
         re.IGNORECASE,
     ),
+    # Passive holding families (buy-and-hold is a complete objective on its own,
+    # not dependent on an incidental "dividend"/"income" token appearing nearby)
+    re.compile(r"\bbuy[- ]and[- ]hold\b|\bbuy[- ]?&[- ]?hold\b", re.IGNORECASE),
     # Indicator names (implies technical strategy)
     re.compile(
         r"\b(sma|ema|wma|dema|tema|rsi|macd|bbands|atr|adx|stoch|stochrsi|cci|willr|mom|roc|obv|mfi|aroon|sar)\b",
@@ -373,78 +427,12 @@ _STRATEGY_OBJECTIVE_PATTERNS = (
     # Hub handoff format explicitly states the objective
     re.compile(r"User objective:", re.IGNORECASE),
 )
-_STRATEGY_FOLLOW_UP_PATTERNS = (
-    re.compile(r"\bjob[_ ]?id\b", re.IGNORECASE),
-    re.compile(r"\bcheck\b.*\bstatus\b", re.IGNORECASE),
-    re.compile(r"\bstatus\b.*\b(?:backtest|job|strategy)\b", re.IGNORECASE),
-    re.compile(r"\b(?:backtest|job|strategy)\b.*\bstatus\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:is it|are they|how is|how are).*\b(?:done|ready|finished|running|complete)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\b(?:backtest|job)\s+(?:results?|output|done)\b", re.IGNORECASE),
-    # The strategy agent's pending-response template tells users to ask
-    # "Check job <id>" (gpt-5.5 phrasing). Match that wording and any bare
-    # bt_<hash> token so the hub doesn't reject its own follow-up handoff.
-    re.compile(r"\bcheck\s+job\b", re.IGNORECASE),
-    re.compile(r"\bjob\s+bt_\w+", re.IGNORECASE),
-    re.compile(r"\bbt_[a-z0-9]{6,}\b", re.IGNORECASE),
-)
-_STRATEGY_SYMBOL_LIST_PATTERNS = (
-    re.compile(r'"symbols"\s*:\s*\[(?P<body>[^\]]+)\]', re.IGNORECASE),
-    re.compile(r"Universe:\s*\[?(?P<body>[^\]\n(]+)", re.IGNORECASE),
-    re.compile(
-        r"\b(?:for|on|across|using)\s+(?P<body>(?:[A-Z]{1,5}(?:\.[A-Z])?\s*(?:,|\band\b)?\s*)+)"
-    ),
-    # Bulleted ticker list emitted by the obai-strategy-routing skill when
-    # listing a resolved universe. Requires the ticker to be followed by
-    # parenthesized text or end-of-line so non-ticker bullet headers
-    # (e.g. lines starting with descriptive prose) are skipped.
-    re.compile(
-        r"^\s*[-*•]\s*(?P<body>[A-Z]{1,5}(?:\.[A-Z])?)(?=\s*\(|\s*$)",
-        re.MULTILINE,
-    ),
-)
-_NON_TICKER_TOKENS = {
-    "AND",
-    "OR",
-    "JSON",
-    "SMA",
-    "EMA",
-    "WMA",
-    "DEMA",
-    "TEMA",
-    "RSI",
-    "MACD",
-    "BBANDS",
-    "ATR",
-    "ADX",
-    "STOCH",
-    "STOCHRSI",
-    "CCI",
-    "WILLR",
-    "MOM",
-    "ROC",
-    "OBV",
-    "MFI",
-    "AROON",
-    "SAR",
-}
-
-
-def _extract_strategy_symbols(input_text: str) -> set[str]:
-    """Extract ticker-like symbols from structured strategy tool input."""
-    symbols: set[str] = set()
-
-    for pattern in _STRATEGY_SYMBOL_LIST_PATTERNS:
-        for match in pattern.finditer(input_text):
-            body = match.group("body")
-            for token in re.findall(r"\b[A-Za-z]{1,5}(?:\.[A-Za-z])?\b", body):
-                candidate = token.upper()
-                if candidate not in _NON_TICKER_TOKENS:
-                    symbols.add(candidate)
-
-    return symbols
+# A stored job id is as concrete a strategy target as a resolved universe: the
+# specialist reloads the run from the id. Matching the literal token is a hard
+# syntactic fact, which is all a hub pre-flight gate may test. The prose forms
+# this replaced ("check ... status", "is it done") classified fuzzy follow-up
+# intent in the hub, which belongs to the skill and the specialist.
+_STRATEGY_JOB_REFERENCE_PATTERN = re.compile(r"\bbt_[a-z0-9]{6,}\b", re.IGNORECASE)
 
 
 def _has_strategy_objective(input_text: str) -> bool:
@@ -452,9 +440,17 @@ def _has_strategy_objective(input_text: str) -> bool:
     return any(pattern.search(input_text) for pattern in _STRATEGY_OBJECTIVE_PATTERNS)
 
 
-def _is_strategy_follow_up_request(input_text: str) -> bool:
-    """Allow async status follow-ups without requiring the original strategy inputs."""
-    return any(pattern.search(input_text) for pattern in _STRATEGY_FOLLOW_UP_PATTERNS)
+def _references_strategy_job(input_text: str) -> bool:
+    """Report whether the request names a stored backtest job.
+
+    Args:
+        input_text: The user request carried by the hand-off.
+
+    Returns:
+        True when a ``bt_<hash>`` job token is present.
+
+    """
+    return bool(_STRATEGY_JOB_REFERENCE_PATTERN.search(input_text))
 
 
 _STRATEGY_QUERY_KEYWORDS = re.compile(
@@ -475,8 +471,7 @@ _PREDICTION_MARKET_KEYWORDS = re.compile(
 # word ("before a paper trade", "paper ledger") that does not by itself signal an
 # export/handoff. Genuine handoffs always carry export/artifact/handoff/validate.
 _CRYPTO_BACKTEST_INTENT = re.compile(
-    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log"
-    r"|job[_ ]?id|export|validate)\b",
+    r"\b(backtest|backtesting|strategy|artifact|handoff|trade log|export|validate)\b",
     re.IGNORECASE,
 )
 _CRYPTO_RESEARCH_ONLY_INTENT = re.compile(
@@ -485,6 +480,24 @@ _CRYPTO_RESEARCH_ONLY_INTENT = re.compile(
     re.IGNORECASE,
 )
 _CRYPTO_PRODUCT_PATTERN = re.compile(r"\b[A-Z0-9]{2,15}-(?:USD|USDC|EUR|BTC|ETH)\b")
+# A stored job id is as concrete a target as a product id: the specialist
+# resolves the product from the job. Matching the literal token is a hard
+# syntactic fact, not the fuzzy follow-up classification the hub must avoid.
+_CRYPTO_JOB_REFERENCE_PATTERN = re.compile(r"\bcrypto_bt_[0-9a-f]{6,}\b", re.IGNORECASE)
+# A stored artifact id is as concrete a target as a job id for the same reason:
+# the crypto engine derives it from the product id, so the specialist resolves
+# the product from the id alone. The literal `_coinbase_` segment and the
+# trailing `_v<digits>` make this a hard syntactic match on a generated
+# identifier, not fuzzy intent classification.
+_CRYPTO_ARTIFACT_REFERENCE_PATTERN = re.compile(
+    r"\b[a-z0-9]+_[a-z0-9]+_coinbase_[a-z0-9]+(?:_[a-z0-9]+)*_v\d+\b",
+    re.IGNORECASE,
+)
+# What the export tool actually mints today: artifact_id and fingerprint are
+# bare SHA-256 hex digests. Exactly 64 hex characters is as hard a syntactic
+# fact as the readable shape above, and a handoff that names one gives the
+# specialist a concrete stored target to resolve or reject with real state.
+_CRYPTO_ARTIFACT_DIGEST_PATTERN = re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE)
 _CRYPTO_ASSET_PATTERN = re.compile(
     r"\b(BTC|ETH|SOL|XRP|DOGE|ADA|AVAX|LINK|LTC|BCH|UNI|AAVE|MATIC|DOT"
     r"|bitcoin|ethereum|solana|ripple|dogecoin|cardano|avalanche|chainlink"
@@ -496,8 +509,12 @@ _CRYPTO_UNSUPPORTED_VENUE_PATTERN = re.compile(
     r"|amberdata|coinbase exchange)\b",
     re.IGNORECASE,
 )
+# Bare "future" is excluded for the same reason as "paper" above: it is a date
+# word ("the future requested end", "future candle") far more often than a
+# contract type. The plural names the instrument; "perp"/"perpetual" already
+# cover the singular derivative.
 _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN = re.compile(
-    r"\b(perp|perpetual|future|futures|option|options|funding|open interest"
+    r"\b(perp|perpetual|futures|option|options|funding|open interest"
     r"|liquidation|liquidations|basis|defi|yield|stablecoin|on[- ]?chain)\b",
     re.IGNORECASE,
 )
@@ -523,11 +540,28 @@ def _build_strategy_routing_hint() -> str:
         "backtesting, or trading systems. Follow Strategy Routing exactly: if the "
         "user did not provide concrete tradable tickers, resolve the universe first "
         "with screener_lookup; otherwise call strategy_analysis. When calling "
-        "strategy_analysis, include `User request:` with the user's original wording "
-        "verbatim, then add `Strategy context:` with resolved facts only. Do not "
-        "rewrite signal conditions, risk rules, thresholds, or order semantics. Do "
-        "not answer from training data.]\n\n"
+        "strategy_analysis, pass `user_request` as the user's original wording "
+        "verbatim, `universe` as the resolved tickers, and `context` as resolved "
+        "facts only. Do not rewrite signal conditions, risk rules, thresholds, or "
+        "order semantics. Do not answer from training data.]\n\n"
     )
+
+
+def _distinct_matches(pattern: re.Pattern[str], text: str) -> list[str]:
+    """Return each distinct match of ``pattern`` in first-seen order.
+
+    Args:
+        pattern: Compiled scope pattern.
+        text: Handoff text to scan.
+
+    Returns:
+        Distinct matched substrings, case-folded for de-duplication but
+        returned in their original casing.
+    """
+    seen: dict[str, str] = {}
+    for match in pattern.finditer(text):
+        seen.setdefault(match.group(0).casefold(), match.group(0))
+    return list(seen.values())
 
 
 def _get_crypto_preflight_error(input_text: str) -> str | None:
@@ -549,18 +583,20 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
     ):
         return None
 
-    if match := _CRYPTO_UNSUPPORTED_VENUE_PATTERN.search(input_text):
+    # Report every violation, not the first. Stopping at one left the Hub
+    # unable to name the rest of an out-of-scope request in its refusal.
+    venues = _distinct_matches(_CRYPTO_UNSUPPORTED_VENUE_PATTERN, input_text)
+    instruments = _distinct_matches(_CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN, input_text)
+    if venues or instruments:
+        detail = ""
+        if venues:
+            detail += f" Unsupported venue/provider in handoff: {', '.join(venues)}."
+        if instruments:
+            detail += f" Unsupported instrument/data type in handoff: {', '.join(instruments)}."
         return (
             "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase Advanced "
-            f"Trade spot only. Unsupported venue/provider in handoff: {match.group(0)}. "
-            "Retry with Coinbase spot scope or route to the correct specialist."
-        )
-
-    if match := _CRYPTO_UNSUPPORTED_INSTRUMENT_PATTERN.search(input_text):
-        return (
-            "MISSING_CRYPTO_INPUTS: crypto_analysis v1 supports Coinbase spot only. "
-            f"Unsupported instrument/data type in handoff: {match.group(0)}. "
-            "Do not request derivatives, DeFi, on-chain, or non-spot artifacts."
+            f"Trade spot only.{detail} Retry with Coinbase spot scope or route to "
+            "the correct specialist."
         )
 
     if "data_source_policy" in input_text and "execution_venue_required" not in input_text:
@@ -574,7 +610,14 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
     # Pre-classifying that intent here false-positives on requests that merely
     # mention artifacts (e.g. "would an artifact be eligible" on a new backtest).
 
-    if not (_CRYPTO_PRODUCT_PATTERN.search(input_text) or _CRYPTO_ASSET_PATTERN.search(input_text)):
+    has_resolvable_target = (
+        _CRYPTO_PRODUCT_PATTERN.search(input_text)
+        or _CRYPTO_ASSET_PATTERN.search(input_text)
+        or _CRYPTO_JOB_REFERENCE_PATTERN.search(input_text)
+        or _CRYPTO_ARTIFACT_REFERENCE_PATTERN.search(input_text)
+        or _CRYPTO_ARTIFACT_DIGEST_PATTERN.search(input_text)
+    )
+    if not has_resolvable_target:
         return (
             "MISSING_CRYPTO_INPUTS: Coinbase spot backtests require a concrete product "
             "or asset symbol. Retry with a Coinbase product_id such as BTC-USD or an "
@@ -584,15 +627,30 @@ def _get_crypto_preflight_error(input_text: str) -> str | None:
     return None
 
 
-def _get_missing_strategy_inputs(input_text: str) -> list[str]:
-    """Return missing critical strategy inputs for the hub-to-strategy call."""
-    if _is_strategy_follow_up_request(input_text):
+def _get_missing_strategy_inputs(
+    user_request: str,
+    universe: list[str],
+    context: str,
+) -> list[str]:
+    """Return missing critical strategy inputs for the hub-to-strategy call.
+
+    Args:
+        user_request: The user's wording, preserved verbatim by the hub.
+        universe: Resolved tradable tickers, empty when none was resolved.
+        context: Hub-resolved facts accompanying the request.
+
+    Returns:
+        Human-readable names of the missing inputs, empty when the call may
+        proceed.
+
+    """
+    if _references_strategy_job(user_request):
         return []
 
     missing: list[str] = []
-    if not _extract_strategy_symbols(input_text):
+    if not [ticker for ticker in universe if ticker.strip()]:
         missing.append("concrete universe tickers")
-    if not _has_strategy_objective(input_text):
+    if not _has_strategy_objective(f"{user_request}\n{context}"):
         missing.append("strategy objective or rule set")
     return missing
 
@@ -604,22 +662,70 @@ def _format_strategy_input_error(missing_inputs: list[str]) -> str:
         "MISSING_STRATEGY_INPUTS: strategy_analysis requires concrete tradable tickers "
         "and a clear strategy objective or rule set before backtesting. "
         f"Missing: {missing_text}. "
-        "Resolve this in the hub first with screener_lookup or one concise clarification, "
-        "then call strategy_analysis again."
+        "Pass the resolved tickers in the `universe` argument, resolving them with "
+        "screener_lookup or one concise clarification first when the user named none."
     )
+
+
+def _render_strategy_handoff(user_request: str, universe: list[str], context: str) -> str:
+    """Render the canonical two-block hand-off the Strategy Agent reads.
+
+    The Hub supplies these blocks as typed arguments, so the structure is
+    produced here rather than asked for in prose. That removes the whole class
+    of malformed hand-off the Strategy Agent used to reject.
+
+    Args:
+        user_request: The user's wording, preserved verbatim.
+        universe: Resolved tradable tickers.
+        context: Hub-resolved facts, already formatted as bullet lines.
+
+    Returns:
+        The rendered hand-off text.
+
+    """
+    tickers = ", ".join(ticker.strip() for ticker in universe if ticker.strip())
+    blocks = [f"User request:\n{user_request.strip()}", "Strategy context:"]
+    if tickers:
+        blocks.append(f"- Universe: [{tickers}]")
+    if context.strip():
+        blocks.append(context.strip())
+    return "\n".join(blocks)
+
+
+# The regression gate appends this correlation tag to the submitted query so a
+# run can be tied back to its trace. It is tooling metadata, not part of what
+# the user asked for, so requiring the Hub to echo it back proves nothing about
+# signal fidelity and failed an otherwise faithful hand-off.
+#
+# Matched by its own wording rather than as "any trailing bracket": a strategy
+# rule can legitimately end in brackets, and stripping those made "buy when RSI
+# is in [30, 40]" normalize to the same text as the same request carrying
+# [70, 80], or none at all, so a materially different strategy passed the gate.
+_TRAILING_ANNOTATION_RE = re.compile(
+    r"\s*\[OBaI regression correlation:[^\[\]]*\]\s*\Z", re.IGNORECASE
+)
 
 
 def _normalize_strategy_handoff_text(text: str) -> str:
     """Normalize text for faithful-handoff substring checks."""
-    return " ".join(text.casefold().split())
+    return " ".join(_TRAILING_ANNOTATION_RE.sub("", text).casefold().split())
 
 
 def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | None) -> str | None:
     """Return an error when strategy handoff does not preserve the user request.
 
-    Strategy handoffs are allowed to add context, but the original user request
-    must remain present verbatim enough that signal semantics are not rewritten
-    by the Hub before the Strategy Agent sees them.
+    The Hub may add context alongside, but the original user request must
+    remain present verbatim enough that signal semantics are not rewritten
+    before the Strategy Agent sees them.
+
+    Args:
+        input_text: The ``user_request`` argument the Hub supplied.
+        original_query: The query the user actually submitted.
+
+    Returns:
+        The error text to return to the Hub, or None when the request was
+        preserved faithfully.
+
     """
     if not original_query:
         return None
@@ -646,9 +752,9 @@ def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | 
         return (
             "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis received a "
             "handoff that appears to rewrite a threshold condition into a "
-            "crossover condition. Retry using the user's original wording in "
-            "`User request:` and keep any derived implementation details out of "
-            "the Hub handoff."
+            "crossover condition. Retry with the user's original wording in "
+            "`user_request` and keep any derived implementation details in "
+            "`context`."
         )
 
     if not normalized_query or normalized_query in normalized_input:
@@ -656,46 +762,83 @@ def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | 
 
     return (
         "STRATEGY_HANDOFF_FIDELITY_ERROR: strategy_analysis requires the "
-        "original user request to be preserved in the handoff. Retry the call "
-        "using the Strategy Hand-off Format with `User request:` set to the "
-        "user's original wording, then add any resolved context separately. "
-        "Do not rewrite threshold conditions into crossover conditions or add "
-        "operator semantics the user did not explicitly specify."
+        "original user request to be preserved. Retry with `user_request` set "
+        "to the user's original wording, then put any resolved context in "
+        "`context`. Do not rewrite threshold conditions into crossover "
+        "conditions or add operator semantics the user did not explicitly "
+        "specify."
     )
 
 
-def _get_strategy_handoff_format_error(input_text: str) -> str | None:
-    """Return an error when strategy handoff omits the required headers.
+# A citation URL is a promise the reader can open and verify the claim. The
+# research specialist has been observed re-slugifying an article title into a
+# link that appeared in no retrieved result, so the answer's URLs are checked
+# against the ones its own tools actually returned before the Hub sees them.
+_CITATION_URL_RE = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
+_UNVERIFIED_URL_MARKER = "SOURCE-UNVERIFIED"
 
-    The skill mandates a literal two-block structure: `User request:` carrying
-    the user's wording verbatim, and `Strategy context:` carrying Hub-resolved
-    facts. Hub-authored briefs that substitute their own section names
-    (e.g. `Task intent:`, `Strategy concept:`, `Backtest preferences:`,
-    `Resolved context:`) leak design choices into the Strategy Agent's
-    reasoning and produce off-spec backtests. This gate fails closed and
-    forces the Hub to retry with the correct format.
+
+def _normalize_citation_url(url: str) -> str:
+    """Normalize a URL so trailing prose punctuation cannot mask a match.
+
+    Args:
+        url: A URL as it appeared in text.
+
+    Returns:
+        The comparable form of the URL.
+
     """
-    has_user_request = "User request:" in input_text
-    has_strategy_context = "Strategy context:" in input_text
-    if has_user_request and has_strategy_context:
-        return None
+    return url.rstrip(".,;:!?").rstrip("/").casefold()
 
-    missing: list[str] = []
-    if not has_user_request:
-        missing.append("`User request:`")
-    if not has_strategy_context:
-        missing.append("`Strategy context:`")
-    missing_text = " and ".join(missing)
-    return (
-        "STRATEGY_HANDOFF_FORMAT_ERROR: strategy_analysis input must use the "
-        "literal two-block structure from the obai-strategy-routing skill. "
-        f"Missing required header(s): {missing_text}. "
-        "Retry with `User request:` carrying the user's wording verbatim and "
-        "`Strategy context:` carrying only Hub-resolved facts. Do not "
-        "substitute hub-authored headers like `Task intent:`, `Strategy "
-        "concept:`, `Backtest preferences:`, `Resolved context:`, or "
-        "`Backtest request:` — those are forbidden."
+
+def _collect_retrieved_urls(outputs: list[dict[str, Any]]) -> set[str]:
+    """Collect every URL the captured tool outputs actually returned.
+
+    Args:
+        outputs: Captured inner tool outputs for one specialist call.
+
+    Returns:
+        The normalized URLs available to cite.
+
+    """
+    urls: set[str] = set()
+    for entry in outputs:
+        payload = entry.get("output")
+        text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+        urls.update(_normalize_citation_url(url) for url in _CITATION_URL_RE.findall(text))
+    return urls
+
+
+def _redact_unretrieved_urls(answer: str, retrieved: set[str]) -> tuple[str, list[str]]:
+    """Replace citation URLs that no retrieved result contained.
+
+    Args:
+        answer: The specialist's answer text.
+        retrieved: Normalized URLs the specialist's tools returned.
+
+    Returns:
+        The answer with unverifiable URLs replaced, and those URLs in
+        first-seen order.
+
+    """
+    dropped: list[str] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        url = match.group(0)
+        if _normalize_citation_url(url) in retrieved:
+            return url
+        if url not in dropped:
+            dropped.append(url)
+        return _UNVERIFIED_URL_MARKER
+
+    redacted = _CITATION_URL_RE.sub(_replace, answer)
+    if not dropped:
+        return answer, []
+    disclosure = (
+        f"\n\n_{len(dropped)} cited link(s) did not appear in any retrieved result and were "
+        f"replaced with `{_UNVERIFIED_URL_MARKER}`. Treat those claims as unverified._"
     )
+    return redacted + disclosure, dropped
 
 
 # Track active specialists and their timing
@@ -704,6 +847,31 @@ _specialist_start_times: dict[str, float] = {}
 _tool_start_times: dict[str, float] = {}  # tool_call_id -> start_time
 _tool_names: dict[str, str] = {}  # tool_call_id -> tool_name
 _inner_tool_outputs: list[dict[str, Any]] = []  # raw MCP outputs for scoring
+# Evidence retrieved by the specialist invocation running on this task.
+# Citation checks used to take their evidence as a slice of the shared list
+# above, from its length before the call to its length after. That cannot
+# separate two research calls the hub issues in parallel: each one's slice
+# also holds the other's appends, so a fabricated citation passed verification
+# whenever the sibling call happened to retrieve that URL. A ContextVar
+# follows the invocation instead of its position in a shared list.
+_invocation_tool_outputs: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "invocation_tool_outputs",
+    default=None,
+)
+
+
+def _record_inner_tool_output(entry: dict[str, Any]) -> None:
+    """Record one raw MCP output for scoring and for the running invocation.
+
+    Args:
+        entry: Captured output with specialist, tool_name and output keys.
+
+    """
+    _inner_tool_outputs.append(entry)
+    own = _invocation_tool_outputs.get()
+    if own is not None:
+        own.append(entry)
+
 
 # Callback for MCP tool events (set by CLI/client)
 _mcp_tool_callback: Any = None
@@ -821,7 +989,7 @@ def _create_stream_handler(tool_name: str, display_name: str) -> Any:
                         if raw_output is None and isinstance(raw_item, dict):
                             raw_output = raw_item.get("output")
                         if raw_output is not None:
-                            _inner_tool_outputs.append(
+                            _record_inner_tool_output(
                                 {
                                     "specialist": display_name,
                                     "tool_name": mcp_tool,
@@ -870,6 +1038,47 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
+def _hub_context_management(
+    *,
+    model: str,
+    compact_ratio: float | None,
+) -> list[ContextManagement] | None:
+    """Derive the hub's server-side compaction entry from its model window.
+
+    Args:
+        model: Hub model name.
+        compact_ratio: Fraction of the model's context window at which to
+            compact, or None to disable compaction.
+
+    Returns:
+        A single-entry ``context_management`` list, or None to leave the
+        field unset.
+    """
+    if compact_ratio is None:
+        return None
+
+    model_info = CompactionModelInfo.maybe_for_model(model)
+    if model_info is None:
+        # No window means no defensible threshold. Skipping compaction only
+        # costs us the optimisation; guessing a token count could compact a
+        # 1M-token window at 20% and shred context every turn.
+        logger.warning(
+            "No known context window for hub model %s - server-side compaction disabled",
+            model,
+        )
+        return None
+
+    threshold = int(model_info.context_window * compact_ratio)
+    logger.info(
+        "Hub compaction at %d tokens (%.0f%% of %s's %d-token window)",
+        threshold,
+        compact_ratio * 100,
+        model,
+        model_info.context_window,
+    )
+    return [ContextManagement(type="compaction", compact_threshold=threshold)]
+
+
 def _build_hub_agent(
     *,
     instructions: str,
@@ -878,14 +1087,19 @@ def _build_hub_agent(
     guardrails: list[InputGuardrail[Any]],
     reasoning_effort: ReasoningEffort,
     verbosity: Verbosity,
+    compact_ratio: float | None,
 ) -> Agent[None]:
     """Build the SandboxAgent Central Hub with lazy hub_skills.
 
     The Sandbox Hub keeps the same agents-as-tools wiring but exposes the
-    files in ``HUB_SKILLS_DIR`` as lazy skills. Skill metadata (name +
-    description) is loaded eagerly; full SKILL.md bodies are fetched only
-    when the model selects a skill. Critical routing/passthrough logic
-    stays in code; skills only carry verbose conditional instructions.
+    files in ``HUB_SKILLS_DIR`` as lazy skills. Only skill metadata (name +
+    description) reaches the model: ``load_skill`` stages the directory and
+    returns a status envelope, and with ``Skills`` as the sole capability the
+    hub has no file-read tool, so **SKILL.md bodies never enter the model's
+    context**. Treat them as documentation and as the routing signal the
+    regression gate asserts on -- never as an instruction channel. Any rule
+    the hub must actually obey belongs in ``central_hub_base.md``, which is
+    rendered into the instructions on every turn.
 
     Capabilities: ``Skills`` only. We deliberately do **not** include
     ``Capabilities.default()`` (Filesystem + Shell + Compaction):
@@ -896,14 +1110,27 @@ def _build_hub_agent(
       via ``extra_args``, which collides with the first-class
       ``ModelSettings.context_management`` field that openai-agents
       0.16+ adds to every Responses API call (the duplicate-key guard in
-      ``openai_responses.py`` raises ``TypeError``). If server-side
-      compaction is wanted later, pass ``context_management=[...]`` on
-      ``ModelSettings`` directly instead of using the Compaction
-      capability.
+      ``openai_responses.py`` raises ``TypeError``). Server-side
+      compaction is configured through ``compact_ratio`` below, which
+      sets ``ModelSettings.context_management`` directly.
+
+    Args:
+        instructions: Rendered hub prompt.
+        model: Hub model name.
+        specialist_tools: Specialist agents exposed as tools.
+        guardrails: Input guardrails run before the hub sees a query.
+        reasoning_effort: Hub reasoning effort tier.
+        verbosity: Hub output verbosity tier.
+        compact_ratio: Fraction of the model's context window at which to
+            compact, or None to leave ``context_management`` unset.
+
+    Returns:
+        The configured hub ``SandboxAgent``.
     """
     skills_capability = Skills(
         lazy_from=LocalDirLazySkillSource(source=LocalDir(src=HUB_SKILLS_DIR)),
     )
+    context_management = _hub_context_management(model=model, compact_ratio=compact_ratio)
     return SandboxAgent(
         name="central_hub",
         instructions=instructions,
@@ -921,10 +1148,50 @@ def _build_hub_agent(
         model_settings=ModelSettings(
             parallel_tool_calls=True,
             tool_choice="auto",
-            reasoning=Reasoning(effort=reasoning_effort),
+            # context="all_turns" keeps reasoning from earlier turns in the
+            # rendered context. GPT-5.6 already defaults to this; pinning it
+            # keeps the behaviour from moving under us on a model change.
+            reasoning=Reasoning(effort=reasoning_effort, context="all_turns"),
             verbosity=verbosity,
+            context_management=context_management,
         ),
     )
+
+
+def _apply_hub_agent_settings(
+    agent: Agent[None],
+    *,
+    model: str,
+    reasoning_effort: ReasoningEffort,
+    compact_ratio: float | None,
+) -> None:
+    """Retune a built hub agent's model and reasoning effort in place.
+
+    The SDK resolves ``agent.model`` and ``agent.model_settings`` once per
+    turn (``agents.run_internal.turn_preparation``), so mutating them takes
+    effect on the next query. That is the whole point: a model change from
+    the settings UI applies without tearing down the MCP connections, the
+    loaded skills, or the open WebSockets.
+
+    Only the two user-owned fields move. Instructions, tools, guardrails and
+    verbosity are model-independent and are left exactly as built.
+
+    Args:
+        agent: The hub agent returned by :func:`_build_hub_agent`.
+        model: Hub model name to switch to.
+        reasoning_effort: Hub reasoning effort tier to switch to.
+        compact_ratio: Fraction of the *new* model's context window at which
+            to compact, or None to leave ``context_management`` unset.
+    """
+    agent.model = model
+    settings = agent.model_settings
+    # Rebuild rather than mutate: Reasoning is a pydantic model, and
+    # context="all_turns" must survive the swap or the hub silently stops
+    # carrying reasoning across turns.
+    settings.reasoning = Reasoning(effort=reasoning_effort, context="all_turns")
+    # The compaction threshold is a fraction of the model's window, so a
+    # model change invalidates it.
+    settings.context_management = _hub_context_management(model=model, compact_ratio=compact_ratio)
 
 
 class CentralHubAgent:
@@ -932,7 +1199,7 @@ class CentralHubAgent:
 
     This agent calls specialists as tools (agents-as-tools pattern),
     receives their outputs, and synthesizes comprehensive responses.
-    Uses gpt-4o for better reasoning.
+    Runs on ``orchestrator_model``, the strongest tier we configure.
 
     The agents-as-tools pattern keeps the hub in control:
     - Hub calls market_data_tool() -> gets price data back
@@ -1139,23 +1406,7 @@ class CentralHubAgent:
                 specialist_tools.append(self._build_strategy_tool())
 
             if self.research_agent and self.research_agent.agent:
-                specialist_tools.append(
-                    self.research_agent.agent.as_tool(
-                        tool_name="research_analysis",
-                        tool_description=(
-                            "Deep company and thematic research via web sources. "
-                            "Use for qualitative, structural, or long-horizon questions "
-                            "requiring synthesis across multiple non-news sources, "
-                            "including business model analysis, leadership quality, "
-                            "product sentiment, competitive dynamics, and industry "
-                            "structure. Not for breaking news, earnings data, SEC "
-                            "filings, insider activity, valuation metrics, or live "
-                            "market data. Resolve company_name first when only a ticker "
-                            "is provided."
-                        ),
-                        on_stream=_create_stream_handler("research_analysis", "Research Agent"),
-                    )
-                )
+                specialist_tools.append(self._build_research_tool())
 
             if self.prediction_markets_agent and self.prediction_markets_agent.agent:
                 specialist_tools.append(self._build_prediction_tool())
@@ -1179,6 +1430,7 @@ class CentralHubAgent:
                 guardrails=guardrails,
                 reasoning_effort=self.config.orchestrator_reasoning_effort,
                 verbosity=self.config.orchestrator_verbosity,
+                compact_ratio=self.config.orchestrator_compact_ratio,
             )
             self._run_config = RunConfig(
                 sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
@@ -1197,6 +1449,39 @@ class CentralHubAgent:
             logger.exception("Central Hub initialization failed, cleaning up")
             await self._cleanup_agents()
             raise
+
+    def apply_hub_settings(self, *, model: str, reasoning_effort: ReasoningEffort) -> None:
+        """Retune the running hub to a new model and reasoning effort.
+
+        Applies to the next query. Specialists are code-owned and are not
+        touched. ``self.config`` is updated alongside the agent so every
+        surface that reports the running values (``/api/status``,
+        ``/api/settings``) stays honest instead of describing the agent the
+        process started with.
+
+        Callers must serialize this against in-flight queries — the web
+        client does so through ``HubBridge.apply_hub_settings``.
+
+        Args:
+            model: Hub model name to switch to.
+            reasoning_effort: Hub reasoning effort tier to switch to.
+
+        Raises:
+            RuntimeError: The hub has not been initialized yet.
+        """
+        if self.agent is None:
+            msg = "Cannot apply hub settings before initialize()"
+            raise RuntimeError(msg)
+
+        _apply_hub_agent_settings(
+            self.agent,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            compact_ratio=self.config.orchestrator_compact_ratio,
+        )
+        self.config.orchestrator_model = model
+        self.config.orchestrator_reasoning_effort = reasoning_effort
+        logger.info("Hub retuned live to model=%s effort=%s", model, reasoning_effort)
 
     async def _init_specialists_parallel(self) -> None:
         """Initialize all specialist agents in parallel.
@@ -1338,7 +1623,7 @@ class CentralHubAgent:
         @function_tool(
             name_override="prediction_market_analysis",
             description_override=_PREDICTION_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
         async def prediction_market_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
             result = Runner.run_streamed(
@@ -1377,14 +1662,16 @@ class CentralHubAgent:
         @function_tool(
             name_override="crypto_analysis",
             description_override=_CRYPTO_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
         async def crypto_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
             preflight_error = _get_crypto_preflight_error(input)
             if preflight_error:
+                # Return to the Hub rather than relaying, matching the strategy
+                # handoff errors above: this is a control signal, and shipping it
+                # verbatim made the raw token the user's entire answer.
                 logger.info("Blocked crypto_analysis due to preflight violation")
-                _set_crypto_passthrough(preflight_error)
-                return _wrap_terminal_crypto_output(preflight_error)
+                return preflight_error
 
             result = Runner.run_streamed(
                 starting_agent=crypto_agent,
@@ -1410,6 +1697,63 @@ class CentralHubAgent:
 
         return crypto_analysis
 
+    def _build_research_tool(self) -> Tool:
+        """Build the research tool wrapper that verifies cited links.
+
+        The specialist is instructed never to fabricate sources, and does so
+        anyway: a citation URL it never retrieved reads exactly like one it
+        did. Checking the answer's links against the URLs its own tools
+        returned is the only enforcement that holds.
+        """
+        if self.research_agent is None or self.research_agent.agent is None:
+            msg = "Research Agent not initialized"
+            raise ValueError(msg)
+
+        research_agent = self.research_agent.agent
+        stream_handler = _create_stream_handler("research_analysis", "Research Agent")
+
+        @function_tool(
+            name_override="research_analysis",
+            description_override=_RESEARCH_TOOL_DESCRIPTION,
+            strict_mode=True,
+        )
+        async def research_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
+            # Scoped to this invocation, so a sibling research call running in
+            # parallel cannot lend its retrieved URLs to this one's citations.
+            captured: list[dict[str, Any]] = []
+            token = _invocation_tool_outputs.set(captured)
+            try:
+                result = Runner.run_streamed(
+                    starting_agent=research_agent,
+                    input=input,
+                    context=ctx.context,
+                )
+                async for event in result.stream_events():
+                    await stream_handler({"agent": research_agent, "event": event})
+            finally:
+                _invocation_tool_outputs.reset(token)
+
+            final_output = getattr(result, "final_output", None)
+            output = final_output if isinstance(final_output, str) else str(final_output or "")
+            if not output:
+                return output
+
+            own_outputs = [
+                entry for entry in captured if entry.get("specialist") == "Research Agent"
+            ]
+            verified, dropped = _redact_unretrieved_urls(
+                output, _collect_retrieved_urls(own_outputs)
+            )
+            if dropped:
+                logger.warning(
+                    "research_analysis cited %d URL(s) absent from its retrieved results: %s",
+                    len(dropped),
+                    ", ".join(dropped),
+                )
+            return verified
+
+        return research_analysis
+
     def _build_strategy_tool(self) -> Tool:
         """Build guarded strategy tool wrapper for hub routing.
 
@@ -1427,23 +1771,23 @@ class CentralHubAgent:
         @function_tool(
             name_override="strategy_analysis",
             description_override=_STRATEGY_TOOL_DESCRIPTION,
-            strict_mode=False,
+            strict_mode=True,
         )
-        async def strategy_analysis(ctx: RunContextWrapper[Any], input: str) -> str:
-            format_error = _get_strategy_handoff_format_error(input)
-            if format_error:
-                logger.info("Blocked strategy_analysis due to format violation")
-                return format_error
-
+        async def strategy_analysis(
+            ctx: RunContextWrapper[Any],
+            user_request: str,
+            universe: list[str],
+            context: str,
+        ) -> str:
             handoff_error = _get_strategy_handoff_fidelity_error(
-                input,
+                user_request,
                 self._current_user_query,
             )
             if handoff_error:
                 logger.info("Blocked strategy_analysis due to unfaithful handoff")
                 return handoff_error
 
-            missing_inputs = _get_missing_strategy_inputs(input)
+            missing_inputs = _get_missing_strategy_inputs(user_request, universe, context)
             if missing_inputs:
                 logger.info(
                     "Blocked strategy_analysis due to missing critical inputs: %s",
@@ -1451,9 +1795,10 @@ class CentralHubAgent:
                 )
                 return _format_strategy_input_error(missing_inputs)
 
+            handoff = _render_strategy_handoff(user_request, universe, context)
             result = Runner.run_streamed(
                 starting_agent=strategy_agent,
-                input=input,
+                input=handoff,
                 context=ctx.context,
                 max_turns=self.config.strategy_max_turns,
             )
@@ -1468,17 +1813,17 @@ class CentralHubAgent:
             elif final_output is not None:
                 output = str(final_output)
 
-            # Classify output and set passthrough for terminal responses.
-            # Return full output to hub (preserves session context for
-            # follow-ups) with a rigid marker instructing hub not to rewrite.
-            if _is_completed_strategy_output(output):
-                _set_strategy_passthrough(output, "completed")
-                return _wrap_terminal_strategy_output(output, "completed")
-            if _is_pending_strategy_output(output):
-                _set_strategy_passthrough(output, "pending")
-                return _wrap_terminal_strategy_output(output, "pending")
-            # missing_inputs / errors: no passthrough — hub should handle
-            return output
+            # Relay every non-empty response, matching crypto_analysis and
+            # prediction_market_analysis. The hub is told to emit nothing but
+            # the relayed output, so gating relay on the specialist's section
+            # headings silently discarded whole classes of answer (completed
+            # job-status polls, diagnostics, missing-inputs, errors, refusals).
+            # The kind only labels the marker; it never decides the relay.
+            if not output:
+                return output
+            kind = _strategy_relay_kind(output)
+            _set_strategy_passthrough(output, kind)
+            return _wrap_terminal_strategy_output(output, kind)
 
         return strategy_analysis
 
@@ -1620,8 +1965,10 @@ class CentralHubAgent:
             run_config=self._run_config,
         )
 
-        # Buffer response text for caching
-        response_buffer: list[str] = []
+        # Buffer response text for caching, minus commentary-phase narration:
+        # caching a status line as the answer poisons every later cache hit.
+        answer = AnswerAccumulator()
+        passthrough: str | None = None
 
         # Buffered hub-mediated relay: after a terminal specialist fires,
         # buffer hub synthesis and emit the specialist output directly.
@@ -1632,24 +1979,26 @@ class CentralHubAgent:
             # Buffer streaming text deltas for caching
             if isinstance(event, RawResponsesStreamEvent):
                 data = event.data
-                if isinstance(data, ResponseTextDeltaEvent):
-                    delta = data.delta
-                    if delta:
-                        response_buffer.append(delta)
+                if isinstance(data, ResponseTextDeltaEvent) and data.delta:
+                    answer.add_delta(data.item_id, data.delta)
 
             # Also capture final message output
             elif isinstance(event, RunItemStreamEvent):
                 item = event.item
                 if isinstance(item, MessageOutputItem):
-                    text = ItemHelpers.text_message_output(item)
-                    if text and not response_buffer:
-                        response_buffer.append(text)
+                    answer.note_message(
+                        item.raw_item.id,
+                        ItemHelpers.text_message_output(item),
+                        item.raw_item.phase,
+                    )
 
             # Detect terminal specialist firing: passthrough set by tool wrapper.
             if terminal_fired is None and _prediction_passthrough is not None:
                 terminal_fired = "prediction"
             if terminal_fired is None and _get_crypto_passthrough() is not None:
                 terminal_fired = "crypto"
+            if terminal_fired is None and _get_strategy_passthrough() is not None:
+                terminal_fired = "strategy"
 
             # After a terminal specialist fires, buffer hub text synthesis.
             if terminal_fired is not None:
@@ -1669,33 +2018,39 @@ class CentralHubAgent:
         # was injecting stale market identifiers that biased followup queries.
 
         # Always-passthrough relay for prediction output.
-        # Prediction-market output is non-deterministic in shape (unlike the
-        # strategy 9-section deliverable), so the hub LLM consistently rewrites
-        # or compresses it regardless of how strongly the skill or control line
-        # frames the verbatim-relay contract. Bypass hub authoring entirely:
-        # emit the specialist output directly to the client and discard the
-        # buffered hub-authored text. validate_prediction_relay is still
-        # invoked for trace diagnostics; the boolean does not gate the choice.
+        # Prediction-market output is non-deterministic in shape, so the hub LLM
+        # consistently rewrites or compresses it regardless of how strongly the
+        # skill or control line frames the verbatim-relay contract. Bypass hub
+        # authoring entirely: emit the specialist output directly to the client
+        # and discard the buffered hub-authored text. validate_prediction_relay
+        # is still invoked for trace diagnostics; the boolean does not gate the
+        # choice. (Crypto and strategy use the same deterministic passthrough.)
         if terminal_fired == "prediction" and _prediction_passthrough:
-            hub_final_text = "".join(response_buffer)
             relay_ok = validate_prediction_relay(
-                hub_final_text,
+                answer.text(),
                 _prediction_passthrough,
                 allowed_context=prediction_context_block,
             )
             if not relay_ok:
                 logger.info("Hub authored invented identifiers — passthrough used")
             yield PredictionPassthroughEvent(content=_prediction_passthrough)
-            response_buffer.clear()
-            response_buffer.append(_prediction_passthrough)
+            passthrough = _prediction_passthrough
         elif terminal_fired == "crypto" and _get_crypto_passthrough():
             crypto_output = _get_crypto_passthrough() or ""
             yield CryptoPassthroughEvent(content=crypto_output)
-            response_buffer.clear()
-            response_buffer.append(crypto_output)
+            passthrough = crypto_output
+        elif terminal_fired == "strategy" and _get_strategy_passthrough():
+            # Strategy is a terminal author whose output is a deterministic
+            # nine-section (or pending-stub) deliverable. Emit it verbatim and
+            # drop any hub preamble (e.g. handoff-retry narration) — the hub is
+            # not trusted to relay it clean, as prediction/crypto already are.
+            strategy_state = _get_strategy_passthrough()
+            strategy_output = strategy_state.content if strategy_state else ""
+            yield StrategyPassthroughEvent(content=strategy_output)
+            passthrough = strategy_output
 
         # Cache the response for future follow-up questions
-        final_response = "".join(response_buffer)
+        final_response = passthrough if passthrough is not None else answer.text()
         if self._cache and final_response:
             await self._cache.store(
                 query=query,  # Original query, not augmented

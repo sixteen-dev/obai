@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import date, timedelta
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, cast
 
 import httpx
 
@@ -17,8 +17,36 @@ logger = get_logger(__name__)
 
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 1.0
+FALLBACK_RISK_FREE_RATE = 0.045  # 3-month T-bill fallback when FMP unavailable
 
 _APIKEY_PATTERN = re.compile(r"apikey=[^&\s]+")
+
+# FMP's dividend-adjusted EOD endpoint returns adjusted OHLC under adj-prefixed
+# keys; downstream OHLCV parsing reads the canonical open/high/low/close keys.
+_ADJUSTED_FIELD_MAP = {
+    "adjOpen": "open",
+    "adjHigh": "high",
+    "adjLow": "low",
+    "adjClose": "close",
+}
+
+
+def _normalize_adjusted_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Fold FMP dividend-adjusted OHLC fields onto the canonical OHLCV keys.
+
+    Args:
+        row: One candle from the dividend-adjusted daily endpoint.
+
+    Returns:
+        Row with adjOpen/adjHigh/adjLow/adjClose moved onto open/high/low/close.
+        Rows already in canonical shape are returned unchanged.
+
+    """
+    normalized = dict(row)
+    for adj_key, canonical_key in _ADJUSTED_FIELD_MAP.items():
+        if adj_key in normalized:
+            normalized[canonical_key] = normalized.pop(adj_key)
+    return normalized
 
 
 def _scrub_url(text: str) -> str:
@@ -68,6 +96,26 @@ def _build_date_chunks(
     return chunks
 
 
+# The adjustment basis stored prices sit on. Changing the endpoint above must
+# change this value too: a cache written on the old basis is not comparable
+# with rows fetched on the new one, and mixing them fabricates price moves.
+DAILY_PRICE_BASIS = "dividend_adjusted"
+INTRADAY_PRICE_BASIS = "raw"
+
+
+def price_basis_for(timeframe: str) -> str:
+    """Return the adjustment basis prices are stored on for a timeframe.
+
+    Args:
+        timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
+
+    Returns:
+        The basis identifier persisted alongside the cached rows.
+
+    """
+    return DAILY_PRICE_BASIS if timeframe == "daily" else INTRADAY_PRICE_BASIS
+
+
 class FMPClient:
     """Client for fetching historical OHLCV data from FMP API."""
 
@@ -82,6 +130,10 @@ class FMPClient:
         """
         self.api_key = settings.fmp_api_key
         self.client = httpx.AsyncClient(timeout=30.0)
+        # Risk-free rate is a daily figure — memoize per UTC date so walk-forward's
+        # repeated calls hit the API at most once a day and never re-fetch a
+        # stale value indefinitely.
+        self._rfr_cache: dict[str, tuple[float, str]] = {}
 
     async def __aenter__(self) -> FMPClient:
         """Async context manager entry."""
@@ -106,7 +158,12 @@ class FMPClient:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch daily OHLCV data for a symbol.
+        """Fetch daily OHLCV data for a symbol (split- and dividend-adjusted).
+
+        Uses FMP's dividend-adjusted EOD endpoint so daily closes are on a
+        total-return basis (reinvested dividends), folding the adjusted OHLC
+        (adjOpen/adjHigh/adjLow/adjClose) onto the canonical open/high/low/close
+        keys so downstream parsing is unchanged. Intraday data keeps raw prices.
 
         Args:
             symbol: Stock ticker symbol (e.g., "AAPL").
@@ -120,7 +177,7 @@ class FMPClient:
             httpx.HTTPStatusError: If the API returns an error status.
 
         """
-        endpoint = "historical-price-eod/full"
+        endpoint = "historical-price-eod/dividend-adjusted"
         params: dict[str, str] = {"apikey": self.api_key, "symbol": symbol}
         if start_date:
             params["from"] = start_date
@@ -149,7 +206,7 @@ class FMPClient:
                 "close": row.get("close", 0.0),
                 "volume": row.get("volume", 0),
             }
-            for row in data
+            for row in (_normalize_adjusted_row(r) for r in data)
         ]
 
     # FMP caps intraday responses to ~7 calendar days per request
@@ -323,6 +380,61 @@ class FMPClient:
             return response.status_code == 200  # noqa: PLR2004
         except (httpx.HTTPError, httpx.TimeoutException):
             return False
+
+    async def get_treasury_rates(self) -> dict[str, float] | None:
+        """Fetch the latest US treasury rates for all maturities from FMP.
+
+        Returns:
+            The most recent rates dict (percent values keyed by maturity, e.g.
+            ``month3``) or None when the response is empty or not a list.
+
+        Raises:
+            httpx.HTTPError: If the request ultimately fails after retries.
+
+        """
+        data = await self._request_with_retry("treasury-rates", {"apikey": self.api_key})
+        if isinstance(data, list) and data:
+            return cast(dict[str, float], data[0])
+        return None
+
+    async def get_risk_free_rate_with_source(self) -> tuple[float, str]:
+        """Resolve the 3-month treasury rate as a decimal, with its source.
+
+        Returns ``(rate, "treasury_3m")`` on success or
+        ``(FALLBACK_RISK_FREE_RATE, "fallback")`` on any failure. The result is
+        memoized per UTC date so repeated backtests (e.g. walk-forward's ~2N
+        calls) never amplify into repeated API hits or a treasury outage. This
+        method never raises — a rate lookup must not break a backtest.
+
+        Returns:
+            Tuple of (annual risk-free rate as decimal, source label).
+
+        """
+        cache_key = datetime.now(UTC).date().isoformat()
+        cached = self._rfr_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        result = await self._resolve_risk_free_rate()
+        self._rfr_cache[cache_key] = result
+        return result
+
+    async def _resolve_risk_free_rate(self) -> tuple[float, str]:
+        """Fetch the 3-month treasury rate, falling back on any failure."""
+        try:
+            rates = await self.get_treasury_rates()
+            if rates and "month3" in rates:
+                return float(rates["month3"]) / 100, "treasury_3m"
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            logger.warning(
+                "risk_free_rate_fallback",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return FALLBACK_RISK_FREE_RATE, "fallback"
+
+        logger.warning("risk_free_rate_fallback", reason="month3 not in response")
+        return FALLBACK_RISK_FREE_RATE, "fallback"
 
     async def _request_with_retry(
         self,

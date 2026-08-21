@@ -1,6 +1,6 @@
 """Root-level smoke test.
 
-This single test exists so `uv run pytest` at the monorepo root exits 0
+These lightweight tests ensure `uv run pytest` at the monorepo root exits 0
 instead of pytest's exit code 5 (no tests collected). The real per-service
 suites live under each service directory and are aggregated by
 scripts/run-all-tests.sh.

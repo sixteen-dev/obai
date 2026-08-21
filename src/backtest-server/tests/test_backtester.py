@@ -12,6 +12,7 @@ from src.engine.backtester import (
     MIN_SLIPPAGE_PCT,
     BacktestConfig,
     Trade,
+    combine_equity_curves,
     compute_entry_fill,
     compute_exit_fill,
     run_backtest,
@@ -192,6 +193,38 @@ class TestRunBacktest:
         assert trades_with_comm[0].return_pct < trades_no_comm[0].return_pct
 
 
+class TestEntryBarStopBinds:
+    """Stop/TP pierced on the entry bar must bind that same bar."""
+
+    def test_stop_hits_on_entry_bar(self) -> None:
+        """Entry-bar low piercing the stop closes that bar at the stop, not close."""
+        # Entry signal on bar 0 -> fill at bar 1 open (100). Stop at 95.
+        # Bar 1 opens above the stop but its low (94) pierces it intrabar.
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0, 100.0],
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+            lows=[99.0, 94.0, 99.0, 99.0],
+        )
+        sizing = PositionSizing(max_position_pct=100.0)
+        risk = RiskManagement(stop_loss_pct=5.0)
+
+        _, trades = run_backtest(
+            df,
+            sizing,
+            risk,
+            config=BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        trade = trades[0]
+        assert trade.exit_reason == "stop_loss"
+        # Closed on the entry bar itself (same date), at the stop level not close.
+        assert trade.entry_date == trade.exit_date
+        assert trade.entry_price == pytest.approx(100.0)
+        assert trade.exit_price == pytest.approx(95.0)
+
+
 class TestTradeDataclass:
     """Test Trade serialization."""
 
@@ -249,6 +282,48 @@ class TestMultiSymbolBacktest:
 
         assert combined_eq.is_empty()
         assert len(trades) == 0
+
+    def test_combine_equity_curves_sorted_and_ffilled(self) -> None:
+        """Combined curve is chronological and holds (not re-bases) on gaps.
+
+        Two per-symbol sleeves with mutually-differing date coverage are fed
+        so a naive full-join would leave the output unsorted and would drop
+        the missing sleeve from the blended mean on dates it lacks a bar.
+
+        Curve A covers [d1, d2, d4]; curve B covers [d2, d3, d4]. Each sleeve
+        starts at initial capital (100_000) on its first row. The fix sorts by
+        date, forward-fills interior gaps ("hold"), back-fills pre-inception
+        dates to the sleeve's initial capital, then averages. On d3 (A has no
+        bar) A must carry its d2 equity of 110_000 rather than dropping out.
+        """
+        d1, d2, d3, d4 = (
+            date(2020, 1, 1),
+            date(2020, 1, 2),
+            date(2020, 1, 3),
+            date(2020, 1, 4),
+        )
+        curve_a = pl.DataFrame(
+            {"date": [d1, d2, d4], "equity_AAPL": [100_000.0, 110_000.0, 120_000.0]},
+        )
+        curve_b = pl.DataFrame(
+            {"date": [d2, d3, d4], "equity_MSFT": [100_000.0, 105_000.0, 130_000.0]},
+        )
+
+        combined = combine_equity_curves([curve_a, curve_b])
+
+        dates = combined["date"].to_list()
+        assert dates == [d1, d2, d3, d4]
+        assert dates == sorted(dates)
+
+        equity = dict(zip(dates, combined["equity"].to_list(), strict=True))
+        # d1: A=100_000, B back-filled to its initial 100_000 -> mean 100_000.
+        assert equity[d1] == pytest.approx(100_000.0)
+        # d2: A=110_000, B=100_000 -> mean 105_000.
+        assert equity[d2] == pytest.approx(105_000.0)
+        # d3: A carried from d2 (110_000), B=105_000 -> mean 107_500 (not 105_000).
+        assert equity[d3] == pytest.approx(107_500.0)
+        # d4: A=120_000, B=130_000 -> mean 125_000.
+        assert equity[d4] == pytest.approx(125_000.0)
 
 
 class TestVolumeScaledSlippage:

@@ -63,6 +63,12 @@ class Coverage:
 
     start: str
     end: str
+    # The end of the window actually assessed. Bars whose period has not
+    # elapsed cannot be judged, so a request reaching past the last closed
+    # bar is evaluated over less than it asked for. Without this, ``end``
+    # echoed the request and a truncated assessment was indistinguishable
+    # from a complete one.
+    evaluated_end: str
     expected_intervals: int
     returned_intervals: int
     missing_intervals: int
@@ -74,6 +80,7 @@ class Coverage:
         return {
             "start": self.start,
             "end": self.end,
+            "evaluated_end": self.evaluated_end,
             "expected_intervals": self.expected_intervals,
             "returned_intervals": self.returned_intervals,
             "missing_intervals": self.missing_intervals,

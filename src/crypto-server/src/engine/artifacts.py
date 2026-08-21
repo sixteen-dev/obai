@@ -18,6 +18,13 @@ LOAD_BEARING_FIELDS = {
     "risk",
     "execution_compatibility",
     "execution_profile",
+    # Displayed identity. These are deterministic derivations of the fields
+    # above, so covering them costs nothing and stops a stored artifact from
+    # naming one product while its load-bearing body describes another.
+    "strategy_id",
+    "human_name",
+    "market",
+    "version",
 }
 
 
@@ -70,8 +77,26 @@ def artifact_fingerprint(artifact: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def validate_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
-    """Validate artifact shape and fingerprint."""
+def validate_artifact(
+    artifact: dict[str, Any],
+    *,
+    storage_key: str | None = None,
+) -> dict[str, Any]:
+    """Validate artifact shape and fingerprint.
+
+    Args:
+        artifact: Artifact dict to validate.
+        storage_key: Fingerprint the artifact was filed under. Supply it when
+            validating a stored artifact. The embedded ``fingerprint`` field is
+            hashed from the same dict that carries it, so on its own it proves
+            only internal consistency — a self-consistent artifact with swapped
+            risk limits still validates. Comparing against the key the row was
+            written as is what makes retrieval validation falsifiable.
+
+    Returns:
+        Dict with ``valid``, ``errors``, and ``expected_fingerprint``.
+
+    """
     errors: list[str] = []
     if artifact.get("artifact_type") != "CryptoStrategyArtifact":
         errors.append("artifact_type must be CryptoStrategyArtifact")
@@ -89,6 +114,8 @@ def validate_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     expected = artifact_fingerprint(artifact)
     if fingerprint != expected:
         errors.append("fingerprint does not match load-bearing fields")
+    if storage_key is not None and expected != storage_key:
+        errors.append("fingerprint does not match storage key")
     return {"valid": not errors, "errors": errors, "expected_fingerprint": expected}
 
 

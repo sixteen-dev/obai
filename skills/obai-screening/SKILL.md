@@ -41,7 +41,8 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 - For stock screening: Use `screening_screen_stocks_tool` with appropriate filters
 - Before screening with a sector or industry filter, call `screening_list_available_sectors_tool` or `screening_list_available_industries_tool` to find matching values. Use all matching results rather than asking the user to choose. Do not guess sector or industry names.
 - Apply reasonable default limits (25 results) unless user requests more
-- Supported screener filters: market cap, price, volume, beta, dividend (each with more_than/lower_than), sector, industry, country, exchange, is_etf, is_fund, limit. Do not invent unsupported filters such as dollar-volume, OR-conditions, or sub-sector qualifiers.
+- Supported screener filters: market cap, price, volume, beta, dividend (each with more_than/lower_than), sector, industry, country, exchange, is_etf, is_fund, us_listed_only, limit. Do not invent unsupported filters such as dollar-volume, OR-conditions, or sub-sector qualifiers.
+- `country` is company domicile, not listing venue, so it does not exclude foreign cross-listings. Set `us_listed_only` for a US-listing scope, or `exchange` for one named venue. Reconcile your row count against the response's `provider_rows_considered`, `excluded_by_venue`, and `excluded_venues`.
 - This server has no price-quote data. For current prices, use the `obai-market-data` skill - focus on screening/lookup only
 
 ## Efficiency Constraints

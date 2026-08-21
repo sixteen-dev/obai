@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ..clients.exa_client import ExaClient, _days_ago
+from ..clients.exa_client import ExaClient, _days_ago, _is_retryable
 from ..config import get_settings
 from ..logging_config import get_logger, log_error
 from .freshness import freshness_summary
@@ -114,11 +114,21 @@ async def _resolve_company_url(client: ExaClient, company_name: str) -> str | No
     try:
         results = await client.search(
             query=f"{company_name} official website",
-            search_type="keyword",
+            # Not "keyword": Exa serves the company category from an entity
+            # index with no keyword path and rejects the pair outright.
+            search_type="auto",
             num_results=5,
             category="company",
         )
-    except (httpx.HTTPError, ValueError) as exc:
+    except httpx.HTTPStatusError as exc:
+        # A status the retry loop already declined to retry is a permanent
+        # rejection of this request, not a blip. Degrading to None here made
+        # every call return zero competitors while still reporting success.
+        if not _is_retryable(exc.response.status_code):
+            raise
+        logger.warning("company_url_resolve_failed", company=company_name, error=str(exc))
+        return None
+    except httpx.HTTPError as exc:
         logger.warning("company_url_resolve_failed", company=company_name, error=str(exc))
         return None
 

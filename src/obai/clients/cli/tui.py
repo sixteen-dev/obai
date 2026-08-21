@@ -54,9 +54,11 @@ from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
 from core_agents.central_hub_agent import (
     CryptoPassthroughEvent,
     PredictionPassthroughEvent,
+    StrategyPassthroughEvent,
     get_inner_tool_outputs,
 )
 from core_agents.config import get_config
+from core_agents.response_assembly import AnswerAccumulator
 from evaluation.scorers.faithfulness import (
     CompletenessScorer,
     FaithfulnessScorer,
@@ -611,7 +613,13 @@ class OBaIApp(App[None]):
         outer_tool_outputs: list[dict[str, Any]] = []
 
         try:
-            response_text = ""
+            # Same assembly as chat.py: group text by message id and drop a
+            # message the model labels commentary, rather than appending every
+            # delta. What is displayed here is also what gets scored, so
+            # narration glued to the answer skewed faithfulness too.
+            answer = AnswerAccumulator()
+            passthrough: str | None = None
+            streamed_any = False
 
             # Show initial hub activity
             tools.add_tool("hub_analyze", "Central Hub", "analyze", f"Query: {text[:40]}...")
@@ -622,9 +630,12 @@ class OBaIApp(App[None]):
                 self._log_stream_event(event)
 
                 # Terminal passthrough: use specialist output directly
-                if isinstance(event, PredictionPassthroughEvent | CryptoPassthroughEvent):
+                if isinstance(
+                    event,
+                    PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+                ):
                     response.append(event.content)
-                    response_text = event.content
+                    passthrough = event.content
                     continue
 
                 # Handle agent changes
@@ -663,11 +674,12 @@ class OBaIApp(App[None]):
                         # Anything streamed into the response widget before
                         # this hub tool call was intermediate "thinking"
                         # narration. Drop it so only the final segment (the
-                        # answer) ends up in the response widget and in
-                        # response_text used for scoring.
-                        if response_text:
+                        # answer) ends up in the response widget and in the
+                        # text used for scoring.
+                        if streamed_any:
                             response.clear()
-                            response_text = ""
+                            streamed_any = False
+                        answer.reset()
 
                         raw_item = getattr(item, "raw_item", None)
                         if raw_item:
@@ -725,9 +737,11 @@ class OBaIApp(App[None]):
                     # Message output (non-streaming)
                     elif item_type == "message_output_item":
                         if isinstance(item, MessageOutputItem):
-                            msg_text = ItemHelpers.text_message_output(item)
-                            if msg_text and not response_text:
-                                response_text = msg_text
+                            answer.note_message(
+                                item.raw_item.id,
+                                ItemHelpers.text_message_output(item),
+                                item.raw_item.phase,
+                            )
 
                 # Handle streaming text
                 elif isinstance(event, RawResponsesStreamEvent):
@@ -736,10 +750,11 @@ class OBaIApp(App[None]):
                         delta = data.delta
                         if delta:
                             # Update status on first token
-                            if not response_text:
+                            if not streamed_any:
                                 processing.update_message("Generating response...")
                             response.append(delta)
-                            response_text += delta
+                            answer.add_delta(data.item_id, delta)
+                            streamed_any = True
                             # Yield to event loop for UI updates
                             await asyncio.sleep(0)
                             conv.scroll_end(animate=False)
@@ -748,6 +763,10 @@ class OBaIApp(App[None]):
             processing.stop()
             response.finalize()
             conv.scroll_end(animate=False)
+
+            # The answer as a user reads it: a terminal specialist's output
+            # replaces it wholesale, otherwise the assembled non-commentary text.
+            response_text = passthrough if passthrough is not None else answer.text()
 
             # Now complete the hub synthesize step (output is done)
             if hub_shown_synthesizing:

@@ -235,12 +235,17 @@ async def fundamentals_get_company_profile_tool(
 )
 async def fundamentals_get_valuation_metrics_tool(
     symbol: str,
-    period: Literal["annual", "quarter"] = "annual",
+    period: Literal["annual", "quarter"] | None = None,
     limit: int = 1,
 ) -> dict[str, Any]:
     """Get comprehensive valuation metrics and financial ratios.
 
-    THIS IS THE PRIMARY TOOL for valuation questions. Includes:
+    THIS IS THE PRIMARY TOOL for valuation questions. By default it returns
+    trailing-twelve-month (TTM) ratios computed against the latest price, so P/E,
+    P/S, EV/EBITDA, ROE and margins reflect current conditions rather than a
+    stale fiscal-period-end snapshot. Each record carries a `basis` field
+    (`ttm` or a fiscal-period label such as `FY2023`); disclose it in answers.
+    Includes:
     - Valuation ratios: P/E, P/B, P/S, EV/EBITDA, EV/Sales
     - Profitability: ROE, ROA, ROIC, gross/operating/net margins
     - Efficiency: asset turnover, inventory turnover
@@ -251,11 +256,12 @@ async def fundamentals_get_valuation_metrics_tool(
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
-        period: Reporting period ('annual' or 'quarter')
-        limit: Number of periods to return (default: 1 for latest)
+        period: Reporting period. Omit (default) for TTM valuation; pass
+            'annual' or 'quarter' for a historical fiscal-period series.
+        limit: Number of periods to return in history mode (default: 1 for latest)
 
     Returns:
-        Combined valuation metrics and financial ratios data
+        Combined valuation metrics and financial ratios data, basis-labelled
     """
     try:
         result = await get_valuation_metrics(symbol, period, limit)

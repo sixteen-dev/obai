@@ -97,11 +97,29 @@ def compute_coverage(
     requested_start: datetime,
     requested_end: datetime,
     granularity: str,
+    now: datetime,
 ) -> Coverage:
-    """Compute expected/returned candle coverage and gaps."""
+    """Compute expected/returned candle coverage over fully closed bars only.
+
+    A bar whose period has not fully elapsed as of ``now`` (``start_ts + step >
+    now``) is still in progress: its stored values are a partial candle. Such
+    open intervals are excluded from expected/returned/gaps so a partial bar
+    never counts as complete coverage and cannot corrupt source quality.
+
+    Args:
+        candles: Candles available for the requested window.
+        requested_start: Inclusive window start.
+        requested_end: Exclusive window end.
+        granularity: Coinbase granularity string.
+        now: Wall-clock reference used to identify the still-open interval.
+
+    Returns:
+        Coverage computed over closed bars only.
+
+    """
     step = granularity_seconds(granularity)
     start_ts = int(requested_start.timestamp())
-    end_ts = int(requested_end.timestamp())
+    end_ts = min(int(requested_end.timestamp()), int(now.timestamp()) - step + 1)
     expected = max(0, (end_ts - start_ts + step - 1) // step)
     returned_starts = {c.start_ts for c in candles if start_ts <= c.start_ts < end_ts}
 
@@ -122,15 +140,56 @@ def compute_coverage(
     returned = len(returned_starts)
     missing = max(0, expected - returned)
     missing_pct = (missing / expected) if expected else 0.0
+    # The close of the last bar counted in ``expected``. Derived from the bar
+    # count rather than from ``end_ts``, which is ``now`` shifted by a step and
+    # so lands mid-bar.
+    evaluated_end = min(
+        requested_end,
+        datetime.fromtimestamp(start_ts + expected * step, tz=UTC),
+    )
     return Coverage(
         start=requested_start.isoformat(),
         end=requested_end.isoformat(),
+        evaluated_end=evaluated_end.isoformat(),
         expected_intervals=expected,
         returned_intervals=returned,
         missing_intervals=missing,
         missing_pct=missing_pct,
         gap_ranges=missing_ranges[:20],
     )
+
+
+def open_interval_fetch_start(
+    requested_start: datetime,
+    requested_end: datetime,
+    granularity: str,
+    now: datetime,
+) -> datetime | None:
+    """Return the start from which to re-fetch the trailing open interval.
+
+    The bar covering ``now`` (and any later bar in the window) has not fully
+    elapsed, so any stored value for it is a partial candle that will change
+    once the period closes. Returns the clamped start of that open interval so
+    the caller can re-fetch and overwrite it, or ``None`` when the whole window
+    lies in already-closed periods.
+
+    Args:
+        requested_start: Inclusive window start.
+        requested_end: Exclusive window end.
+        granularity: Coinbase granularity string.
+        now: Wall-clock reference identifying the open interval.
+
+    Returns:
+        Fetch start datetime, or ``None`` when no interval is still open.
+
+    """
+    step = granularity_seconds(granularity)
+    start_ts = int(requested_start.timestamp())
+    end_ts = int(requested_end.timestamp())
+    closed_end = min(end_ts, int(now.timestamp()) - step + 1)
+    if closed_end >= end_ts:
+        return None
+    return datetime.fromtimestamp(max(start_ts, closed_end), UTC)
 
 
 def snap_start_to_available(
@@ -140,6 +199,7 @@ def snap_start_to_available(
     requested_start: datetime,
     requested_end: datetime,
     granularity: str,
+    now: datetime,
 ) -> tuple[datetime, Coverage]:
     """Advance a leading data gap to the first available candle.
 
@@ -154,6 +214,7 @@ def snap_start_to_available(
         requested_start: The start the caller asked for.
         requested_end: The end the caller asked for.
         granularity: Coinbase granularity string.
+        now: Wall-clock reference passed to the recomputed coverage.
 
     Returns:
         The effective start and its coverage. Unchanged when there is no
@@ -174,6 +235,7 @@ def snap_start_to_available(
         requested_start=snapped_start,
         requested_end=requested_end,
         granularity=granularity,
+        now=now,
     )
     if snapped.missing_intervals > 0:
         return requested_start, coverage

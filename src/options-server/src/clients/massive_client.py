@@ -14,6 +14,11 @@ logger = get_logger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAYS = [0.5, 1.0, 2.0]  # Exponential backoff in seconds
 
+# Pagination cap for the option chain snapshot. Mirrors the ``_get_paginated``
+# default used by ``list_option_contracts`` so a broad chain is bounded but
+# chain-wide stats are computed over the full fetched set, not one page.
+CHAIN_SNAPSHOT_MAX_PAGES = 10
+
 
 class MassiveAPIError(Exception):
     """Exception for Massive API errors."""
@@ -245,7 +250,11 @@ class MassiveClient:
             limit: Maximum results per page (max 250)
 
         Returns:
-            Option chain snapshot with pricing, Greeks, IV, and OI
+            Dict containing ``results`` (contracts across all fetched pages),
+            ``truncated`` (True if the page cap was hit before exhausting the
+            cursor), ``next_cursor`` (resume token when truncated), and
+            ``pages_fetched``. Paging keeps chain-wide stats (put/call ratio,
+            max OI, IV skew) honest instead of biased to the first page.
         """
         endpoint = f"/v3/snapshot/options/{underlying_asset.upper()}"
         params: dict[str, Any] = {"limit": min(limit, 250)}
@@ -257,7 +266,7 @@ class MassiveClient:
         if contract_type:
             params["contract_type"] = contract_type.lower()
 
-        return await self._get(endpoint, params)
+        return await self._get_paginated(endpoint, params, max_pages=CHAIN_SNAPSHOT_MAX_PAGES)
 
     async def get_option_contract_snapshot(
         self,

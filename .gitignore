@@ -98,3 +98,38 @@ scripts/*
 # E2E regression run outputs
 .claude/skills/obai-e2e-regression/runs/
 .claude/skills/obai-e2e-regression-workspace/
+
+# Track the canonical OBaI E2E regression skill while keeping all other
+# machine-local Claude state ignored. Runtime outputs and legacy ad-hoc
+# backups remain excluded.
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/obai-e2e-regression/
+!.claude/skills/obai-e2e-regression/SKILL.md
+!.claude/skills/obai-e2e-regression/cases/
+!.claude/skills/obai-e2e-regression/cases/*.yaml
+!.claude/skills/obai-e2e-regression/scripts/
+!.claude/skills/obai-e2e-regression/scripts/*.py
+!.claude/skills/obai-e2e-regression/tests/
+!.claude/skills/obai-e2e-regression/tests/*.py
+.claude/skills/obai-e2e-regression/runs/
+.claude/skills/obai-e2e-regression/backup/
+!.claude/skills/obai-model-benchmark/
+!.claude/skills/obai-model-benchmark/SKILL.md
+!.claude/skills/obai-model-benchmark/config/
+!.claude/skills/obai-model-benchmark/config/*.yaml
+!.claude/skills/obai-model-benchmark/scripts/
+!.claude/skills/obai-model-benchmark/scripts/*.py
+!.claude/skills/obai-model-benchmark/tests/
+!.claude/skills/obai-model-benchmark/tests/*.py
+# Paid E2E gate artifacts: packets carry full responses and raw trace spans.
+.e2e-runs/
+# Same artifacts again, under the path an explicit `--run-dir runs/<name>`
+# produces. run_suite.py only defaults to <skill>/runs/, which the rule above
+# covers, so a caller-chosen relative run dir lands at the repo root instead.
+runs/
+# Local working directory for analysis scripts; never part of a change.
+scratchpad/
+.claude/skills/obai-e2e-regression/**/__pycache__/

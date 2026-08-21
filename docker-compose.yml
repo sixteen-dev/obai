@@ -46,6 +46,8 @@ services:
       # - QDRANT_COLLECTION=financial-fundamentals
       - EMBEDDING_MODEL=text-embedding-3-small
       - EMBEDDING_DIMENSION=1536
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
@@ -53,7 +55,7 @@ services:
     #   qdrant:
     #     condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -75,11 +77,13 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -102,11 +106,13 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    mem_limit: 512m
+    memswap_limit: 512m
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -128,11 +134,13 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - MASSIVE_BASE_URL=https://api.massive.com
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -154,11 +162,13 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - FMP_BASE_URL=https://financialmodelingprep.com/stable
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -186,13 +196,15 @@ services:
       - ECONOMIC_INDICATORS_CACHE_TTL_HOURS=4
       # Market Data Server (for price data)
       - MARKET_DATA_SERVER_URL=http://market-data-server:8000
+    mem_limit: 2g
+    memswap_limit: 2g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     depends_on:
       - market-data-server
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -216,12 +228,19 @@ services:
     volumes:
       # Persist OHLCV data and cache across restarts
       - backtest-data:/app/data
-    mem_limit: 2g
+    # Must stay above config.py's duckdb_memory_limit (4GB) plus the Python peak.
+    # DuckDB does not spill until it reaches its own budget, so a cap below that
+    # kills the container before the spill valve can ever arm. Measured Python
+    # working set is 1.4 GB at the enforced 250-symbol universe cap
+    # (models/strategy.py MAX_UNIVERSE_SIZE), and backtest_compare_strategies_tool
+    # gathers 5 runs concurrently.
+    mem_limit: 10g
+    memswap_limit: 10g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8007/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -242,11 +261,13 @@ services:
       - TRANSPORT=streamable-http
       - HOST=0.0.0.0
       - PORT=8008
+    mem_limit: 512m
+    memswap_limit: 512m
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8008/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -271,11 +292,16 @@ services:
       # Without this, every container restart wipes the cache and cold-cache backfill
       # of historical-analytics tools (backtest_prediction_rule, etc.) hangs the MCP call.
       - prediction-data:/app/data
+    # config.py sets prediction_duckdb_memory_limit to 4GB, applied at
+    # storage/db.py. The previous 1g cap was a quarter of that budget, so DuckDB
+    # would be killed long before it chose to spill.
+    mem_limit: 6g
+    memswap_limit: 6g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8009/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -297,11 +323,16 @@ services:
       - COINBASE_MARKET_BASE_URL=https://api.coinbase.com/api/v3/brokerage/market
     volumes:
       - crypto-data:/app/data
+    # config.py sets crypto_duckdb_memory_limit to 2GB, applied at
+    # storage/store.py — twice the previous 1g cap. Same spill-valve problem as
+    # backtest-server and prediction-markets-server.
+    mem_limit: 4g
+    memswap_limit: 4g
     networks:
       - obai-mcp-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8010/health/ready || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

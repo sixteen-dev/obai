@@ -276,7 +276,7 @@ def _execute_backtest(
     for i in range(1, n):
         equity[i] = equity[i - 1]
         if not state.in_position:
-            _check_entry(state, market, equity, i, cfg, no_entry_cutoff)
+            _check_entry(state, market, equity, trades, i, cfg, no_entry_cutoff)
         else:
             _check_exit(state, market, equity, trades, i, cfg)
 
@@ -324,6 +324,7 @@ def _check_entry(  # noqa: PLR0913
     state: _BacktestState,
     market: _MarketData,
     equity: np.ndarray[Any, np.dtype[np.float64]],
+    trades: list[Trade],
     idx: int,
     cfg: BacktestConfig,
     no_entry_cutoff: Any | None,
@@ -365,6 +366,15 @@ def _check_entry(  # noqa: PLR0913
     state.tp_level = (
         state.entry_price * (1 + state.take_profit / 100) if state.take_profit else None
     )
+
+    # Intrabar stop/TP can bind on the entry bar itself (stop wins ties).
+    entry_bar_exit = _intrabar_stop_or_tp(state, market, idx)
+    if entry_bar_exit:
+        # Book entry-side commission here; _record_trade books the exit side.
+        equity[idx] -= equity[idx - 1] * state.position_size * (cfg.commission_pct / 100)
+        _record_trade(state, market, equity, trades, idx, entry_bar_exit, cfg)
+        return
+
     # Entry-day PnL: entry_price → close[entry_day], minus entry-side commission
     day_pnl = (market.closes[idx] - state.entry_price) / state.entry_price
     day_pnl -= cfg.commission_pct / 100
@@ -391,6 +401,27 @@ def _check_exit(  # noqa: PLR0913
         state.last_price = float(market.closes[idx])
 
 
+def _intrabar_stop_or_tp(
+    state: _BacktestState,
+    market: _MarketData,
+    idx: int,
+) -> str:
+    """Return the intrabar stop/TP exit reason for this bar, or empty string.
+
+    Uses high/low for intrabar stop/TP detection (long-only). Stop is checked
+    first — conservative assumption (adverse scenario wins ties).
+    """
+    # Intrabar stop-loss check using low (worst case for longs)
+    if state.stop_level is not None and float(market.lows[idx]) <= state.stop_level:
+        return "stop_loss"
+
+    # Intrabar take-profit check using high (best case for longs)
+    if state.tp_level is not None and float(market.highs[idx]) >= state.tp_level:
+        return "take_profit"
+
+    return ""
+
+
 def _get_exit_reason(
     state: _BacktestState,
     market: _MarketData,
@@ -401,13 +432,9 @@ def _get_exit_reason(
     Phase 3.3: Uses high/low for intrabar stop/TP detection (long-only).
     Stop checked first — conservative assumption (adverse scenario wins).
     """
-    # Intrabar stop-loss check using low (worst case for longs)
-    if state.stop_level is not None and float(market.lows[idx]) <= state.stop_level:
-        return "stop_loss"
-
-    # Intrabar take-profit check using high (best case for longs)
-    if state.tp_level is not None and float(market.highs[idx]) >= state.tp_level:
-        return "take_profit"
+    intrabar = _intrabar_stop_or_tp(state, market, idx)
+    if intrabar:
+        return intrabar
 
     # Signal-based exit
     if market.exits[idx - 1]:
@@ -606,16 +633,52 @@ def run_multi_symbol_backtest(
     return combined, all_trades
 
 
+def _forward_fill_equity_cols(
+    combined: pl.DataFrame,
+    equity_cols: list[str],
+) -> pl.DataFrame:
+    """Sort by date and hold each sleeve's equity across missing bars.
+
+    Forward-fills interior gaps so a missing bar carries the sleeve's last
+    known equity ("hold"). Back-fills the remaining leading nulls (dates before
+    a sleeve's first bar) to that sleeve's first equity, which equals its
+    starting capital, so the sleeve reads as idle cash before inception.
+
+    Args:
+        combined: Full-joined curve with one ``equity_<symbol>`` column each.
+        equity_cols: Names of the per-symbol equity columns to fill.
+
+    Returns:
+        The chronologically sorted frame with every equity column gap-filled.
+
+    """
+    return combined.sort("date").with_columns(
+        pl.col(c).forward_fill().backward_fill() for c in equity_cols
+    )
+
+
 def combine_equity_curves(
     curves: list[pl.DataFrame],
 ) -> pl.DataFrame:
-    """Combine per-symbol equity curves into a single averaged curve."""
+    """Combine per-symbol equity curves into a single averaged curve.
+
+    Args:
+        curves: Per-symbol equity curves, each with ``date`` and one
+            ``equity_<symbol>`` column.
+
+    Returns:
+        A ``date``/``equity`` frame sorted chronologically, where ``equity`` is
+        the horizontal mean of the gap-filled per-symbol curves (a missing bar
+        holds the sleeve's last equity rather than dropping it from the mean).
+
+    """
     combined = curves[0]
     for ec in curves[1:]:
         combined = combined.join(ec, on="date", how="full", coalesce=True)
 
     equity_cols = [c for c in combined.columns if c.startswith("equity_")]
-    return combined.with_columns(
+    filled = _forward_fill_equity_cols(combined, equity_cols)
+    return filled.with_columns(
         pl.mean_horizontal(*[pl.col(c) for c in equity_cols]).alias(
             "equity",
         ),

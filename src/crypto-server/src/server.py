@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -19,7 +20,7 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .clients import CoinbaseClient
 from .config import Settings, load_settings
-from .engine import export_artifact, run_bar_backtest, validate_artifact
+from .engine import export_artifact, reject_unknown_keys, run_bar_backtest, validate_artifact
 from .logging_config import configure_logging, get_logger, log_error
 from .models import Candle, SourceQuality
 from .quality import (
@@ -27,6 +28,7 @@ from .quality import (
     compute_coverage,
     freshness_seconds,
     normalize_granularity,
+    open_interval_fetch_start,
     parse_time,
     snap_start_to_available,
 )
@@ -54,6 +56,12 @@ class _ServerState:
 
 
 _state = _ServerState()
+
+# Coverage is always enforced fail-closed for backtests, so flags asking for
+# it (``require_complete_coverage``, ``fail_closed``) are not accepted rather
+# than accepted and ignored, which is how a caller came to believe it had
+# opted into a guarantee the server never read.
+DATA_CONFIG_KEYS = frozenset({"product_id", "timeframe", "start", "end", "data_source_policy"})
 
 
 @mcp.tool(
@@ -242,16 +250,27 @@ async def crypto_backtest_run_strategy(
 ) -> dict[str, Any]:
     """Run a Coinbase spot strategy backtest.
 
+    Coverage is always enforced fail-closed: a window reaching past the last
+    closed Coinbase bar is not execution-grade and is rejected here.
+
     Args:
-        strategy_spec: JSON-encoded strategy specification dict.
-        data_config: JSON-encoded data configuration dict.
-        execution_config: JSON-encoded execution configuration dict.
+        strategy_spec: JSON-encoded dict. Keys: ``template``
+            (default ``spot_trend_follow``), ``parameters``.
+        data_config: JSON-encoded dict. Required keys: ``product_id``,
+            ``timeframe``, ``start``, ``end``. Optional: ``data_source_policy``.
+        execution_config: JSON-encoded dict. Keys: ``initial_capital_usd``,
+            ``taker_fee_bps``, ``spread_bps`` (alias ``slippage_bps``),
+            ``participation_slippage_bps_per_pct``, ``max_position_pct``
+            (alias ``position_fraction``), ``max_bar_participation_pct``.
+
+    Any other key in any of the three is rejected rather than ignored.
 
     """
     try:
         _strategy_spec: dict[str, Any] = json.loads(strategy_spec)
         _data_config: dict[str, Any] = json.loads(data_config)
         _execution_config: dict[str, Any] = json.loads(execution_config)
+        reject_unknown_keys(_data_config, DATA_CONFIG_KEYS, config_name="data_config")
         product_id = str(_data_config["product_id"]).upper()
         timeframe = str(_data_config["timeframe"])
         granularity = normalize_granularity(timeframe)
@@ -279,7 +298,10 @@ async def crypto_backtest_run_strategy(
         source_quality = quality.to_dict()
         source_quality_fingerprint = _fingerprint(source_quality)
         effective_start = quality.coverage.start if quality.coverage else start.isoformat()
-        effective_end = quality.coverage.end if quality.coverage else end.isoformat()
+        # ``coverage.end`` echoes the request, so comparing it to ``end`` below
+        # compared a value with itself and range_adjusted could never be true.
+        # The evaluated end is the close of the last bar actually assessed.
+        effective_end = quality.coverage.evaluated_end if quality.coverage else end.isoformat()
         result = {
             **backtest.result,
             "data_config": {
@@ -297,7 +319,7 @@ async def crypto_backtest_run_strategy(
                     "data_source_policy", "execution_venue_required"
                 ),
             },
-            "quality_status": "execution_grade",
+            "quality_status": "execution_grade" if quality.execution_grade else "degraded",
             "source_quality": source_quality,
             "source_quality_fingerprint": source_quality_fingerprint,
         }
@@ -356,14 +378,27 @@ async def crypto_backtest_get_trade_log(
         "openWorldHint": False,
     },
 )
-async def crypto_strategy_validate_artifact(artifact: str) -> dict[str, Any]:
-    """Validate a Coinbase v1 crypto strategy artifact.
+async def crypto_strategy_validate_artifact(
+    artifact: str,
+    artifact_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate a candidate artifact's shape and internal consistency.
+
+    Without `artifact_id` this proves only that the payload agrees with the
+    fingerprint it carries, which a fabricated or remembered artifact also
+    satisfies. To verify something that was actually exported, use
+    `crypto_strategy_get_artifact`, or pass the `artifact_id` it was stored
+    under here.
 
     Args:
         artifact: JSON-encoded artifact dict.
+        artifact_id: Identifier the artifact was stored under. When given, the
+            payload is also checked against that key.
 
     """
-    return validate_artifact(json.loads(artifact))
+    validation = validate_artifact(json.loads(artifact), storage_key=artifact_id)
+    scope = "storage_bound" if artifact_id else "internal_consistency_only"
+    return {**validation, "scope": scope}
 
 
 @mcp.tool(
@@ -410,7 +445,40 @@ async def crypto_strategy_export_artifact(
     if not validation["valid"]:
         return {"isError": True, "error": "Artifact validation failed", "validation": validation}
     await _state.require("store").store_artifact(artifact["fingerprint"], artifact)
-    return {"artifact": artifact, "validation": validation}
+    return {
+        "artifact_id": artifact["fingerprint"],
+        "artifact": artifact,
+        "validation": validation,
+    }
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get Crypto Strategy Artifact",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def crypto_strategy_get_artifact(artifact_id: str) -> dict[str, Any]:
+    """Load a stored artifact and revalidate it against the key it was filed under.
+
+    Args:
+        artifact_id: Identifier returned by ``crypto_strategy_export_artifact``.
+
+    """
+    if not artifact_id.strip():
+        return {"isError": True, "error": "artifact_id is required"}
+    stored = await _state.require("store").get_artifact(artifact_id)
+    if stored is None:
+        return {"isError": True, "error": f"Artifact not found: {artifact_id}"}
+    return {
+        "artifact_id": stored["fingerprint"],
+        "created_at": stored["created_at"],
+        "artifact": stored["artifact"],
+        "validation": validate_artifact(stored["artifact"], storage_key=stored["fingerprint"]),
+    }
 
 
 async def _load_candles(
@@ -424,6 +492,7 @@ async def _load_candles(
 ) -> tuple[list[Candle], SourceQuality]:
     product = product_id.upper()
     store: CryptoStore = _state.require("store")
+    now = datetime.now(UTC)
     start_ts = int(start.timestamp())
     end_ts = int(end.timestamp())
     cached = await store.get_candles(product, granularity, start_ts, end_ts)
@@ -432,14 +501,18 @@ async def _load_candles(
         requested_start=start,
         requested_end=end,
         granularity=granularity,
+        now=now,
     )
     settings: Settings = _state.require("settings")
+    # The trailing open bar is always re-fetched so a partial candle is never frozen.
+    open_start = open_interval_fetch_start(start, end, granularity, now)
     fetch_failed = False
-    if coverage.missing_intervals > 0:
+    if coverage.missing_intervals > 0 or open_start is not None:
+        fetch_start = start if coverage.missing_intervals > 0 else open_start
         try:
             fetched = await _state.require("coinbase").get_historical_candles(
                 product,
-                start=start,
+                start=fetch_start,
                 end=end,
                 granularity=granularity,
             )
@@ -450,6 +523,7 @@ async def _load_candles(
                 requested_start=start,
                 requested_end=end,
                 granularity=granularity,
+                now=now,
             )
         except (httpx.HTTPError, ValueError):
             fetch_failed = True
@@ -466,6 +540,7 @@ async def _load_candles(
             requested_start=start,
             requested_end=end,
             granularity=granularity,
+            now=now,
         )
         cached = [c for c in cached if int(start.timestamp()) <= c.start_ts < int(end.timestamp())]
 

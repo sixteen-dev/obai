@@ -109,6 +109,15 @@ def _assess_freshness(published_date: str | None) -> str:
         return "unknown"
 
 
+# Exa serves these two categories from dedicated entity indices rather than the
+# crawled-document index. Those indices carry no publication date and no
+# keyword path, so a recency filter or search_type="keyword" is answered with a
+# 400 instead of a narrowed result set. Verified against the live API on
+# 2026-08-20; excludeDomains is accepted despite the reference implying
+# otherwise, so it is deliberately not listed here.
+_DEDICATED_INDEX_CATEGORIES = frozenset({"company", "people"})
+
+
 class ExaClient:
     """Exa API client using direct HTTP calls via httpx.
 
@@ -166,9 +175,12 @@ class ExaClient:
 
         Args:
             query: Search query string.
-            search_type: "auto", "neural", "keyword", "fast", etc.
+            search_type: "auto", "fast", "keyword", "neural", etc. "keyword"
+                is invalid against a dedicated-index category.
             num_results: Number of results to return.
             category: Exa category filter ("company", "people", etc.).
+                "company" and "people" cannot be combined with
+                start_published_date or search_type="keyword".
             highlight_query: Query for highlight extraction.
             max_highlight_chars: Max chars per highlight.
             start_published_date: ISO date string for recency filter.
@@ -179,6 +191,19 @@ class ExaClient:
             List of normalized ResearchResult objects.
 
         """
+        if category in _DEDICATED_INDEX_CATEGORIES and start_published_date:
+            msg = (
+                f"Exa rejects startPublishedDate for the {category!r} category. "
+                "Drop the category to keep the recency window, or drop the window."
+            )
+            raise ValueError(msg)
+        if category in _DEDICATED_INDEX_CATEGORIES and search_type == "keyword":
+            msg = (
+                f"Exa rejects search_type='keyword' for the {category!r} category. "
+                "Use 'auto' or 'fast'."
+            )
+            raise ValueError(msg)
+
         body: dict[str, Any] = {
             "query": query,
             "type": search_type,

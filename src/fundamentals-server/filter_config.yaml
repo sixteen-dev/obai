@@ -28,11 +28,12 @@ filters:
       - isActivelyTrading
       - isAdr
       - isFund
+      - currency
 
   financial_statement:
     # Financial statements - remove administrative metadata, keep all financial data
+    # (keep reportedCurrency: foreign filers report in home currency, not USD)
     remove_fields:
-      - reportedCurrency
       - cik
       - fillingDate
       - acceptedDate
@@ -40,17 +41,15 @@ filters:
       - finalLink
 
   key_metrics:
-    # Key metrics - remove redundant metadata
+    # Key metrics - remove redundant metadata (keep reportedCurrency)
     remove_fields:
-      - reportedCurrency
       - cik
       - fillingDate
       - acceptedDate
 
   financial_ratios:
-    # Financial ratios - remove redundant metadata
+    # Financial ratios - remove redundant metadata (keep reportedCurrency)
     remove_fields:
-      - reportedCurrency
       - cik
       - fillingDate
       - acceptedDate

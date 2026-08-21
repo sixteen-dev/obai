@@ -135,6 +135,7 @@ def filter_option_chain_snapshot(data: list[dict[str, Any]]) -> list[dict[str, A
                 "ask": last_quote.get("ask"),
                 "bid_size": last_quote.get("bid_size"),
                 "ask_size": last_quote.get("ask_size"),
+                "last_updated": last_quote.get("last_updated"),
             }
 
         # Extract Greeks
@@ -152,10 +153,17 @@ def filter_option_chain_snapshot(data: list[dict[str, Any]]) -> list[dict[str, A
         filtered_contract["open_interest"] = contract.get("open_interest")
         filtered_contract["break_even_price"] = contract.get("break_even_price")
 
-        # Extract underlying asset price context
+        # Surface daily volume (nested under "day") for liquidity assessment.
+        # The provider sends an explicit null for contracts with no daily bar,
+        # so default the block rather than chaining off the raw value.
+        day = contract.get("day") or {}
+        filtered_contract["volume"] = day.get("volume")
+
+        # Extract underlying asset price context and freshness
         underlying = contract.get("underlying_asset", {})
         if underlying:
             filtered_contract["underlying_price"] = underlying.get("price")
+            filtered_contract["underlying_last_updated"] = underlying.get("last_updated")
 
         filtered_results.append(filtered_contract)
 

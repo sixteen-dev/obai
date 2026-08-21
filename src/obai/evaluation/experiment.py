@@ -8,13 +8,15 @@ Usage:
     python -m evaluation experiment --name "baseline" --limit 3
 
     # Compare current vs candidate models in one command
-    python -m evaluation experiment --name "compare" --compare gpt-5.4 --limit 3
-    python -m evaluation experiment --name "compare" --compare gpt-5.4,gpt-5.4-mini --limit 3
+    python -m evaluation experiment --name "compare" --compare gpt-5.6-terra --limit 3
+    python -m evaluation experiment --name "compare" --compare gpt-5.6-terra,gpt-5.6-luna --limit 3
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -29,37 +31,76 @@ from evaluation.eval_runner import (
     OBaIEvaluator,
     TestCase,
     load_test_cases,
+    scorer_skip_is_allowed,
 )
 from evaluation.trace.types import Trace
 
 logger = logging.getLogger(__name__)
 
 # Type alias for the async query runner function (cli.run_query_with_trace).
-QueryRunner = Callable[[str, str, bool], Awaitable[Trace]]
+QueryRunner = Callable[[str, str | None, bool], Awaitable[Trace]]
 
 # Score keys extracted from task output, mapped to human-readable metric names.
 # Boolean keys are converted to float (1.0/0.0), numeric keys pass through.
 _EXTRACTOR_KEYS: dict[str, str] = {
+    "evaluation_complete": "evaluation_complete",
+    "scorer_error": "scorer_error",
+    "outcome_pass": "outcome_pass",
+    "partial_refusal_semantic_pass": "partial_refusal_semantic_pass",
+    "date_policy_pass": "date_policy_pass",
+    "date_policy_applicable": "date_policy_applicable",
     "orchestration_pass": "orchestration_pass",
     "sequence_pass": "sequence_pass",
     "quality_pass": "quality_pass",
     "efficiency_pass": "efficiency_pass",
     "efficiency_score": "efficiency_score",
+    "strategy_contract_pass": "strategy_contract_pass",
+    "strategy_contract_applicable": "strategy_contract_applicable",
+    "strategy_grounding_pass": "strategy_grounding_pass",
+    "strategy_grounding_applicable": "strategy_grounding_applicable",
+    "strategy_decision_pass": "strategy_decision_pass",
+    "strategy_decision_applicable": "strategy_decision_applicable",
     "relevance_score": "relevance_score",
     "task_completion_pass": "task_completion_pass",
     "tool_correctness_pass": "tool_correctness_pass",
     "rubric_avg": "rubric_avg",
+    "rubric_avg_applicable": "rubric_avg_applicable",
     "faithfulness_numeric_accuracy": "faithfulness_numeric_accuracy",
+    "faithfulness_numeric_accuracy_applicable": "faithfulness_numeric_accuracy_applicable",
     "completeness_coverage": "completeness_coverage",
+    "completeness_coverage_applicable": "completeness_coverage_applicable",
+}
+
+_OPTIONAL_SCORER_OUTPUTS: dict[str, str] = {
+    "DatePolicyScorer": "date_policy_pass",
+    "StrategyContractScorer": "strategy_contract_pass",
+    "StrategyGroundingScorer": "strategy_grounding_pass",
+    "StrategyDecisionScorer": "strategy_decision_pass",
+    # Semantic scorers explicitly return skipped/N/A when the tool execution
+    # produced no ground truth.  Their absent or skipped values must not become
+    # false zeroes in experiment aggregates.
+    "LLMJudgeScorer": "rubric_avg",
+    "FaithfulnessScorer": "faithfulness_numeric_accuracy",
+    "CompletenessScorer": "completeness_coverage",
+}
+_OPTIONAL_EXTRACTOR_APPLICABILITY: dict[str, str] = {
+    pass_key: f"{pass_key.removesuffix('_pass')}_applicable"
+    for pass_key in _OPTIONAL_SCORER_OUTPUTS.values()
 }
 
 # Maps scorer class names to the boolean pass key in their result dict.
 # Mirrors _SCORER_PASS_KEYS from cli.py.
 _SCORER_PASS_FIELDS: dict[str, str] = {
+    "OutcomeContractScorer": "outcome_pass",
+    "PartialRefusalSemanticScorer": "partial_refusal_semantic_pass",
+    "DatePolicyScorer": "date_policy_pass",
     "ToolOrchestrationScorer": "correct_tools",
     "SequenceScorer": "correct_sequence",
     "ResponseQualityScorer": "quality_pass",
     "EfficiencyScorer": "within_budget",
+    "StrategyContractScorer": "contract_pass",
+    "StrategyGroundingScorer": "grounding_pass",
+    "StrategyDecisionScorer": "strategy_decision_pass",
     "AnswerRelevanceScorer": "relevant",
     "TaskCompletionScorer": "task_completed",
     "ToolCorrectnessScorer": "tools_correct",
@@ -71,19 +112,25 @@ _SCORER_PASS_FIELDS: dict[str, str] = {
 # Maps scorer class names to (extractor_key, data_key) for continuous scores.
 # When present, these override the boolean pass/fail with a numeric value.
 _SCORER_NUMERIC_FIELDS: dict[str, tuple[str, str]] = {
-    "EfficiencyScorer": ("efficiency_score", "efficiency_score"),
-    "AnswerRelevanceScorer": ("relevance_score", "relevance_score"),
-    "LLMJudgeScorer": ("rubric_avg", "rubric_average"),
+    "EfficiencyScorer": ("efficiency_score", "efficiency"),
+    "AnswerRelevanceScorer": ("relevance_score", "score"),
+    "LLMJudgeScorer": ("rubric_avg", "average_score"),
     "FaithfulnessScorer": ("faithfulness_numeric_accuracy", "numeric_accuracy"),
     "CompletenessScorer": ("completeness_coverage", "coverage_score"),
 }
 
 # Maps scorer pass fields to flat extractor key names.
 _PASS_FIELD_TO_EXTRACTOR: dict[str, str] = {
+    "outcome_pass": "outcome_pass",
+    "partial_refusal_semantic_pass": "partial_refusal_semantic_pass",
+    "date_policy_pass": "date_policy_pass",
     "correct_tools": "orchestration_pass",
     "correct_sequence": "sequence_pass",
     "quality_pass": "quality_pass",
     "within_budget": "efficiency_pass",
+    "contract_pass": "strategy_contract_pass",
+    "grounding_pass": "strategy_grounding_pass",
+    "strategy_decision_pass": "strategy_decision_pass",
     "relevant": "relevance_score",
     "task_completed": "task_completion_pass",
     "tools_correct": "tool_correctness_pass",
@@ -102,25 +149,35 @@ class ExtractorMetric(BaseMetric):
 
     """
 
-    def __init__(self, name: str, key: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        key: str,
+        *,
+        applicability_key: str | None = None,
+    ) -> None:
         """Initialize extractor metric.
 
         Args:
             name: Metric name shown in Opik UI.
             key: Key to extract from task output dict.
+            applicability_key: Optional row-level gate; N/A rows emit no score.
         """
         super().__init__(name=name, track=False)
         self._key = key
+        self._applicability_key = applicability_key
 
-    def score(self, **kwargs: Any) -> ScoreResult:
+    def score(self, **kwargs: Any) -> ScoreResult | list[ScoreResult]:
         """Extract pre-computed score value.
 
         Args:
             **kwargs: Merged dataset item + task output fields.
 
         Returns:
-            ScoreResult with extracted value.
+            ScoreResult with extracted value, or an empty list for an N/A row.
         """
+        if self._applicability_key is not None and not kwargs.get(self._applicability_key, False):
+            return []
         value = kwargs.get(self._key, 0.0)
         if isinstance(value, bool):
             value = 1.0 if value else 0.0
@@ -147,12 +204,44 @@ def _filter_test_cases(
     filtered = test_cases
     if smoke:
         filtered = [tc for tc in filtered if tc.smoke]
-    if ids:
-        id_set = {tid.strip().upper() for tid in ids}
+    if ids is not None:
+        id_set = {test_id.strip().upper() for test_id in ids if test_id.strip()}
+        if not id_set:
+            raise ValueError("ids must contain at least one non-empty test ID")
         filtered = [tc for tc in filtered if tc.id.upper() in id_set]
-    if limit is not None and limit > 0:
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    if limit is not None:
         filtered = filtered[:limit]
     return filtered
+
+
+def _validate_builtin_scorer_requirements(test_cases: list[TestCase], *, no_builtin: bool) -> None:
+    """Fail before provider setup if selected contracts need semantic judges."""
+    if not no_builtin:
+        return
+    required_ids = [case.id for case in test_cases if case.requires_builtin_scorers]
+    if required_ids:
+        joined = ", ".join(required_ids)
+        raise ValueError(
+            "--no-builtin would reduce selected financial-answer/refusal contracts to "
+            "shallow routing/text checks; "
+            f"rerun without --no-builtin or deselect: {joined}"
+        )
+
+
+def _validate_semantic_scorer_credentials(test_cases: list[TestCase], *, no_builtin: bool) -> None:
+    """Reject missing judge credentials before any selected OBaI query is sent."""
+    if no_builtin or not any(
+        case.requires_builtin_scorers or case.expected_outcome in {"success", "partial_refusal"}
+        for case in test_cases
+    ):
+        return
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        raise ValueError(
+            "ANTHROPIC_API_KEY is required by the selected semantic scorers; "
+            "configure it before starting this paid suite"
+        )
 
 
 def sync_dataset(
@@ -162,20 +251,32 @@ def sync_dataset(
 ) -> opik.api_objects.dataset.dataset.Dataset:
     """Sync test cases to an Opik dataset.
 
-    Opik deduplicates by content hash, so re-inserts are idempotent.
+    Opik deduplicates by content hash, so re-inserts are idempotent. The
+    effective dataset name includes a fingerprint of the exact selected rows.
+    This prevents stale rows in a reused base dataset from escaping current
+    category, ID, or extended-only filters.
 
     Args:
         client: Opik client instance.
-        dataset_name: Name for the Opik dataset.
+        dataset_name: Base name for the Opik dataset. A selection fingerprint
+            is appended before lookup or creation.
         test_cases: Test cases to sync.
 
     Returns:
         Opik Dataset object.
     """
-    dataset = client.get_or_create_dataset(name=dataset_name)
     items = [tc.to_dataset_row() for tc in test_cases]
+    selection_json = json.dumps(
+        items,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    selection_hash = hashlib.sha256(selection_json.encode()).hexdigest()[:16]
+    effective_name = f"{dataset_name}-{selection_hash}"
+    dataset = client.get_or_create_dataset(name=effective_name)
     dataset.insert(items)
-    logger.info("Synced %d test cases to dataset '%s'", len(items), dataset_name)
+    logger.info("Synced %d test cases to dataset '%s'", len(items), effective_name)
     return dataset
 
 
@@ -216,13 +317,42 @@ def _flatten_scores(eval_result: dict[str, Any]) -> dict[str, float]:
     Returns:
         Flat dict mapping score key names to float values.
     """
-    scores = eval_result.get("scores", {})
+    raw_scores = eval_result.get("scores", {})
+    scores = raw_scores if isinstance(raw_scores, dict) else {}
     flat: dict[str, float] = {}
+    expected_scorers = eval_result.get("expected_scorers")
+    invalid_scorer_plan = not isinstance(raw_scores, dict) or (
+        expected_scorers is not None
+        and (
+            not isinstance(expected_scorers, list)
+            or not expected_scorers
+            or not all(isinstance(name, str) and name for name in expected_scorers)
+            or len(set(expected_scorers)) != len(expected_scorers)
+            or set(scores) != set(expected_scorers)
+        )
+    )
+    scorer_error = (
+        bool(eval_result.get("aborted"))
+        or invalid_scorer_plan
+        or any(
+            not isinstance(score_data, dict)
+            or "error" in score_data
+            or (
+                score_data.get("skipped") is True
+                and not scorer_skip_is_allowed(scorer_name, score_data)
+            )
+            for scorer_name, score_data in scores.items()
+        )
+    )
+    flat["evaluation_complete"] = 0.0 if scorer_error else 1.0
+    flat["scorer_error"] = 1.0 if scorer_error else 0.0
 
     for scorer_name, score_data in scores.items():
         if not isinstance(score_data, dict):
             continue
         if "error" in score_data:
+            continue
+        if score_data.get("skipped") is True:
             continue
 
         # Extract boolean pass/fail
@@ -240,6 +370,20 @@ def _flatten_scores(eval_result: dict[str, Any]) -> dict[str, float]:
                 raw = score_data[data_key]
                 if isinstance(raw, (int, float)):
                     flat[extractor_key] = float(raw)
+
+    # These scorers intentionally do not apply to every row. Global Opik
+    # extractor metrics otherwise convert an absent key to a false zero. Emit
+    # applicability explicitly; the extractor omits N/A rows entirely. If an
+    # applicable scorer errored/omitted its verdict, keep it fail-closed at 0.
+    for scorer_name, extractor_key in _OPTIONAL_SCORER_OUTPUTS.items():
+        score_data = scores.get(scorer_name)
+        applicable = isinstance(score_data, dict) and not scorer_skip_is_allowed(
+            scorer_name, score_data
+        )
+        applicability_key = f"{extractor_key.removesuffix('_pass')}_applicable"
+        flat[applicability_key] = 1.0 if applicable else 0.0
+        if applicable and extractor_key not in flat:
+            flat[extractor_key] = 0.0
 
     return flat
 
@@ -274,21 +418,8 @@ def make_experiment_task(
         Returns:
             Flat dict with response text and score values.
         """
-        test_id = dataset_item.get("test_id", "")
-        query = dataset_item.get("query", "")
-
-        # Look up original TestCase for scorer configuration
-        test_case = test_case_map.get(test_id)
-        if test_case is None:
-            test_case = TestCase(
-                id=test_id,
-                query=query,
-                category=dataset_item.get("category", ""),
-                query_type=dataset_item.get("query_type", "general"),
-                expected_tools=dataset_item.get("expected_tools", []),
-                expected_sequence=dataset_item.get("expected_sequence", []) or None,
-                expect_rejection=dataset_item.get("expect_rejection", False),
-            )
+        test_case = _validated_dataset_binding(dataset_item, test_case_map)
+        query = test_case.query
 
         async def _run() -> dict[str, Any]:
             trace = await query_runner(query, config.orchestrator_model, False)
@@ -303,13 +434,45 @@ def make_experiment_task(
     return task
 
 
+def _validated_dataset_binding(
+    dataset_item: dict[str, Any],
+    test_case_map: dict[str, TestCase],
+) -> TestCase:
+    """Bind a remote experiment row to its exact locally selected contract.
+
+    Opik datasets are remote and mutable.  A same-ID stale row must be rejected
+    before ``query_runner`` so it cannot spend on a different query and then be
+    judged against the local case's expectations.
+    """
+    test_id = dataset_item.get("test_id")
+    if not isinstance(test_id, str) or test_id not in test_case_map:
+        raise RuntimeError(f"dataset row has unknown test_id: {test_id!r}")
+    test_case = test_case_map[test_id]
+    expected_row = test_case.to_dataset_row()
+    mismatched = [
+        key for key, expected in expected_row.items() if dataset_item.get(key) != expected
+    ]
+    if mismatched:
+        raise RuntimeError(
+            f"dataset contract drift for {test_id}: mismatched " + ", ".join(mismatched)
+        )
+    return test_case
+
+
 def build_extractor_metrics() -> list[BaseMetric]:
     """Build list of ExtractorMetric instances for all score dimensions.
 
     Returns:
         List of ExtractorMetric instances.
     """
-    return [ExtractorMetric(name=name, key=key) for key, name in _EXTRACTOR_KEYS.items()]
+    return [
+        ExtractorMetric(
+            name=name,
+            key=key,
+            applicability_key=_OPTIONAL_EXTRACTOR_APPLICABILITY.get(key),
+        )
+        for key, name in _EXTRACTOR_KEYS.items()
+    ]
 
 
 def make_verbose_experiment_task(
@@ -337,20 +500,8 @@ def make_verbose_experiment_task(
 
     def task(dataset_item: dict[str, Any]) -> dict[str, Any]:
         """Run eval pipeline, store full results, return flattened scores."""
-        test_id = dataset_item.get("test_id", "")
-        query = dataset_item.get("query", "")
-
-        test_case = test_case_map.get(test_id)
-        if test_case is None:
-            test_case = TestCase(
-                id=test_id,
-                query=query,
-                category=dataset_item.get("category", ""),
-                query_type=dataset_item.get("query_type", "general"),
-                expected_tools=dataset_item.get("expected_tools", []),
-                expected_sequence=dataset_item.get("expected_sequence", []) or None,
-                expect_rejection=dataset_item.get("expect_rejection", False),
-            )
+        test_case = _validated_dataset_binding(dataset_item, test_case_map)
+        query = test_case.query
 
         async def _run() -> dict[str, Any]:
             trace = await query_runner(query, config.orchestrator_model, False)
@@ -387,11 +538,13 @@ def run_evaluate_as_experiment(
         test_cases: Test cases to evaluate.
         judge_model: LiteLLM model ID for LLM-based scorers.
         no_builtin: Skip Opik built-in (LLM-based) scorers.
-        dataset_name: Name for the Opik dataset.
+        dataset_name: Base name for the selection-fingerprinted Opik dataset.
 
     Returns:
         Tuple of (experiment name, list of full result dicts).
     """
+    _validate_builtin_scorer_requirements(test_cases, no_builtin=no_builtin)
+    _validate_semantic_scorer_credentials(test_cases, no_builtin=no_builtin)
     client = opik.Opik()
     config = get_config()
 
@@ -516,6 +669,7 @@ def run_experiment(
     dataset_name: str = "obai-eval-suite",
     compare_orchestrator: str | None = None,
     compare_specialist: str | None = None,
+    include_extended: bool = False,
 ) -> list[str]:
     """Run one or two Opik experiments for model comparison.
 
@@ -532,18 +686,44 @@ def run_experiment(
         limit: Max number of test cases to run.
         judge_model: LiteLLM model ID for LLM-based scorers.
         no_builtin: Skip Opik built-in (LLM-based) scorers.
-        dataset_name: Name for the Opik dataset.
+        dataset_name: Base name for the selection-fingerprinted Opik dataset.
         compare_orchestrator: Candidate orchestrator model for comparison.
         compare_specialist: Candidate specialist model for comparison.
+        include_extended: Include extended-only cases. Defaults to False so
+            explicit IDs cannot select billable extended cases without opt-in.
 
     Returns:
         List of experiment name strings (1 or 2).
     """
-    client = opik.Opik()
-
     # Load, filter, and sync test cases
-    test_cases = load_test_cases(category=category)
+    test_cases = load_test_cases(category=category, include_extended=include_extended)
+    if ids is not None:
+        requested_ids = {test_id.strip().upper() for test_id in ids if test_id.strip()}
+        if not requested_ids:
+            raise ValueError("ids must contain at least one non-empty test ID")
+        available_ids = {test_case.id.upper() for test_case in test_cases}
+        unavailable_ids = sorted(requested_ids - available_ids)
+        if unavailable_ids:
+            unavailable = ", ".join(unavailable_ids)
+            msg = (
+                f"Requested test IDs are unavailable: {unavailable}. "
+                "Extended-only cases require include_extended=True "
+                "(CLI: --include-extended)."
+            )
+            raise ValueError(msg)
+
     test_cases = _filter_test_cases(test_cases, smoke=smoke, ids=ids, limit=limit)
+    if not test_cases:
+        msg = (
+            "No test cases matched the requested filters. "
+            "Extended-only cases require include_extended=True."
+        )
+        raise ValueError(msg)
+
+    _validate_builtin_scorer_requirements(test_cases, no_builtin=no_builtin)
+    _validate_semantic_scorer_credentials(test_cases, no_builtin=no_builtin)
+
+    client = opik.Opik()
     dataset = sync_dataset(client, dataset_name, test_cases)
     test_case_map = {tc.id: tc for tc in test_cases if tc.id}
 

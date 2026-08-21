@@ -166,6 +166,7 @@ async def screening_screen_stocks_tool(
     is_fund: bool | None = None,
     is_actively_trading: bool = True,
     include_all_share_classes: bool = False,
+    us_listed_only: bool = False,
     limit: int = 25,
 ) -> dict[str, Any]:
     """Screen stocks with various filters for idea generation.
@@ -176,7 +177,7 @@ async def screening_screen_stocks_tool(
     Common use cases:
     - "Find tech stocks under $50B market cap"
     - "Show me high-volume stocks with low beta"
-    - "Screen for dividend stocks yielding above 3%"
+    - "Screen for dividend stocks paying above a set amount per share"
 
     Args:
         market_cap_more_than: Minimum market cap (e.g., 10000000000 for $10B)
@@ -187,8 +188,10 @@ async def screening_screen_stocks_tool(
         volume_lower_than: Maximum daily volume
         beta_more_than: Minimum beta (volatility relative to market)
         beta_lower_than: Maximum beta
-        dividend_more_than: Minimum dividend yield (e.g., 0.5 for 0.5%)
-        dividend_lower_than: Maximum dividend yield
+        dividend_more_than: Minimum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
+        dividend_lower_than: Maximum annual dividend in dollars per share
+            (the lastAnnualDividend amount, not a yield percent)
         sector: Sector filter (Technology, Healthcare, Financial Services, etc.)
         industry: Industry filter (more specific than sector)
         country: Country code (US, CN, GB, etc.)
@@ -197,6 +200,10 @@ async def screening_screen_stocks_tool(
         is_fund: True to filter for mutual funds only
         is_actively_trading: Only actively traded stocks (default: True)
         include_all_share_classes: Include all share classes, e.g. GOOG and GOOGL (default: False)
+        us_listed_only: Keep only rows listed on a US exchange. `country` is
+            company domicile, not listing venue, so foreign cross-listings of
+            US-domiciled issuers survive it. Excluded rows and their venues are
+            always reported in the response metadata.
         limit: Maximum results (default: 25, max: 100)
 
     Returns:
@@ -222,6 +229,7 @@ async def screening_screen_stocks_tool(
             is_fund=is_fund,
             is_actively_trading=is_actively_trading,
             include_all_share_classes=include_all_share_classes,
+            us_listed_only=us_listed_only,
             limit=limit,
         )
         return truncate_response(result)

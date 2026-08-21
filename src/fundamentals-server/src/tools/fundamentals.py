@@ -18,8 +18,88 @@ from ..response_filters import (
     filter_revenue_segments,
     filter_sec_filings,
 )
+from ..response_utils import format_api_error
 
 logger = get_logger(__name__)
+
+
+def _summarize_source_failures(
+    sources: dict[str, list[dict[str, Any]] | BaseException],
+) -> tuple[list[str], BaseException | None]:
+    """Identify which combined-tool sub-fetches failed.
+
+    Args:
+        sources: Mapping of source name to its gathered result — the fetched
+            data list on success, or the raised exception on failure.
+
+    Returns:
+        A tuple of the failed source names (in ``sources`` order) and the first
+        captured failure exception, or ``None`` if every source succeeded.
+    """
+    failed_names = [name for name, r in sources.items() if isinstance(r, BaseException)]
+    first_failure = next((r for r in sources.values() if isinstance(r, BaseException)), None)
+    return failed_names, first_failure
+
+
+def _all_sources_failed_error(failure: BaseException | None, **context: str) -> dict[str, Any]:
+    """Map an all-sources-failed condition to a typed provider-error payload.
+
+    Args:
+        failure: The first captured sub-fetch exception (must not be ``None``).
+        **context: Identifying fields to attach (e.g. ``symbol``, ``period``).
+
+    Returns:
+        An ``isError`` payload matching this server's error convention.
+
+    Raises:
+        RuntimeError: If called without a captured failure.
+        BaseException: Re-raises non-``Exception`` failures (e.g. cancellation)
+            instead of masking them as a friendly error dict.
+    """
+    if failure is None:
+        raise RuntimeError("all sources reported failed but no exception was captured")
+    if not isinstance(failure, Exception):
+        raise failure
+    payload = format_api_error(failure, "FMP")
+    payload.update(context)
+    return payload
+
+
+def _fiscal_basis_label(record: dict[str, Any]) -> str:
+    """Build a fiscal-period basis label (e.g. 'FY2023', 'Q1 2024') for a record.
+
+    Args:
+        record: A key-metrics or ratios record carrying ``date``/``period`` fields.
+
+    Returns:
+        A human-readable fiscal-period label, or ``"fiscal-period"`` when the
+        record lacks period identifiers.
+    """
+    period = str(record.get("period") or "").strip()
+    year = str(record.get("date") or "")[:4]
+    if period == "FY":
+        return f"FY{year}" if year else "fiscal-period"
+    if period and year:
+        return f"{period} {year}"
+    return period or year or "fiscal-period"
+
+
+def _stamp_valuation_basis(
+    records: list[dict[str, Any]], period: str | None
+) -> list[dict[str, Any]]:
+    """Label each valuation record with its basis: TTM or its fiscal period.
+
+    Args:
+        records: Filtered key-metrics or ratios records to annotate in place.
+        period: ``None`` for the trailing-twelve-month path (basis ``"ttm"``),
+            otherwise the requested fiscal period (basis derived per record).
+
+    Returns:
+        The same records, each with a ``basis`` field added.
+    """
+    for record in records:
+        record["basis"] = "ttm" if period is None else _fiscal_basis_label(record)
+    return records
 
 
 async def get_fundamentals(
@@ -696,13 +776,18 @@ async def get_revenue_segments(
 
 async def get_valuation_metrics(
     symbol: str,
-    period: Literal["annual", "quarter"] = "annual",
+    period: Literal["annual", "quarter"] | None = None,
     limit: int = 1,
 ) -> dict[str, Any]:
     """Get comprehensive valuation metrics combining key metrics and ratios.
 
     This is the go-to tool for valuation questions like P/E ratio, P/B ratio,
     EV/EBITDA, ROE, margins, and debt ratios.
+
+    Defaults to trailing-twelve-month (TTM) figures against the latest price so
+    ratios reflect current conditions. Pass an explicit ``period`` to retrieve a
+    fiscal-period historical series instead. Every record carries a ``basis``
+    field (``"ttm"`` or a fiscal-period label such as ``"FY2023"``).
 
     Includes:
     - Valuation: P/E, P/B, P/S, EV/EBITDA, EV/Sales
@@ -713,11 +798,12 @@ async def get_valuation_metrics(
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
-        period: Reporting period ('annual' or 'quarter')
-        limit: Number of periods to return (default: 1 for latest)
+        period: Reporting period. ``None`` (default) returns TTM valuation;
+            ``'annual'`` or ``'quarter'`` returns a fiscal-period series.
+        limit: Number of periods to return in history mode (default: 1 for latest)
 
     Returns:
-        Combined valuation and financial ratio data
+        Combined valuation and financial ratio data, each record basis-labelled
 
     Raises:
         httpx.HTTPError: If FMP API request fails
@@ -732,11 +818,18 @@ async def get_valuation_metrics(
 
     fmp = FMPClient()
 
-    try:
-        log_api_call(logger, "fmp", "key-metrics+ratios", {"symbol": symbol, "period": period})
+    basis_label = period or "ttm"
 
-        key_metrics_task = fmp.get_key_metrics(symbol, period, limit)
-        ratios_task = fmp.get_financial_ratios(symbol, period, limit)
+    try:
+        endpoints = "key-metrics-ttm+ratios-ttm" if period is None else "key-metrics+ratios"
+        log_api_call(logger, "fmp", endpoints, {"symbol": symbol, "period": period})
+
+        if period is None:
+            key_metrics_task = fmp.get_key_metrics_ttm(symbol)
+            ratios_task = fmp.get_financial_ratios_ttm(symbol)
+        else:
+            key_metrics_task = fmp.get_key_metrics(symbol, period, limit)
+            ratios_task = fmp.get_financial_ratios(symbol, period, limit)
 
         results = await asyncio.gather(key_metrics_task, ratios_task, return_exceptions=True)
         key_metrics_data: list[dict[str, Any]] | BaseException = results[0]
@@ -748,27 +841,41 @@ async def get_valuation_metrics(
         if isinstance(key_metrics_data, BaseException):
             logger.warning("key_metrics_fetch_failed", error=str(key_metrics_data))
         else:
-            key_metrics_result = filter_key_metrics(key_metrics_data)
+            key_metrics_result = _stamp_valuation_basis(
+                filter_key_metrics(key_metrics_data), period
+            )
 
         if isinstance(ratios_data, BaseException):
             logger.warning("ratios_fetch_failed", error=str(ratios_data))
         else:
-            ratios_result = filter_financial_ratios(ratios_data)
+            ratios_result = _stamp_valuation_basis(filter_financial_ratios(ratios_data), period)
+
+        sources: dict[str, list[dict[str, Any]] | BaseException] = {
+            "key_metrics": key_metrics_data,
+            "financial_ratios": ratios_data,
+        }
+        failed_sources, first_failure = _summarize_source_failures(sources)
+        if len(failed_sources) == len(sources):
+            return _all_sources_failed_error(first_failure, symbol=symbol, period=basis_label)
 
         logger.info(
             "valuation_metrics_fetched",
             symbol=symbol,
+            basis=basis_label,
             key_metrics_count=len(key_metrics_result),
             ratios_count=len(ratios_result),
         )
         logger.info("tool_execution_complete", tool="get_valuation_metrics", symbol=symbol)
 
-        return {
+        result: dict[str, Any] = {
             "symbol": symbol,
-            "period": period,
+            "period": basis_label,
             "key_metrics": key_metrics_result,
             "financial_ratios": ratios_result,
         }
+        if failed_sources:
+            result["degraded_sources"] = failed_sources
+        return result
 
     except Exception as e:
         log_error(logger, e, context={"tool": "get_valuation_metrics", "symbol": symbol})
@@ -847,6 +954,15 @@ async def get_analyst_outlook(
         else:
             rating_result = filter_company_rating(rating_data)
 
+        sources: dict[str, list[dict[str, Any]] | BaseException] = {
+            "analyst_estimates": estimates_data,
+            "price_target": price_target_data,
+            "rating": rating_data,
+        }
+        failed_sources, first_failure = _summarize_source_failures(sources)
+        if len(failed_sources) == len(sources):
+            return _all_sources_failed_error(first_failure, symbol=symbol)
+
         logger.info(
             "analyst_outlook_fetched",
             symbol=symbol,
@@ -856,12 +972,15 @@ async def get_analyst_outlook(
         )
         logger.info("tool_execution_complete", tool="get_analyst_outlook", symbol=symbol)
 
-        return {
+        result: dict[str, Any] = {
             "symbol": symbol,
             "analyst_estimates": estimates_result,
             "price_target": price_target_result[0] if price_target_result else None,
             "rating": rating_result[0] if rating_result else None,
         }
+        if failed_sources:
+            result["degraded_sources"] = failed_sources
+        return result
 
     except Exception as e:
         log_error(logger, e, context={"tool": "get_analyst_outlook", "symbol": symbol})

@@ -15,7 +15,12 @@ from .clients.fmp_client import FMPClient
 from .config import Settings, get_settings, load_settings
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
-from .tools import get_dividends, get_earnings, search_market_news
+from .tools import (
+    get_dividends,
+    get_earnings,
+    get_earnings_calendar,
+    search_market_news,
+)
 
 # Server start time for uptime tracking
 _server_start_time: float = time.time()
@@ -222,9 +227,10 @@ async def events_news_get_earnings_tool(
 ) -> dict[str, Any]:
     """Get earnings history and upcoming earnings for a specific ticker.
 
-    Returns earnings sorted with reported results (actual EPS/revenue)
-    before estimated/upcoming entries. Use this to find past and future
-    earnings announcements for a stock.
+    Returns earnings sorted with reported results (actual EPS/revenue
+    present) before estimated/upcoming entries, each group ordered by
+    date descending (most recent first). Use this to find past and
+    future earnings announcements for a stock.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
@@ -243,6 +249,54 @@ async def events_news_get_earnings_tool(
             context={
                 "tool": "events_news_get_earnings_tool",
                 "symbol": symbol,
+                "limit": limit,
+            },
+        )
+        return format_api_error(e, "FMP")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get Earnings Calendar",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def events_news_get_earnings_calendar_tool(
+    from_date: str,
+    to_date: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Get the market-wide earnings calendar for a date range.
+
+    Answers cross-company / date-range questions ("which companies report
+    next week?", "who has earnings tomorrow?") that the per-ticker
+    events_news_get_earnings_tool cannot. Returns every company reporting
+    between from_date and to_date, each with EPS/revenue estimates and
+    (once reported) actuals. Use this instead of web search for calendar facts.
+
+    Args:
+        from_date: Start date in YYYY-MM-DD format (inclusive).
+        to_date: End date in YYYY-MM-DD format (inclusive).
+        limit: Maximum rows to return (default 100, hard-capped at 250).
+
+    Returns:
+        Earnings-calendar records with symbol, date, EPS/revenue
+        estimate/actual, and a last-updated timestamp.
+    """
+    try:
+        result = await get_earnings_calendar(from_date, to_date, limit)
+        return truncate_response(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "events_news_get_earnings_calendar_tool",
+                "from_date": from_date,
+                "to_date": to_date,
                 "limit": limit,
             },
         )

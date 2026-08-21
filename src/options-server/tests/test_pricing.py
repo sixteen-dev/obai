@@ -4,7 +4,13 @@ import math
 
 import pytest
 
-from src.engine.pricing import breakeven_at_expiry, bs_greeks, bs_price, implied_vol
+from src.engine.pricing import (
+    GREEK_UNITS,
+    breakeven_at_expiry,
+    bs_greeks,
+    bs_price,
+    implied_vol,
+)
 
 
 class TestPutCallParity:
@@ -69,6 +75,31 @@ class TestTheta:
     def test_theta_negative_for_long_call(self) -> None:
         greeks = bs_greeks(100.0, 100.0, 1.0, 0.05, 0.20, "call")
         assert greeks["theta"] < 0
+
+    def test_theta_is_annualized_not_per_day(self) -> None:
+        """Theta is dPrice/dt with t in YEARS, so it is 365x a daily decay.
+
+        Nothing in the payload said so, and the specialist reported the raw
+        value as USD per calendar day. Differentiating the price against
+        time in years pins the convention against that reading.
+        """
+        spot, strike, time, rate, sigma, div = 100.0, 100.0, 60.0 / 365.0, 0.04, 0.30, 0.03
+        theta = bs_greeks(spot, strike, time, rate, sigma, "call", div)["theta"]
+
+        step = 1e-6
+        decay_per_year = (
+            bs_price(spot, strike, time - step, rate, sigma, "call", div)
+            - bs_price(spot, strike, time, rate, sigma, "call", div)
+        ) / step
+
+        assert theta == pytest.approx(decay_per_year, rel=1e-3)
+
+    def test_greek_units_cover_every_returned_greek(self) -> None:
+        """A Greek without a declared unit is one the caller has to guess."""
+        greeks = bs_greeks(100.0, 100.0, 0.5, 0.04, 0.30, "call", 0.03)
+
+        assert set(GREEK_UNITS) == set(greeks)
+        assert "per year" in GREEK_UNITS["theta"]
 
     def test_theta_negative_for_long_put(self) -> None:
         # For ATM puts, theta is generally negative (time decay)
@@ -149,9 +180,7 @@ class TestImpliedVol:
         sigma = 0.25
         spot, strike, time, rate, q = 100.0, 100.0, 0.5, 0.04, 0.02
         price = bs_price(spot, strike, time, rate, sigma, "call", dividend_yield=q)
-        recovered = implied_vol(
-            price, spot, strike, time, rate, "call", dividend_yield=q
-        )
+        recovered = implied_vol(price, spot, strike, time, rate, "call", dividend_yield=q)
         assert recovered == pytest.approx(sigma, abs=1e-4)
 
 

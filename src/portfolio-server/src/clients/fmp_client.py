@@ -18,6 +18,33 @@ FALLBACK_INFLATION = Decimal("0.025")  # 2.5%
 
 logger = get_logger(__name__)
 
+# FMP's dividend-adjusted EOD endpoint returns adjusted OHLC under adj-prefixed
+# keys; downstream risk math reads the canonical open/high/low/close keys.
+_ADJUSTED_FIELD_MAP = {
+    "adjOpen": "open",
+    "adjHigh": "high",
+    "adjLow": "low",
+    "adjClose": "close",
+}
+
+
+def _normalize_adjusted_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Fold FMP dividend-adjusted OHLC fields onto the canonical OHLCV keys.
+
+    Args:
+        row: One price row from the dividend-adjusted daily endpoint.
+
+    Returns:
+        Row with adjOpen/adjHigh/adjLow/adjClose moved onto open/high/low/close.
+        Rows already in canonical shape are returned unchanged.
+
+    """
+    normalized = dict(row)
+    for adj_key, canonical_key in _ADJUSTED_FIELD_MAP.items():
+        if adj_key in normalized:
+            normalized[canonical_key] = normalized.pop(adj_key)
+    return normalized
+
 
 @dataclass
 class ETFHolding:
@@ -533,7 +560,12 @@ class FMPClient:
         from_date: str,
         to_date: str,
     ) -> list[dict[str, Any]]:
-        """Get historical daily prices for a symbol.
+        """Get historical daily prices for a symbol (split- and dividend-adjusted).
+
+        Uses FMP's dividend-adjusted EOD endpoint so closes are on a total-return
+        basis (reinvested dividends), folding the adjusted OHLC
+        (adjOpen/adjHigh/adjLow/adjClose) onto the canonical open/high/low/close
+        keys so downstream risk math is unchanged.
 
         Args:
             symbol: Ticker symbol.
@@ -549,16 +581,17 @@ class FMPClient:
 
         """
         data = await self._get(
-            "historical-price-eod/full",
+            "historical-price-eod/dividend-adjusted",
             {"symbol": symbol, "from": from_date, "to": to_date},
         )
 
         if not data or not isinstance(data, list):
             return []
 
+        normalized = [_normalize_adjusted_row(row) for row in data]
         # FMP returns newest first; sort ascending by date
-        data.sort(key=lambda d: d.get("date", ""))
-        return cast(list[dict[str, Any]], data)
+        normalized.sort(key=lambda d: d.get("date", ""))
+        return normalized
 
     async def get_historical_prices_multi(
         self,

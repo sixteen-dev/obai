@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+from core_agents.hub_settings import HubSettingsStore
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,12 @@ logger = logging.getLogger(__name__)
 # Reasoning effort and output verbosity tiers used by ModelSettings on
 # every agent. Two tiers (orchestrator + specialist) live as fields on
 # AgentConfig below — same pattern as the model name fields.
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+#
+# The effort tiers are the set the gpt-5.6 API actually accepts. `minimal`
+# is deliberately absent: it is a valid value in the OpenAI SDK's own type
+# but every gpt-5.6 model rejects it at request time, so accepting it here
+# would only trade a config-time error for a mid-query one.
+ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 Verbosity = Literal["low", "medium", "high"]
 
 
@@ -80,6 +90,45 @@ def reset_cache_config() -> None:
 # =============================================================================
 
 
+class _HubSettingsSource(PydanticBaseSettingsSource):
+    """Settings source backed by ``~/.obai/settings.json``.
+
+    Supplies the hub model and reasoning effort that the web UI and
+    ``obai config`` write. Ranked below the environment in
+    :meth:`AgentConfig.settings_customise_sources`, so an explicit
+    ``ORCHESTRATOR_MODEL`` still wins — the eval A/B comparison and the E2E
+    regression gate both pin the hub model that way.
+
+    The file supplies only these two fields; every other setting continues
+    to resolve from the environment alone.
+    """
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        """Unused — :meth:`__call__` supplies the whole mapping at once.
+
+        Args:
+            field: Field being resolved.
+            field_name: Name of the field being resolved.
+
+        Raises:
+            NotImplementedError: Always; this source is mapping-based.
+        """
+        msg = "_HubSettingsSource resolves all fields in __call__"
+        raise NotImplementedError(msg)
+
+    def __call__(self) -> dict[str, Any]:
+        """Read the hub settings file.
+
+        Returns:
+            Mapping of hub field names to their stored values.
+        """
+        settings = HubSettingsStore().load()
+        return {
+            "orchestrator_model": settings.hub_model,
+            "orchestrator_reasoning_effort": settings.hub_reasoning_effort,
+        }
+
+
 class AgentConfig(BaseSettings):
     """Configuration for OBaI agents.
 
@@ -102,6 +151,42 @@ class AgentConfig(BaseSettings):
         extra="ignore",
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Insert the hub settings file between the environment and defaults.
+
+        Resolution order for the hub model and reasoning effort becomes
+        init kwargs > env > ``~/.obai/settings.json`` > shipped default.
+        Keeping the file below the environment means a stale export in
+        someone's shell silently outranks what they picked in the web UI —
+        surfaced in the settings modal — but it is what lets the eval A/B
+        comparison and the E2E gate pin a model by injecting env.
+
+        Args:
+            settings_cls: The settings class being built.
+            init_settings: Constructor-kwargs source.
+            env_settings: Environment-variable source.
+            dotenv_settings: Dotenv-file source.
+            file_secret_settings: Secrets-directory source.
+
+        Returns:
+            Sources in priority order, highest first.
+        """
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _HubSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
     # OpenAI. Default to empty so config-only commands (e.g. `obai status`,
     # which just probes MCP server connectivity) can construct the config
     # without an OpenAI key configured. Agent creation paths still depend
@@ -114,11 +199,11 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.6-sol",
+        default="gpt-5.6-terra",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-5.6-luna",
         description="Model for specialist agents (can reason about tool selection)",
     )
     market_data_model: str | None = Field(
@@ -146,7 +231,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -154,15 +239,15 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
     crypto_model: str | None = Field(
-        default="gpt-5.1",
+        default="gpt-5.6-terra",
         description="Override model for crypto agent (uses specialist_model if None)",
     )
     guardrail_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-5.6-luna",
         description=(
             "Model for input guardrail validation. Pick a small, cheap model — "
             "guardrails run on every query."
@@ -170,10 +255,13 @@ class AgentConfig(BaseSettings):
     )
 
     # Reasoning effort and output verbosity. Two tiers, same shape as the
-    # model fields above. Defaults live in code; not exposed via .env.
+    # model fields above. Every field here is env-overridable by its
+    # upper-cased name, like the rest of AgentConfig; the hub pair is
+    # additionally settable from the web UI and `obai config`, which write
+    # ~/.obai/settings.json (see _HubSettingsSource).
     orchestrator_reasoning_effort: ReasoningEffort = Field(
-        default="medium",
-        description="Hub reasoning effort: none|minimal|low|medium|high|xhigh",
+        default="max",
+        description="Hub reasoning effort: none|low|medium|high|xhigh|max",
     )
     orchestrator_verbosity: Verbosity = Field(
         default="low",
@@ -181,28 +269,50 @@ class AgentConfig(BaseSettings):
     )
     specialist_reasoning_effort: ReasoningEffort = Field(
         default="medium",
-        description="Specialist reasoning effort: none|minimal|low|medium|high|xhigh",
+        description="Specialist reasoning effort: none|low|medium|high|xhigh|max",
     )
     specialist_verbosity: Verbosity = Field(
         default="low",
         description="Specialist output verbosity: low|medium|high",
     )
 
+    # Server-side context compaction for the hub. The hub is the only agent
+    # that carries a Session, so it is the only one whose context grows
+    # across turns; specialists are re-primed per call. At the threshold the
+    # Responses API compacts the rendered context in place, which preserves
+    # what the hub learned earlier in the session instead of truncating it
+    # off the front.
+    #
+    # Expressed as a fraction of the hub model's context window rather than a
+    # token count. The whole gpt-5.6 line is ~1.05M, but ORCHESTRATOR_MODEL is
+    # env-overridable and windows across candidates span an order of magnitude
+    # (gpt-5.1 is 400k), so a fixed count would compact far too eagerly on the
+    # larger ones. 0.9 matches the SDK's own DynamicCompactionPolicy default.
+    # Set to None to disable.
+    orchestrator_compact_ratio: float | None = Field(
+        default=0.9,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of the hub model's context window at which to compact; None disables",
+    )
+
     # Per-agent reasoning effort overrides. Mirror the per-agent model fields
     # above: an override wins, else the specialist tier applies. Strategy,
-    # crypto, and prediction markets default to a higher tier because their
-    # analysis (backtest iteration, executable pricing, setup evaluation)
-    # benefits from stronger reasoning.
+    # crypto, and prediction markets previously ran a tier above the rest;
+    # they now sit at medium, the balanced starting point, alongside every
+    # other agent. The fields stay because these three carry the heaviest
+    # analysis (backtest iteration, executable pricing, setup evaluation) and
+    # are therefore the first knobs to turn back up if answer quality slips.
     strategy_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Override reasoning effort for strategy agent (uses specialist tier if None)",
     )
     crypto_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Override reasoning effort for crypto agent (uses specialist tier if None)",
     )
     prediction_markets_reasoning_effort: ReasoningEffort | None = Field(
-        default="high",
+        default="medium",
         description="Reasoning effort for prediction markets agent (uses specialist tier if None)",
     )
 
@@ -448,11 +558,11 @@ def reset_config() -> None:
             reset_config()
 
             # Set custom env vars
-            os.environ["SPECIALIST_MODEL"] = "gpt-4-turbo"
+            os.environ["SPECIALIST_MODEL"] = "gpt-5.6-terra"
 
             # Get fresh config
             config = get_config()
-            assert config.specialist_model == "gpt-4-turbo"
+            assert config.specialist_model == "gpt-5.6-terra"
 
             # Reset after test
             reset_config()

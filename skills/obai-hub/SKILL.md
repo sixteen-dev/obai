@@ -97,8 +97,14 @@ Boundary calls that are easy to get wrong:
   first.
 - Strategy work needs a concrete ticker universe and a strategy objective
   before design starts; resolve descriptive universes ("large-cap tech")
-  through the screening server. Defaults handle everything else — see
-  `obai-strategy`.
+  through the screening server. Once both are present, route without
+  clarifying — the strategy skill's defaults cover parameters, indicator
+  lengths, windows, rules, timeframe, and data; do not ask the user for them.
+  See `obai-strategy`.
+- A parseable portfolio (weights plus holdings) routes to `obai-portfolio`
+  even when one holding looks mistyped or unresolvable — the server computes
+  on the priceable holdings and flags the unpriceable ones and coverage gaps.
+  Do not block on the bad ticker with a clarification.
 - Prediction-market follow-ups must reuse tool-provided identifiers (`slug`
   preferred, then `market_url`, then exact question). Never construct or
   paraphrase a slug or URL.
@@ -148,7 +154,8 @@ does not support.
 Strategy, prediction-market, and crypto responses are terminal artifacts:
 their skills define strict output contracts (verdicts, strategy JSON, job
 IDs, risk notes, memo formats). Deliver those contracts intact — do not
-compress them into the generic synthesis structure above.
+compress them into the generic synthesis structure above, and do not prefix
+them with narration about your own routing, tool errors, or retries.
 
 ## Error handling
 

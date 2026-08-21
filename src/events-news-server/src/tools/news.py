@@ -44,7 +44,7 @@ async def search_market_news(
             data = await client.search_market_news(
                 query=query,
                 ticker=ticker,
-                topic="finance",
+                topic="news",
                 time_range=time_range,
                 max_results=limit,
             )

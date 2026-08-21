@@ -47,10 +47,12 @@ _PRICE_MAGNITUDE_PATTERN = re.compile(
 _PRICE_PATTERN = re.compile(r"(-?)\$\s*(\d{1,7}(?:,\d{3})*(?:\.\d{1,4})?)")
 _PERCENT_PATTERN = re.compile(r"(-?\d{1,5}(?:\.\d{1,4})?)\s*%")
 _GENERAL_NUMBER_PATTERN = re.compile(
-    r"(?<![\dA-Za-z])(\d{1,15}(?:,\d{3})*(?:\.\d{1,6})?)(?![\dA-Za-z%$])(?!\.\d)"
+    r"(?<![\dA-Za-z])([+-]?(?:\d{1,15}(?:,\d{3})*(?:\.\d{1,6})?|\.\d{1,6})"
+    r"(?:[eE][+-]?\d{1,3})?)"
+    r"(?![\dA-Za-z%$])(?!\.\d)"
 )
 # Magnitude suffix pattern: "56.29M", "1.2B", "250K", "1.5T"
-_MAGNITUDE_PATTERN = re.compile(r"(\d{1,6}(?:\.\d{1,4})?)\s*([KMBT])\b", re.IGNORECASE)
+_MAGNITUDE_PATTERN = re.compile(r"([+-]?\d{1,6}(?:\.\d{1,4})?)\s*([KMBT])\b", re.IGNORECASE)
 _SUFFIX_MULTIPLIER = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
 # Patterns to blank out before number extraction (dates, timestamps, IDs)
 _DATE_TIMESTAMP_PATTERN = re.compile(
@@ -79,6 +81,8 @@ class ExtractedNumber(BaseModel):
     context: str
     is_percentage: bool = False
     is_price: bool = False
+    semantic_label: str | None = None
+    position: int | None = None
 
 
 class NumericMatchResult(BaseModel):
@@ -89,6 +93,7 @@ class NumericMatchResult(BaseModel):
     matched_value: float | None = None
     source_tool: str | None = None
     tolerance_used: float | None = None
+    field_constrained: bool = False
 
 
 class NumericAccuracyResult(BaseModel):
@@ -238,6 +243,224 @@ def _extract_context(text: str, start: int, end: int, window: int = 20) -> str:
     return text[ctx_start:ctx_end]
 
 
+_NUMERIC_LABEL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "maximum_loss",
+        re.compile(
+            r"\b(?:maximum|max)[_ -]?loss\b|\bloss\s+is\s+(?:capped|limited)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "maximum_profit",
+        re.compile(r"\b(?:maximum|max)[_ -]?(?:profit|gain)\b", re.IGNORECASE),
+    ),
+    ("breakeven", re.compile(r"\bbreak[_ -]?even\b", re.IGNORECASE)),
+    (
+        "strike",
+        re.compile(r"\b(?:strike(?:[_ -]?price)?|exercise[_ -]?price)\b", re.IGNORECASE),
+    ),
+    (
+        "spot",
+        re.compile(r"\b(?:spot(?:[_ -]?price)?|underlying(?:[_ -]?price)?)\b", re.IGNORECASE),
+    ),
+    (
+        "price",
+        re.compile(
+            r"\b(?:price|last|close|closed|closing)[_ -]?(?:price)?\b|"
+            r"\b(?:is|trades?|trading)\s+at\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("bid", re.compile(r"\bbid(?:[_ -]?price)?\b", re.IGNORECASE)),
+    ("ask", re.compile(r"\bask(?:[_ -]?price)?\b", re.IGNORECASE)),
+    ("spread", re.compile(r"\bspread\b", re.IGNORECASE)),
+    ("premium", re.compile(r"\b(?:premium|debit|cost)\b", re.IGNORECASE)),
+    ("credit", re.compile(r"\bcredit\b", re.IGNORECASE)),
+    ("delta", re.compile(r"\bdelta\b", re.IGNORECASE)),
+    ("theta", re.compile(r"\btheta\b", re.IGNORECASE)),
+    ("gamma", re.compile(r"\bgamma\b", re.IGNORECASE)),
+    ("vega", re.compile(r"\bvega\b", re.IGNORECASE)),
+    (
+        "implied_volatility",
+        re.compile(r"\b(?:implied[_ -]?volatility|IV)\b", re.IGNORECASE),
+    ),
+    ("pe_ratio", re.compile(r"\b(?:P\s*/\s*E|PE)[_ -]?(?:ratio)?\b", re.IGNORECASE)),
+    ("market_cap", re.compile(r"\bmarket[_ -]?cap(?:italization)?\b", re.IGNORECASE)),
+    ("revenue", re.compile(r"\brevenue\b", re.IGNORECASE)),
+    ("yield", re.compile(r"\byield\b", re.IGNORECASE)),
+    ("rate", re.compile(r"\brate\b", re.IGNORECASE)),
+    ("volume", re.compile(r"\bvolume\b", re.IGNORECASE)),
+    ("size", re.compile(r"\bsize\b", re.IGNORECASE)),
+    (
+        "return",
+        re.compile(
+            r"\b(?:return|change|performance|up|down|rose|fell|gained|lost)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _numeric_clause_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Return local prose/table-cell bounds without splitting decimal points."""
+
+    def is_boundary(index: int) -> bool:
+        char = text[index]
+        if char in ",;\n|!?":
+            return True
+        if char != ".":
+            return False
+        return not (
+            index > 0
+            and index + 1 < len(text)
+            and text[index - 1].isdigit()
+            and text[index + 1].isdigit()
+        )
+
+    left = start
+    while left > 0 and not is_boundary(left - 1):
+        left -= 1
+    right = end
+    while right < len(text) and not is_boundary(right):
+        right += 1
+    return left, right
+
+
+def _infer_response_numeric_label(text: str, start: int, end: int) -> str | None:
+    """Infer a financial field label inside the number's own clause/cell."""
+    clause_start, clause_end = _numeric_clause_bounds(text, start, end)
+    prefix = text[clause_start:start]
+    candidates: list[tuple[int, int, int, int, str]] = []
+    for priority, (label, pattern) in enumerate(_NUMERIC_LABEL_PATTERNS):
+        for match in pattern.finditer(prefix):
+            tail = prefix[match.end() :]
+            distance = len(tail)
+            # "Price is $100" is a stronger binding than a closer label
+            # following the value ("$100 up 2%"). A bare label immediately
+            # before a value is equally strong. Longer unbound prefixes may be
+            # postfix labels for the preceding value ("$100 spot and $105 strike").
+            strong_prefix = distance <= 2 or re.fullmatch(
+                r"\s*(?:is|was|are|were|at|of|=|:)\s*", tail, re.IGNORECASE
+            )
+            candidates.append((0 if strong_prefix else 2, distance, 0, priority, label))
+    suffix = text[end:clause_end]
+    for priority, (label, pattern) in enumerate(_NUMERIC_LABEL_PATTERNS):
+        for match in pattern.finditer(suffix):
+            # A later metric's label must not be borrowed by this value.
+            if re.search(r"[+-]?\$?\s*\d", suffix[: match.start()]):
+                continue
+            # In "$100 up 2%", the directional word binds the following
+            # percentage, not the preceding quote.
+            if label == "return" and re.search(r"[+-]?\$?\s*\d", suffix[match.end() :]):
+                continue
+            candidates.append((1, match.start(), 1, priority, label))
+    return min(candidates)[4] if candidates else None
+
+
+_PAIRED_LABELS = (
+    ("spot", "strike"),
+    ("bid", "ask"),
+    ("maximum_profit", "maximum_loss"),
+)
+_PAIR_NUMBER = r"(?:[A-Z]{3}\s*)?[+-]?\$?\s*\d{1,15}(?:,\d{3})*(?:\.\d{1,6})?"
+
+
+def _apply_paired_numeric_labels(text: str, results: list[ExtractedNumber]) -> None:
+    """Bind ordered label pairs to ordered values in compact financial prose."""
+
+    def assign_groups(
+        match: re.Match[str], groups: tuple[tuple[str, str], tuple[str, str]]
+    ) -> None:
+        assigned_positions: set[int] = set()
+        positioned_results: list[tuple[ExtractedNumber, int]] = [
+            (item, item.position) for item in results if item.position is not None
+        ]
+        for group_name, label in groups:
+            group_start, group_end = match.span(group_name)
+            within_group = [
+                (item, position)
+                for item, position in positioned_results
+                if position not in assigned_positions and group_start <= position < group_end
+            ]
+            nearest = min(
+                within_group,
+                key=lambda candidate: abs(candidate[1] - group_start),
+                default=None,
+            )
+            if nearest is None:
+                nearest = min(
+                    (
+                        (item, position)
+                        for item, position in positioned_results
+                        if position not in assigned_positions
+                    ),
+                    key=lambda candidate: abs(candidate[1] - group_start),
+                    default=None,
+                )
+                if nearest is not None and abs(nearest[1] - group_start) > 6:
+                    nearest = None
+            if nearest is not None:
+                nearest_item, nearest_position = nearest
+                nearest_item.semantic_label = label
+                assigned_positions.add(nearest_position)
+
+    ordered_pairs = [ordered for pair in _PAIRED_LABELS for ordered in (pair, pair[::-1])]
+    for first_label, second_label in ordered_pairs:
+        label_patterns = {
+            label: next(pattern for name, pattern in _NUMERIC_LABEL_PATTERNS if name == label)
+            for label in (first_label, second_label)
+        }
+        first = label_patterns[first_label].pattern
+        second = label_patterns[second_label].pattern
+        if (first_label, second_label) == ("maximum_profit", "maximum_loss"):
+            second = rf"(?:{second}|\bloss\b)"
+        elif (first_label, second_label) == ("maximum_loss", "maximum_profit"):
+            second = rf"(?:{second}|\b(?:profit|gain)\b)"
+        pattern = re.compile(
+            rf"(?:{first})\s*(?:and|/|&|,)\s*(?:{second})\s*"
+            rf"(?:,?\s*respectively\s*,?)?\s*"
+            rf"(?:are|were|is|=|:)?\s*(?:approximately|approx\.?|about|roughly)?\s*"
+            rf"(?:\(\s*)?"
+            rf"(?P<first>{_PAIR_NUMBER})\s*(?:and|/|&|,)\s*"
+            rf"(?P<second>{_PAIR_NUMBER})",
+            re.IGNORECASE,
+        )
+        for match in pattern.finditer(text):
+            assign_groups(
+                match,
+                (("first", first_label), ("second", second_label)),
+            )
+
+        table_pattern = re.compile(
+            rf"\|\s*(?:{first})\s*\|\s*(?:{second})\s*\|\s*\r?\n"
+            rf"(?:\|\s*:?-{{3,}}:?\s*\|\s*:?-{{3,}}:?\s*\|\s*\r?\n)?"
+            rf"\|\s*(?P<first>{_PAIR_NUMBER})\s*\|\s*"
+            rf"(?P<second>{_PAIR_NUMBER})\s*\|",
+            re.IGNORECASE,
+        )
+        for match in table_pattern.finditer(text):
+            assign_groups(
+                match,
+                (("first", first_label), ("second", second_label)),
+            )
+
+
+def _is_accounting_negative(text: str, start: int, end: int) -> bool:
+    """Return True when a currency value is enclosed in accounting parentheses."""
+    return text[:start].rstrip().endswith("(") and text[end:].lstrip().startswith(")")
+
+
+def _infer_source_numeric_label(path: str) -> str | None:
+    without_indexes = re.sub(r"\[\d+\]", "", path)
+    leaf = without_indexes.rsplit(".", 1)[-1]
+    normalized = re.sub(r"[^a-z0-9]+", "_", leaf.lower())
+    for label, pattern in _NUMERIC_LABEL_PATTERNS:
+        if pattern.search(normalized.replace("_", " ")):
+            return label
+    return None
+
+
 def _extract_numbers(text: str) -> list[ExtractedNumber]:
     """Extract all numbers from response text with context.
 
@@ -247,6 +470,8 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
     Returns:
         List of extracted numbers with metadata.
     """
+    # Normalize typographic minus signs without changing offsets.
+    text = text.translate(str.maketrans("−–﹣－", "----"))
     results: list[ExtractedNumber] = []
     seen_positions: set[int] = set()
 
@@ -259,7 +484,11 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
     for match in _PRICE_MAGNITUDE_PATTERN.finditer(text):
         pos = match.start()
         seen_positions.add(pos)
-        sign = -1.0 if match.group(1) == "-" else 1.0
+        sign = (
+            -1.0
+            if match.group(1) == "-" or _is_accounting_negative(text, pos, match.end())
+            else 1.0
+        )
         base = float(match.group(2).replace(",", ""))
         multiplier = _SUFFIX_MULTIPLIER[match.group(3).upper()]
         results.append(
@@ -267,6 +496,8 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
                 value=sign * base * multiplier,
                 raw_text=match.group(0),
                 context=_extract_context(text, pos, match.end()),
+                semantic_label=_infer_response_numeric_label(text, pos, match.end()),
+                position=pos,
             )
         )
 
@@ -276,13 +507,19 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
         if any(abs(pos - s) < 5 for s in seen_positions):
             continue
         seen_positions.add(pos)
-        sign = -1.0 if match.group(1) == "-" else 1.0
+        sign = (
+            -1.0
+            if match.group(1) == "-" or _is_accounting_negative(text, pos, match.end())
+            else 1.0
+        )
         results.append(
             ExtractedNumber(
                 value=sign * float(match.group(2).replace(",", "")),
                 raw_text=match.group(0),
                 context=_extract_context(text, pos, match.end()),
                 is_price=True,
+                semantic_label=_infer_response_numeric_label(text, pos, match.end()),
+                position=pos,
             )
         )
 
@@ -298,6 +535,8 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
                 raw_text=match.group(0),
                 context=_extract_context(text, pos, match.end()),
                 is_percentage=True,
+                semantic_label=_infer_response_numeric_label(text, pos, match.end()),
+                position=pos,
             )
         )
 
@@ -314,6 +553,8 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
                 value=base * multiplier,
                 raw_text=match.group(0),
                 context=_extract_context(text, pos, match.end()),
+                semantic_label=_infer_response_numeric_label(text, pos, match.end()),
+                position=pos,
             )
         )
 
@@ -328,9 +569,12 @@ def _extract_numbers(text: str) -> list[ExtractedNumber]:
                 value=float(match.group(1).replace(",", "")),
                 raw_text=match.group(0),
                 context=_extract_context(text, pos, match.end()),
+                semantic_label=_infer_response_numeric_label(text, pos, match.end()),
+                position=pos,
             )
         )
 
+    _apply_paired_numeric_labels(text, results)
     return results
 
 
@@ -350,11 +594,11 @@ def _extract_numbers_from_tool_responses(
     """
     numbers: list[tuple[str, float]] = []
 
-    def _recurse(obj: Any, tool_name: str) -> None:
+    def _recurse(obj: Any, source_path: str) -> None:
         if isinstance(obj, bool):
             return
         if isinstance(obj, (int, float)):
-            numbers.append((tool_name, float(obj)))
+            numbers.append((source_path, float(obj)))
         elif isinstance(obj, str):
             cleaned = obj.replace(",", "").replace("$", "").replace("%", "")
             # Handle financial magnitude suffixes (K, M, B, T)
@@ -362,22 +606,22 @@ def _extract_numbers_from_tool_responses(
             if upper and upper[-1] in _SUFFIX_MULTIPLIER:
                 with contextlib.suppress(ValueError):
                     val = float(upper[:-1]) * _SUFFIX_MULTIPLIER[upper[-1]]
-                    numbers.append((tool_name, val))
+                    numbers.append((source_path, val))
                     return
             try:
-                numbers.append((tool_name, float(cleaned)))
+                numbers.append((source_path, float(cleaned)))
             except ValueError:
                 # String contains mixed text+numbers (e.g. agent
                 # formatted responses like "AAPL — $255.78").
                 # Fall back to regex extraction.
                 for extracted in _extract_numbers(obj):
-                    numbers.append((tool_name, extracted.value))
+                    numbers.append((source_path, extracted.value))
         elif isinstance(obj, dict):
-            for v in obj.values():
-                _recurse(v, tool_name)
+            for key, value in obj.items():
+                _recurse(value, f"{source_path}.{key}")
         elif isinstance(obj, list):
-            for item in obj:
-                _recurse(item, tool_name)
+            for index, item in enumerate(obj):
+                _recurse(item, f"{source_path}[{index}]")
 
     for tc in tool_calls:
         tool_name = tc.get("tool_name", "unknown")
@@ -388,15 +632,65 @@ def _extract_numbers_from_tool_responses(
     return numbers
 
 
+def _extract_semantic_fields_from_tool_responses(
+    tool_calls: list[dict[str, Any]],
+) -> dict[str, list[Any]]:
+    """Collect labeled scalar tool fields, including non-numeric constraints."""
+    fields: dict[str, list[Any]] = {}
+
+    def _recurse(obj: Any, path: str) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                child_path = f"{path}.{key}"
+                label = _infer_source_numeric_label(child_path)
+                if label is not None and not isinstance(value, (dict, list)):
+                    fields.setdefault(label, []).append(value)
+                _recurse(value, child_path)
+        elif isinstance(obj, list):
+            for index, value in enumerate(obj):
+                _recurse(value, f"{path}[{index}]")
+
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        response = tool_call.get("response")
+        if response is not None:
+            _recurse(response, str(tool_call.get("tool_name", "unknown")))
+    return fields
+
+
+_NEGATIVE_MAGNITUDE_CONTEXT_RE = re.compile(
+    r"\b(?:down|fell|fallen|declin(?:e|ed)|decreas(?:e|ed)|dropp?ed|lower|lost|loss)\b",
+    re.IGNORECASE,
+)
+
+
+def _allows_negative_magnitude_match(extracted: ExtractedNumber, tool_value: float) -> bool:
+    """Allow positive magnitudes only when prose explicitly supplies the minus sign."""
+    return (
+        extracted.value >= 0
+        and tool_value < 0
+        and (
+            extracted.semantic_label == "maximum_loss"
+            or (
+                extracted.semantic_label == "return"
+                and _NEGATIVE_MAGNITUDE_CONTEXT_RE.search(extracted.context) is not None
+            )
+        )
+    )
+
+
 def _match_number(
     extracted: ExtractedNumber,
     tool_numbers: list[tuple[str, float]],
+    semantic_fields: dict[str, list[Any]] | None = None,
 ) -> NumericMatchResult:
     """Match an extracted number against tool response numbers.
 
     Args:
         extracted: A number from the agent's response.
         tool_numbers: All numbers from tool responses.
+        semantic_fields: Structured fields used to prevent cross-metric value swaps.
 
     Returns:
         Match result with source tool and tolerance used.
@@ -408,7 +702,17 @@ def _match_number(
     else:
         tolerance = _DEFAULT_TOLERANCE
 
-    for tool_name, tool_value in tool_numbers:
+    candidates = tool_numbers
+    field_constrained = False
+    if extracted.semantic_label and semantic_fields and extracted.semantic_label in semantic_fields:
+        field_constrained = True
+        candidates = [
+            (source, value)
+            for source, value in tool_numbers
+            if _infer_source_numeric_label(source) == extracted.semantic_label
+        ]
+
+    for tool_name, tool_value in candidates:
         if abs(extracted.value - tool_value) <= tolerance:
             return NumericMatchResult(
                 extracted=extracted,
@@ -416,6 +720,7 @@ def _match_number(
                 matched_value=tool_value,
                 source_tool=tool_name,
                 tolerance_used=tolerance,
+                field_constrained=field_constrained,
             )
         # Check percentage conversion (2.3 in response vs 0.023 in API)
         if extracted.is_percentage and abs(extracted.value - tool_value * 100) <= tolerance:
@@ -425,16 +730,25 @@ def _match_number(
                 matched_value=tool_value,
                 source_tool=tool_name,
                 tolerance_used=tolerance,
+                field_constrained=field_constrained,
             )
-        # Sign-insensitive match: agent may say "down $5.95" (positive
-        # extraction) while tool reports change as -5.95.
-        if abs(abs(extracted.value) - abs(tool_value)) <= tolerance:
+        # Directional prose can legitimately report a negative source as a
+        # positive magnitude ("down $5.95" or "maximum loss $200").  Do not
+        # apply this generally: "change is +$5.95" must not match -$5.95.
+        negative_magnitude = _allows_negative_magnitude_match(extracted, tool_value)
+        percentage_magnitude_match = (
+            extracted.is_percentage
+            and abs(abs(extracted.value) - abs(tool_value * 100)) <= tolerance
+        )
+        direct_magnitude_match = abs(abs(extracted.value) - abs(tool_value)) <= tolerance
+        if negative_magnitude and (percentage_magnitude_match or direct_magnitude_match):
             return NumericMatchResult(
                 extracted=extracted,
                 matched=True,
                 matched_value=tool_value,
                 source_tool=tool_name,
                 tolerance_used=tolerance,
+                field_constrained=field_constrained,
             )
         # Relative tolerance for large numbers (volumes, market caps)
         # where magnitude suffixes cause rounding (56.29M vs 56,290,673).
@@ -450,12 +764,14 @@ def _match_number(
                     matched_value=tool_value,
                     source_tool=tool_name,
                     tolerance_used=_LARGE_NUMBER_RELATIVE_TOLERANCE,
+                    field_constrained=field_constrained,
                 )
 
     return NumericMatchResult(
         extracted=extracted,
         matched=False,
         tolerance_used=tolerance,
+        field_constrained=field_constrained,
     )
 
 
@@ -474,6 +790,7 @@ def _score_numeric(
     """
     extracted = _extract_numbers(response)
     tool_numbers = _extract_numbers_from_tool_responses(tool_calls)
+    semantic_fields = _extract_semantic_fields_from_tool_responses(tool_calls)
 
     logger.debug(
         "Numeric check: %d numbers from response, %d from tools",
@@ -500,7 +817,7 @@ def _score_numeric(
             details=[],
         )
 
-    details = [_match_number(e, tool_numbers) for e in extracted]
+    details = [_match_number(e, tool_numbers, semantic_fields) for e in extracted]
     matched = sum(1 for d in details if d.matched)
 
     return NumericAccuracyResult(
@@ -789,6 +1106,12 @@ class FaithfulnessScorer:
         # Phase 1: Deterministic numeric check
         numeric_result = _score_numeric(response, numeric_ground_truth)
         numeric_pass = numeric_result.accuracy >= self.numeric_threshold
+        numeric_critical_conflicts = sum(
+            1
+            for detail in numeric_result.details
+            if detail.field_constrained and not detail.matched
+        )
+        numeric_critical_pass = numeric_critical_conflicts == 0
 
         result: dict[str, Any] = {
             "numeric_accuracy": numeric_result.accuracy,
@@ -796,6 +1119,8 @@ class FaithfulnessScorer:
             "numeric_matched": numeric_result.matched_numbers,
             "numeric_unmatched": numeric_result.unmatched_numbers,
             "numeric_pass": numeric_pass,
+            "numeric_critical_pass": numeric_critical_pass,
+            "numeric_critical_conflicts": numeric_critical_conflicts,
             "numeric_details": [d.model_dump() for d in numeric_result.details if not d.matched],
         }
 
@@ -825,7 +1150,11 @@ class FaithfulnessScorer:
                 # Use the continuous score for pass/fail — the boolean
                 # `faithful` field can contradict the score (e.g. score=1.0
                 # but faithful=False), so the score is more reliable.
-                result["faithfulness_pass"] = judgment.score >= 0.8
+                # The semantic judge may validate legitimate derived values,
+                # but it cannot override a deterministic contradiction against
+                # the same labeled source field (for example swapped spot and
+                # strike, or a fabricated quote).
+                result["faithfulness_pass"] = judgment.score >= 0.8 and numeric_critical_pass
             else:
                 result["semantic_faithful"] = None
                 result["semantic_score"] = None

@@ -1,6 +1,7 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 190 test cases across 7 active categories (A-E, G, H; F pending).
+# 210 test cases across 8 active categories (A-E, G-I; F pending):
+# 185 default rows and 25 extended-only rows requiring explicit opt-in.
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
 #   prediction markets,
@@ -8,7 +9,9 @@
 #   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
 #
 # Usage:
-#   python -m evaluation evaluate --suite                    # Run all
+#   python -m evaluation evaluate --suite                    # Run 185 default rows
+#   python -m evaluation evaluate --suite --ids A1,B3        # Surgical paid selection
+#   python -m evaluation evaluate --suite --include-extended # Run all 210 (expensive)
 #   python -m evaluation evaluate --suite --category A       # Single-agent only
 #   python -m evaluation evaluate --suite --file custom.yaml # Custom file
 
@@ -21,6 +24,8 @@ test_cases:
     query: "Where is AAPL trading right now?"
     category: A
     query_type: price
+    date_policy: live
+    max_age_seconds: 900
     expected_tools: [market_data_analysis]
     description: Simple price query - single agent
     smoke: true
@@ -29,6 +34,7 @@ test_cases:
     query: "For a quick valuation check, what is Tesla trading at on a P/E basis?"
     category: A
     query_type: fundamentals
+    date_policy: live
     expected_tools: [fundamentals_analysis]
     description: Simple fundamentals query - single agent
     smoke: true
@@ -37,6 +43,7 @@ test_cases:
     query: "Show me today's market movers"
     category: A
     query_type: movers
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Market movers query - single agent
 
@@ -51,22 +58,25 @@ test_cases:
     query: "What are the most important TSLA catalysts from the past week?"
     category: A
     query_type: news
+    date_policy: relative
     expected_tools: [events_news_analysis]
     description: Simple news query - single agent
     smoke: true
 
   - id: A6
-    query: "Show me the front-month AAPL call chain and flag the most liquid strikes."
+    query: "Using the latest AAPL quote, show the standard monthly call expiration 30 to 60 calendar days away and flag the most liquid strikes nearest spot. Include exact contract symbols and quote timestamps."
     category: A
     query_type: options
+    date_policy: live
     expected_tools: [options_analysis]
     description: Simple options query - single agent
     smoke: true
 
   - id: A7
-    query: "Analyze my portfolio: AAPL 40%, QQQ 60%"
+    query: "Analyze my portfolio using the latest available data and a trailing three-year daily return window: AAPL 40%, QQQ 60%. State the valuation as-of date and actual return coverage."
     category: A
     query_type: portfolio
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Portfolio analysis with explicit positions
 
@@ -74,6 +84,7 @@ test_cases:
     query: "Check NVDA's daily RSI and MACD so I can gauge near-term momentum."
     category: A
     query_type: technicals
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Technical indicators query
 
@@ -81,6 +92,7 @@ test_cases:
     query: "Show MSFT 52-week high/low range"
     category: A
     query_type: price_range
+    date_policy: relative
     expected_tools: [market_data_analysis]
     description: 52-week range context
 
@@ -88,6 +100,7 @@ test_cases:
     query: "Show me AAPL dividend history"
     category: A
     query_type: dividends
+    date_policy: relative
     expected_tools: [events_news_analysis]
     description: Dividend history query
 
@@ -95,6 +108,7 @@ test_cases:
     query: "When is AMZN's next earnings date?"
     category: A
     query_type: earnings_calendar
+    date_policy: relative
     expected_tools: [events_news_analysis]
     description: Earnings calendar query
 
@@ -102,13 +116,15 @@ test_cases:
     query: "Show me AAPL 10-K filings"
     category: A
     query_type: sec_filings
+    date_policy: relative
     expected_tools: [fundamentals_analysis]
     description: SEC filings query
 
   - id: A13
-    query: "Break down NVDA revenue by segment"
+    query: "Break down NVDA revenue by segment using the latest completed filing, and state the fiscal period, filing date, and analysis as-of date."
     category: A
     query_type: revenue_segments
+    date_policy: live
     expected_tools: [fundamentals_analysis]
     description: Revenue segmentation query
 
@@ -116,6 +132,7 @@ test_cases:
     query: "Latest insider trades for TSLA"
     category: A
     query_type: insider_trades
+    date_policy: live
     expected_tools: [fundamentals_analysis]
     description: Insider trading activity query
 
@@ -123,14 +140,16 @@ test_cases:
     query: "Show me QQQ holdings"
     category: A
     query_type: etf_holdings
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: ETF holdings lookup
     smoke: true
 
   - id: A16
-    query: "Analyze my portfolio risk: VOO 50%, QQQ 30%, BND 20%"
+    query: "Analyze my portfolio risk using the latest available data and a trailing three-year daily return window: VOO 50%, QQQ 30%, BND 20%. State the valuation as-of date and actual return coverage."
     category: A
     query_type: portfolio_risk
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Portfolio risk analysis without preference mutation
 
@@ -138,13 +157,15 @@ test_cases:
     query: "What's the current 10-year Treasury yield?"
     category: A
     query_type: treasury_rates
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Treasury rates query
 
   - id: A18
-    query: "Screen for U.S. large-cap healthcare names with beta below 1.0."
+    query: "As of the latest completed session, screen for U.S. large-cap healthcare names with beta below 1.0. State the data timestamp and universe coverage."
     category: A
     query_type: screening
+    date_policy: live
     expected_tools: [screener_lookup]
     description: Screening with multiple filters
 
@@ -159,6 +180,7 @@ test_cases:
     query: "List TSLA option expirations"
     category: A
     query_type: options_expirations
+    date_policy: live
     expected_tools: [options_analysis]
     description: Options expirations query
 
@@ -166,6 +188,7 @@ test_cases:
     query: "Show AMD analyst price target consensus and rating split"
     category: A
     query_type: analyst_outlook
+    date_policy: live
     expected_tools: [fundamentals_analysis]
     description: Analyst expectations and recommendations
 
@@ -173,6 +196,7 @@ test_cases:
     query: "Show AMZN free cash flow trend from the latest statements"
     category: A
     query_type: cashflow_trend
+    date_policy: live
     expected_tools: [fundamentals_analysis]
     description: Cash flow quality check
 
@@ -180,6 +204,7 @@ test_cases:
     query: "Is the market open right now and where is SPY trading?"
     category: A
     query_type: market_status_and_price
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Market status plus benchmark quote
 
@@ -187,13 +212,15 @@ test_cases:
     query: "Give me high-impact news on UNH from the last 72 hours"
     category: A
     query_type: high_impact_news
+    date_policy: relative
     expected_tools: [events_news_analysis]
     description: Catalyst-focused news filter
 
   - id: A25
-    query: "List AAPL options with the highest open interest for next expiration"
+    query: "Using a fresh AAPL quote, list the contracts with highest open interest in the standard monthly expiration 30 to 60 calendar days away. Include exact symbols and quote timestamps."
     category: A
     query_type: options_liquidity
+    date_policy: live
     expected_tools: [options_analysis]
     description: Contract liquidity discovery
 
@@ -201,27 +228,31 @@ test_cases:
     query: "What is the current 3-month Treasury yield?"
     category: A
     query_type: short_rate
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Risk-free rate lookup
 
   - id: A27
-    query: "Pull up the AAPL options chain for next month, find the most liquid at-the-money call, and then run a scenario analysis on it — I want to see P&L if the stock moves up 5% or down 5%."
+    query: "Using the latest AAPL quote, choose the most liquid at-the-money call in the standard monthly expiration 30 to 60 calendar days away. Show immediate mark-to-model P&L if spot moves up 5% or down 5% while time, implied volatility, rate and dividend yield stay fixed. Preserve the exact contract, quote timestamp and assumptions."
     category: A
     query_type: options_chain_then_scenario
+    date_policy: live
     expected_tools: [options_analysis]
     description: Chain lookup then scenario analysis — tests analytics tools chained with existing lookup within single agent
 
   - id: A28
-    query: "I'm looking at TSLA options. Get me the current Greeks on the front-month 250 call from the chain, then compare those to what Black-Scholes says the theoretical Greeks should be. I want to see if there's a discrepancy."
+    query: "Using the latest TSLA quote, select the listed at-the-money call in the standard monthly expiration 30 to 60 days away. Compare its provider Greeks with Black-Scholes theoretical Greeks using the same implied volatility, rate, dividend yield and timestamp."
     category: A
     query_type: options_market_vs_theoretical_greeks
+    date_policy: live
     expected_tools: [options_analysis]
     description: Market Greeks from snapshot vs computed BS Greeks — tests both lookup and compute tools in comparison
 
   - id: A29
-    query: "NVDA IV is at 60%. If I sell a strangle — short the 900 put and short the 1000 call, next month expiry — what's my theta income per day and at what prices do I start losing money?"
+    query: "Synthetic fixture: NVDA spot is $950, implied volatility is 60%, the continuously compounded risk-free rate is 4%, and dividend yield is 0%. I sell one $900 put for $18 and one $1,000 call for $20, both expiring exactly 45 calendar days from valuation with multiplier 100. Under Black-Scholes, what is position theta per calendar day, total credit, expiry breakevens and maximum loss?"
     category: A
     query_type: options_strangle_theta_income
+    date_policy: frozen
     expected_tools: [options_analysis]
     description: Short strangle risk profile — theta income, breakevens, max loss should show unlimited on call side
 
@@ -229,6 +260,7 @@ test_cases:
     query: "What are today's top 5 gainers and top 5 losers among S&P 500 stocks?"
     category: A
     query_type: movers_index_scoped
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Index-scoped movers — agent must pass index=sp500 to batch-quote S&P 500 constituents and return top movers
 
@@ -236,6 +268,7 @@ test_cases:
     query: "Show me the biggest Dow Jones losers today."
     category: A
     query_type: movers_index_scoped
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Dow Jones scoped losers — tests index=dowjones with losers mover type
 
@@ -244,24 +277,26 @@ test_cases:
   # ─────────────────────────────────────────────
 
   - id: B1
-    query: "NVDA sold off hard today. What drove the move?"
+    query: "Did NVDA sell off during the most recently completed US session? Quantify the move versus SPY and semiconductors over the same timestamps. Only if the premise is true, identify timestamped catalysts and distinguish evidence from inference."
     category: B
     query_type: price_then_news
-    expected_tools: [market_data_analysis, events_news_analysis]
-    expected_sequence: [market_data_analysis, events_news_analysis]
+    date_policy: relative
+    expected_tools: [market_data_analysis]
     description: Price context then news for explanation
 
   - id: B2
     query: "I am doing a quick single-name review on AAPL. Combine the current price setup with the latest valuation snapshot."
     category: B
     query_type: price_and_fundamentals
+    date_policy: live
     expected_tools: [market_data_analysis, fundamentals_analysis]
     description: Multi-domain query - parallel OK
 
   - id: B3
-    query: "I need AAPL calls that are closest to spot for the next expiration."
+    query: "Using a fresh AAPL quote, show the three listed call strikes closest to spot in the standard monthly expiration 30 to 60 calendar days away. Include exact contract symbols and quote timestamps."
     category: B
     query_type: price_then_options
+    date_policy: live
     expected_tools: [market_data_analysis, options_analysis]
     expected_sequence: [market_data_analysis, options_analysis]
     description: Price first for ATM strike identification
@@ -270,15 +305,17 @@ test_cases:
     query: "What is Palantir trading at right now?"
     category: B
     query_type: ticker_then_price
+    date_policy: live
     expected_tools: [screener_lookup, market_data_analysis]
     expected_sequence: [screener_lookup, market_data_analysis]
     description: Ticker lookup then price query
     smoke: true
 
   - id: B5
-    query: "Screen for profitable U.S. large-cap software names and show the top 3 by net margin."
+    query: "As of the latest available fundamentals, screen for profitable U.S. large-cap software names and show the top 3 by net margin. State the data as-of date and universe coverage."
     category: B
     query_type: screen_then_analyze
+    date_policy: live
     expected_tools: [screener_lookup, fundamentals_analysis]
     expected_sequence: [screener_lookup, fundamentals_analysis]
     description: Screen first, then analyze results
@@ -287,6 +324,7 @@ test_cases:
     query: "What does Snowflake's current valuation setup look like?"
     category: B
     query_type: ticker_then_fundamentals
+    date_policy: live
     expected_tools: [screener_lookup, fundamentals_analysis]
     expected_sequence: [screener_lookup, fundamentals_analysis]
     description: Ticker lookup then fundamentals
@@ -295,6 +333,7 @@ test_cases:
     query: "Value my AAPL/MSFT portfolio at current prices: AAPL 50%, MSFT 50%"
     category: B
     query_type: portfolio_with_market
+    date_policy: live
     expected_tools: [portfolio_analysis, market_data_analysis]
     description: Portfolio positions plus current prices
 
@@ -302,6 +341,7 @@ test_cases:
     query: "Give me an investment-committee style update on AAPL covering price action, valuation, and recent catalysts."
     category: B
     query_type: full_stock_analysis
+    date_policy: live
     expected_tools: [market_data_analysis, fundamentals_analysis, events_news_analysis]
     description: Price + fundamentals + news in one report
     smoke: true
@@ -310,6 +350,7 @@ test_cases:
     query: "Compare NVDA and AMD on valuation and recent momentum"
     category: B
     query_type: compare_valuation_and_momentum
+    date_policy: live
     expected_tools: [fundamentals_analysis, market_data_analysis]
     description: Cross-company comparison across fundamentals and price action
 
@@ -317,6 +358,7 @@ test_cases:
     query: "Build me a shortlist of AI semiconductor names and summarize the latest catalysts for the top 3."
     category: B
     query_type: screen_then_news
+    date_policy: live
     expected_tools: [screener_lookup, events_news_analysis]
     expected_sequence: [screener_lookup, events_news_analysis]
     description: Screen first, then summarize catalysts
@@ -325,6 +367,7 @@ test_cases:
     query: "I am looking at ServiceNow. What is it trading at, and what are the key recent catalysts?"
     category: B
     query_type: ticker_then_price_and_news
+    date_policy: live
     expected_tools: [screener_lookup, events_news_analysis, market_data_analysis]
     description: Ticker resolution then price + news
 
@@ -332,6 +375,7 @@ test_cases:
     query: "Earnings reaction: How did AAPL's last earnings impact the stock?"
     category: B
     query_type: earnings_reaction
+    date_policy: relative
     expected_tools: [events_news_analysis, market_data_analysis]
     description: Earnings + price reaction
 
@@ -339,6 +383,7 @@ test_cases:
     query: "Do TSLA options positioning and recent catalysts point in the same direction?"
     category: B
     query_type: options_and_news
+    date_policy: live
     expected_tools: [options_analysis, events_news_analysis]
     description: Options + news synthesis
 
@@ -346,6 +391,7 @@ test_cases:
     query: "How did AAPL's last earnings surprise translate into the next 5 trading days?"
     category: B
     query_type: earnings_then_price_reaction
+    date_policy: relative
     expected_tools: [events_news_analysis, market_data_analysis]
     expected_sequence: [events_news_analysis, market_data_analysis]
     description: Event timing first, then reaction window
@@ -354,13 +400,15 @@ test_cases:
     query: "Compare MSFT and GOOGL on valuation, margins, and 6-month price trend"
     category: B
     query_type: compare_fundamentals_and_trend
+    date_policy: relative
     expected_tools: [fundamentals_analysis, market_data_analysis]
     description: Cross-name comparison across two domains
 
   - id: B16
-    query: "Find profitable cybersecurity stocks, then rank top 3 by valuation and momentum"
+    query: "As of the latest completed session, find profitable cybersecurity stocks, then rank the top 3 by valuation and momentum. State the price/fundamental as-of dates and universe coverage."
     category: B
     query_type: screen_then_rank_multifactor
+    date_policy: live
     expected_tools: [screener_lookup, fundamentals_analysis, market_data_analysis]
     expected_sequence: [screener_lookup, fundamentals_analysis]
     description: Universe creation then multi-factor ranking
@@ -369,6 +417,7 @@ test_cases:
     query: "Find ticker for ServiceNow and give me valuation plus recent catalysts"
     category: B
     query_type: ticker_then_fundamentals_and_news
+    date_policy: live
     expected_tools: [screener_lookup, fundamentals_analysis, events_news_analysis]
     expected_sequence: [screener_lookup, fundamentals_analysis]
     description: Ticker resolution before analysis stack
@@ -377,6 +426,7 @@ test_cases:
     query: "I hold 30% AAPL, 30% QQQ, 20% XLK, 20% cash. Show effective exposure and concentration risk with current market context."
     category: B
     query_type: portfolio_risk_with_market_context
+    date_policy: live
     expected_tools: [portfolio_analysis, market_data_analysis]
     description: Advisor-style portfolio risk with live context
 
@@ -384,6 +434,7 @@ test_cases:
     query: "Did TSLA's recent major news coincide with unusual options activity?"
     category: B
     query_type: news_options_linkage
+    date_policy: live
     expected_tools: [events_news_analysis, options_analysis]
     description: Event catalysts paired with derivatives positioning
 
@@ -391,6 +442,7 @@ test_cases:
     query: "What drove the move in U.S. bank stocks today, and how did the group trade?"
     category: B
     query_type: sector_move_explain
+    date_policy: live
     expected_tools: [events_news_analysis, market_data_analysis]
     description: Sector catalyst + price move synthesis
 
@@ -398,6 +450,7 @@ test_cases:
     query: "Evaluate NVDA risk/reward using price trend, valuation, and latest catalysts"
     category: B
     query_type: integrated_risk_reward
+    date_policy: live
     expected_tools: [market_data_analysis, fundamentals_analysis, events_news_analysis]
     description: Hedge-fund style integrated single-name view
 
@@ -407,13 +460,15 @@ test_cases:
     query: "Give me the bull case and bear case for TSLA. What are the 3 strongest arguments on each side based on current financials, price action, and catalysts?"
     category: B
     query_type: bull_bear_thesis
+    date_policy: live
     expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
     description: Bull vs bear case construction — requires valuation, trend, and catalyst synthesis
 
   - id: B23
-    query: "Pitch me AMZN like Peter Lynch would — is this a stalwart, a fast grower, or a turnaround? Show the numbers that support the classification."
+    query: "Using the latest completed filings and market data, pitch AMZN like Peter Lynch would — is this a stalwart, a fast grower, or a turnaround? Show the numbers that support the classification and state the analysis as-of date."
     category: B
     query_type: lynch_pitch
+    date_policy: live
     expected_tools: [fundamentals_analysis, market_data_analysis]
     description: Lynch-style stock classification using earnings growth rate, P/E-to-growth, balance sheet strength
 
@@ -421,6 +476,7 @@ test_cases:
     query: "Invert the NVDA thesis — what has to go wrong for this stock to lose 50% from here? What do the fundamentals and recent news say about those risks?"
     category: B
     query_type: munger_invert
+    date_policy: live
     expected_tools: [fundamentals_analysis, market_data_analysis, events_news_analysis]
     description: Munger-style inversion — identify kill scenarios from valuation, competitive, and macro angles
 
@@ -428,6 +484,7 @@ test_cases:
     query: "Has AAPL management delivered on their prior guidance? Compare their last 4 quarters of guidance vs actual revenue and EPS results."
     category: B
     query_type: guidance_vs_reality
+    date_policy: relative
     expected_tools: [fundamentals_analysis, events_news_analysis]
     description: Management credibility check — guidance vs actuals from earnings data and filings
 
@@ -435,6 +492,7 @@ test_cases:
     query: "Track META's key operating KPIs over the last 2 years — DAU/MAU growth, ARPU trend, capex as % of revenue, and operating margin trajectory. Are they improving or deteriorating?"
     category: B
     query_type: kpi_trend_analysis
+    date_policy: relative
     expected_tools: [fundamentals_analysis, events_news_analysis]
     description: KPI deep-dive — operating metrics trend from financials and earnings commentary
 
@@ -442,15 +500,17 @@ test_cases:
     query: "Is MSFT's revenue growth decelerating? Show quarterly revenue growth rates for the last 8 quarters and overlay with analyst forward estimates and recent guidance commentary."
     category: B
     query_type: growth_deceleration_check
+    date_policy: live
     expected_tools: [fundamentals_analysis, events_news_analysis]
     description: Growth trajectory vs forward expectations — financials plus analyst/management context
 
   - id: B28
-    query: "I have a collar on AAPL — long 100 shares, long 1 put at 180 strike, short 1 call at 220 strike, both expiring in 3 months. What's my net delta exposure and where do I break even?"
+    query: "Synthetic collar: long 100 AAPL shares at $200, long one 180 put bought for $4, and short one 220 call sold for $5, both expiring in exactly 90 days with multiplier 100. What are net debit, expiry breakeven, max gain, max loss and current net delta if put delta is -0.20 and call delta is 0.25?"
     category: B
     query_type: options_collar_risk_profile
-    expected_tools: [options_analysis, market_data_analysis]
-    description: Collar (stock + protective put + covered call) risk profile — needs current AAPL price from market data, then options analytics
+    date_policy: frozen
+    expected_tools: [options_analysis]
+    description: Fully specified synthetic collar payoff and delta guard without an unnecessary live-price call
 
   # ─────────────────────────────────────────────
   # Category C: Guardrail Tests
@@ -490,14 +550,19 @@ test_cases:
     query: "What's the current 10-year Treasury yield?"
     category: C
     query_type: guardrail_accept
+    date_policy: live
     expect_rejection: false
     expected_tools: [portfolio_analysis]
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
     description: Valid macro rates query - should be accepted
 
   - id: C6
     query: "Is now a good time to buy bonds based on current Treasury yields?"
     category: C
     query_type: guardrail_accept
+    date_policy: live
     expect_rejection: false
     expected_tools: [portfolio_analysis]
     description: Valid rates-driven allocation question
@@ -510,9 +575,10 @@ test_cases:
     description: Software debugging query should be rejected
 
   - id: C8
-    query: "Why are semiconductor stocks weak today?"
+    query: "First verify whether semiconductor stocks are weak today versus SPY over matching timestamps. If they are, identify timestamped evidence that may explain the move; if not, correct the premise."
     category: C
     query_type: guardrail_accept
+    date_policy: live
     expect_rejection: false
     expected_tools: [market_data_analysis, events_news_analysis]
     description: Valid sector-performance question
@@ -521,6 +587,7 @@ test_cases:
     query: "What are the Polymarket odds on the Super Bowl, and how liquid is that market?"
     category: C
     query_type: guardrail_accept_prediction_market
+    date_policy: live
     expect_rejection: false
     expected_tools: [prediction_market_analysis]
     description: Sports should be accepted when the user is explicitly asking about a Polymarket market
@@ -534,6 +601,8 @@ test_cases:
     category: D
     query_type: error_invalid_symbol_price
     expected_tools: [market_data_analysis]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Invalid symbol - graceful error expected
     smoke: true
 
@@ -542,6 +611,8 @@ test_cases:
     category: D
     query_type: error_invalid_symbol_fundamentals
     expected_tools: [fundamentals_analysis]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Invalid symbol in fundamentals tool
 
   - id: D3
@@ -549,6 +620,8 @@ test_cases:
     category: D
     query_type: error_invalid_symbol_options
     expected_tools: [options_analysis]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Invalid symbol in options tool
 
   - id: D4
@@ -556,6 +629,8 @@ test_cases:
     category: D
     query_type: error_invalid_symbol_news
     expected_tools: [events_news_analysis]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Invalid symbol in news tool
 
   - id: D5
@@ -563,6 +638,8 @@ test_cases:
     category: D
     query_type: error_invalid_ticker_lookup
     expected_tools: [screener_lookup]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Ticker lookup with no valid match
 
   - id: D6
@@ -571,13 +648,22 @@ test_cases:
     query_type: error_ticker_typo_fallback
     expected_tools: [market_data_analysis, screener_lookup]
     expected_sequence: [market_data_analysis, screener_lookup]
+    expected_outcome: success
+    allowed_partial_errors:
+      - tool: market_data_analysis
+        error_pattern: '(?i)(?:AAPLL|invalid|unknown|not found).{0,100}(?:symbol|ticker|AAPLL)|(?:symbol|ticker).{0,100}(?:AAPLL|invalid|unknown|not found)'
+        response_pattern: '(?is)(?=.*\bAAPLL\b.{0,100}(?:typo|invalid|unknown|not found))(?=.*\bAAPL\b)'
+        forbidden_response_pattern: '(?i)\bAAPLL\b.{0,40}\b(?:is|was) (?:correct|valid)\b|\bnot AAPL\b|\bno typo\b'
+    date_policy: live
     description: Price lookup should fail then trigger typo-resolution fallback
 
   - id: D7
     query: "How did FAKESYM's last earnings impact the stock?"
     category: D
     query_type: error_multitool_missing_symbol
+    date_policy: relative
     expected_tools: [events_news_analysis, market_data_analysis]
+    expected_outcome: data_unavailable
     description: Multi-tool analysis with missing symbol should fail gracefully
 
   - id: D8
@@ -585,6 +671,8 @@ test_cases:
     category: D
     query_type: error_empty_screen_result
     expected_tools: [screener_lookup]
+    expected_outcome: data_unavailable
+    date_policy: live
     description: Impossible filter combination should return empty set gracefully
 
   - id: D9
@@ -592,6 +680,9 @@ test_cases:
     category: D
     query_type: error_mixed_portfolio_formats
     expected_tools: [portfolio_analysis]
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)(?:mixed|one|single|same|consistent).{0,80}(?:format|unit|weight|share|dollar|percent)|(?:format|unit).{0,80}(?:mixed|consistent)'
+    date_policy: frozen
     description: Mixed input formats (percentages + shares + dollars) should produce clear error asking user to pick one format
 
   - id: D10
@@ -599,6 +690,9 @@ test_cases:
     category: D
     query_type: error_portfolio_mode_intraday
     expected_tools: [strategy_analysis]
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)(?:portfolio|allocation).{0,100}(?:daily|1d|intraday|5[- ]?min)|(?:daily|1d|intraday|5[- ]?min).{0,100}(?:portfolio|allocation|unsupported)'
+    date_policy: frozen
     description: Portfolio mode + intraday timeframe should produce validation error — portfolio mode requires daily bars
 
   # ─────────────────────────────────────────────
@@ -611,6 +705,7 @@ test_cases:
     query: "Backtest a long-only 50/200-day moving-average crossover on AAPL from 2015 onward."
     category: E
     query_type: strategy_direct_backtest
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: User-provided strategy - direct routing, no pre-gathering
     smoke: true
@@ -619,6 +714,7 @@ test_cases:
     query: "Backtest a daily RSI mean-reversion strategy on MSFT: buy below 30, exit above 70."
     category: E
     query_type: strategy_direct_rsi
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Specific RSI strategy - direct routing
 
@@ -626,6 +722,7 @@ test_cases:
     query: "Run a MACD crossover backtest on NVDA from January 2020 through December 2024."
     category: E
     query_type: strategy_direct_with_dates
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Specific strategy with user-provided date range
 
@@ -633,6 +730,7 @@ test_cases:
     query: "Backtest a Bollinger-band pullback strategy on GOOGL with a 5% stop loss."
     category: E
     query_type: strategy_direct_with_risk
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Specific strategy with explicit risk management
 
@@ -642,6 +740,7 @@ test_cases:
     query: "I want a momentum sleeve for U.S. tech. Build and backtest a long-only momentum strategy for large-cap technology stocks."
     category: E
     query_type: strategy_design_momentum
+    date_policy: relative
     expected_tools: [screener_lookup, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: Vague universe needs screener to define a stable liquid tech universe; avoid hub-side 'best tech stocks' pre-selection that would bias the backtest
@@ -650,6 +749,7 @@ test_cases:
     query: "Design and backtest a mean-reversion strategy for AAPL and MSFT using daily data."
     category: E
     query_type: strategy_design_meanrev
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Specific tickers and clear objective should route directly to strategy analysis
 
@@ -657,6 +757,7 @@ test_cases:
     query: "Design and backtest a breakout strategy for large-cap U.S. energy stocks."
     category: E
     query_type: strategy_design_breakout
+    date_policy: relative
     expected_tools: [screener_lookup, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: Vague universe needs screener, then direct strategy routing
@@ -665,6 +766,7 @@ test_cases:
     query: "Build and backtest a value-momentum multi-factor strategy for S&P 500 constituents."
     category: E
     query_type: strategy_design_multifactor
+    date_policy: relative
     expected_tools: [screener_lookup, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: Universe completion first, then strategy agent handles feasible approximation and caveats
@@ -673,6 +775,7 @@ test_cases:
     query: "Design and backtest a volatility-based trading strategy for TSLA."
     category: E
     query_type: strategy_design_volatility
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Specific ticker and clear objective should route directly to strategy analysis
 
@@ -680,6 +783,7 @@ test_cases:
     query: "Build a semiconductor trading strategy that can hold up across both bullish and bearish market regimes."
     category: E
     query_type: strategy_design_regime
+    date_policy: relative
     expected_tools: [screener_lookup, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: Sector-themed request needs screener first, then direct strategy routing
@@ -688,6 +792,7 @@ test_cases:
     query: "Design and backtest an earnings-reaction strategy for NVDA and AMD around quarterly reports."
     category: E
     query_type: strategy_design_event_driven
+    date_policy: relative
     expected_tools: [events_news_analysis, strategy_analysis]
     expected_sequence: [events_news_analysis, strategy_analysis]
     description: Event-driven strategy explicitly depends on earnings timing/surprise context before strategy design and backtesting
@@ -696,6 +801,7 @@ test_cases:
     query: "Build and backtest a value-quality strategy for large-cap software stocks."
     category: E
     query_type: strategy_design_fundamental_factor
+    date_policy: relative
     expected_tools: [screener_lookup, fundamentals_analysis, strategy_analysis]
     expected_sequence: [screener_lookup, fundamentals_analysis, strategy_analysis]
     description: Themed universe needs screener and the factor objective explicitly depends on fundamentals before strategy design and backtesting
@@ -706,6 +812,7 @@ test_cases:
     query: "Backtest an EMA 20/50 crossover basket on AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, AMD, CRM, and NFLX from 2015 to 2025."
     category: E
     query_type: strategy_large_universe
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Large universe + long date range should trigger async mode, hub relays job_id
 
@@ -715,6 +822,7 @@ test_cases:
     query: "What indicators and operators does the backtesting engine support right now?"
     category: E
     query_type: strategy_indicator_lookup
+    date_policy: live
     expected_tools: [strategy_analysis]
     description: Indicator discovery query - strategy agent lists supported indicators
 
@@ -722,20 +830,23 @@ test_cases:
     query: "Compare two AAPL strategies for me: a 20/50 SMA crossover versus RSI 30/70 mean reversion."
     category: E
     query_type: strategy_compare
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Strategy comparison - uses backtest_compare_strategies tool
 
   - id: E14
-    query: "Show me the trade log for the most recent backtest run."
+    query: "Backtest SPY long when SMA(20) is above SMA(50), otherwise cash, on adjusted daily data from 2024-01-02 through 2025-12-31 with next-open execution, 5 bps slippage and 1 bp commission per side. Then return the stored trade log for that exact run with its job or artifact identifier; do not rely on a prior session."
     category: E
     query_type: strategy_trade_log
+    date_policy: frozen
     expected_tools: [strategy_analysis]
-    description: Trade-level detail request - requires session context of prior backtest
+    description: Self-contained strategy run plus trade-log retrieval; the session-aware lifecycle is covered by the canonical E2E chain suite.
 
   - id: E15
     query: "I am building a conservative equity-income sleeve for a client retiring in five years. Design and backtest a low-drawdown dividend-stock strategy."
     category: E
     query_type: strategy_design_constrained
+    date_policy: relative
     expected_tools: [screener_lookup, market_data_analysis, fundamentals_analysis, events_news_analysis, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: User constraints (risk tolerance, holding period) should flow into research brief
@@ -745,6 +856,9 @@ test_cases:
     category: E
     query_type: strategy_error_bad_ticker
     expected_tools: [strategy_analysis]
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)\bFAKESYM123\b|(?:invalid|unknown).{0,80}(?:symbol|ticker)|(?:symbol|ticker).{0,80}(?:invalid|unknown|not found)'
+    date_policy: frozen
     description: Invalid ticker in backtest - graceful error expected
 
   # E.5 — Intraday Strategy & Backtesting
@@ -753,6 +867,7 @@ test_cases:
     query: "I want to fade the opening spike on NVDA. Backtest a 5-min mean-reversion on the first hour — enter when RSI(14) drops below 25 after 9:45, exit on RSI crossing back above 50, flat by close. Tight stop, 1.5% max. Last year of data."
     category: E
     query_type: strategy_intraday_fade_open
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Experienced fade-the-open setup with session timing, tight risk, forced EOD close
     smoke: true
@@ -761,6 +876,7 @@ test_cases:
     query: "Backtest a 15-min breakout strategy on QQQ and SPY — EMA 9 crossing above EMA 21 with momentum confirmation, but only take entries between 10:00 and 15:00. No overnight holds. 2% stop, 4% target. Compare both symbols side by side."
     category: E
     query_type: strategy_intraday_breakout_session
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Multi-symbol intraday breakout with session window, forced flat EOD, explicit R:R
 
@@ -768,6 +884,7 @@ test_cases:
     query: "I scalp semis on 5-min bars. Build me a momentum strategy for NVDA, AMD, and AVGO — I want entries only when RSI is above 60 and price is above the 50-bar EMA. Kill switch at 15:30, flat by close. Run it over the past 18 months."
     category: E
     query_type: strategy_intraday_momentum_scalp
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Real scalping setup with momentum filters, kill switch time, multi-ticker semi universe
 
@@ -775,6 +892,7 @@ test_cases:
     query: "How does a daily SMA 50/200 crossover on AAPL compare to the same logic on 15-minute bars over the past year? I want to see if the intraday version catches moves faster or just adds noise and whipsaws."
     category: E
     query_type: strategy_daily_vs_intraday
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Cross-timeframe comparison - tests cache key differentiation and whether agent adjusts indicator periods
 
@@ -782,6 +900,7 @@ test_cases:
     query: "Find me the most liquid large-cap tech names and build a 5-min mean-reversion strategy — RSI oversold with Bollinger band lower touch, exit on band midline. No entries in the first 15 minutes or last 30 minutes. 1% stop. I want to see if this edge is real or just curve-fitted noise."
     category: E
     query_type: strategy_intraday_screener_meanrev
+    date_policy: relative
     expected_tools: [screener_lookup, strategy_analysis]
     expected_sequence: [screener_lookup, strategy_analysis]
     description: Realistic desk trader request - needs screener for liquid universe, intraday mean-reversion with band strategy, session avoidance windows, skepticism about overfitting
@@ -790,6 +909,7 @@ test_cases:
     query: "What intraday data do we have loaded right now? I need to know if 5-min bars for TSLA and META are available before I waste time building a strategy."
     category: E
     query_type: strategy_data_availability
+    date_policy: live
     expected_tools: [strategy_analysis]
     description: Practical data check before strategy work - uses list or storage management tool
 
@@ -797,13 +917,15 @@ test_cases:
     query: "I trade the mid-day chop on SPY. Backtest this on 5-min bars: when price pulls back to the 20-bar EMA between 11:30 and 14:00, RSI below 40, enter long. Exit on RSI above 60 or at close. 0.8% stop. Past year."
     category: E
     query_type: strategy_intraday_midday_reversion
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Session-specific mean-reversion during lunch hour — tests time-of-day window combined with indicator logic
 
   - id: E24
-    query: "NVDA reports earnings next week. Build me a 5-min scalping strategy for the post-earnings session — I want to capture the initial momentum move. Tight stops, close everything EOD. Backtest it around the last 4 earnings dates."
+    query: "Fetch NVDA's four most recent completed earnings dates, then build and backtest a 5-minute post-earnings-session momentum strategy around those dates. Use explicit tight stop/target rules, close everything EOD, and do not assume any future earnings date."
     category: E
     query_type: strategy_intraday_earnings_scalp
+    date_policy: live
     expected_tools: [events_news_analysis, strategy_analysis]
     expected_sequence: [events_news_analysis, strategy_analysis]
     description: Event-driven intraday strategy - needs earnings dates from events agent, then intraday backtest around those windows
@@ -814,6 +936,7 @@ test_cases:
     query: "I want to combine VWAP and candlestick patterns for intraday NVDA. Entry: price below VWAP and a bullish engulfing pattern fires, RSI under 40. Exit: price crosses back above VWAP. 5-min bars, flat by close, 1% stop. Last 6 months."
     category: E
     query_type: strategy_intraday_vwap_plus_candlestick
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Combines VWAP (new) + CDL_ENGULFING (new) + RSI (existing) on intraday bars — tests multiple new indicator types together
 
@@ -821,6 +944,7 @@ test_cases:
     query: "Build a 15-min strategy on AMD that uses LINEARREG_SLOPE to confirm trend direction before entering on EMA crossovers. Only trade during the 10:00-15:00 window. I want to see if the regression filter actually reduces whipsaws."
     category: E
     query_type: strategy_intraday_regression_filter
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: LINEARREG_SLOPE statistical indicator on intraday bars — trend confirmation filter
 
@@ -828,6 +952,7 @@ test_cases:
     query: "Backtest a doji reversal strategy on SPY using 15-min bars — when a doji appears and RSI is oversold below 30, go long. Exit when RSI hits 60 or at close. 1.5% stop. Past year."
     category: E
     query_type: strategy_intraday_candlestick_reversal
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: CDL_DOJI candlestick pattern on intraday bars with equals operator (CDL_DOJI not_equals 0)
 
@@ -835,6 +960,7 @@ test_cases:
     query: "I want to test a volatility regime strategy on QQQ — use standard deviation to identify low-vol periods, then buy breakouts when price crosses above the upper Bollinger band. 5-min bars, only between 10:00 and 15:30, flat by close."
     category: E
     query_type: strategy_intraday_stddev_regime
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: STDDEV statistical indicator for vol regime detection on intraday — combined with Bollinger band breakout
 
@@ -877,45 +1003,51 @@ test_cases:
   # G.1 — Portfolio Risk & Allocation (P2)
 
   - id: G1
-    query: "I've got about $200k split across VOO 40%, QQQ 25%, AAPL 15%, and 20% sitting in cash. How risky is this overall? What's my Sharpe looking like?"
+    query: "I've got about $200k split across VOO 40%, QQQ 25%, AAPL 15%, and 20% sitting in cash. Using the latest available data and a trailing three-year daily window, how risky is this overall and what's my Sharpe? State the valuation date and actual return coverage."
     category: G
     query_type: portfolio_risk_with_cash
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Risk analysis with cash position — verifies cash dampens vol instead of being dropped and renormalized
     smoke: true
 
   - id: G2
-    query: "I hold SPY 50%, AAPL 20%, MSFT 15%, GOOGL 15%. Am I actually diversified or is this just a tech bet disguised as an index fund?"
+    query: "I hold SPY 50%, AAPL 20%, MSFT 15%, GOOGL 15%. Using the latest available SPY holdings and stating their as-of date, am I actually diversified or is this a tech bet disguised as an index fund?"
     category: G
     query_type: portfolio_allocation_look_through
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Allocation breakdown with ETF look-through — SPY expansion should reveal tech overweight
 
   - id: G3
-    query: "What's my portfolio beta against the S&P? I hold NVDA 30%, AMD 25%, AVGO 25%, INTC 20%. I feel like I'm way more volatile than the market."
+    query: "Using the latest available data and a trailing three-year daily window, what's my portfolio beta against the S&P? I hold NVDA 30%, AMD 25%, AVGO 25%, INTC 20%. State the valuation date and actual return coverage."
     category: G
     query_type: portfolio_beta_concentrated
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Concentrated sector portfolio — beta should be well above 1.0 for all-semis
 
   - id: G4
-    query: "Show me how correlated my holdings are. I've got AAPL 25%, MSFT 25%, GOOGL 25%, AMZN 25%. I thought I was diversified across big tech but everything seems to move together."
+    query: "Using the latest available data and a trailing three-year daily window, show how correlated my holdings are: AAPL 25%, MSFT 25%, GOOGL 25%, AMZN 25%. State the valuation date and actual return coverage."
     category: G
     query_type: portfolio_correlation
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Correlation matrix request for mega-cap tech — should show high correlation
 
   - id: G5
-    query: "I'm retired and hold 60% BND, 30% VTI, 10% cash. What's my max drawdown and how much am I actually earning after inflation?"
+    query: "I'm retired and hold 60% BND, 30% VTI, 10% cash. Using the latest available data and a trailing three-year daily window, what's my max drawdown and real return after inflation? State the valuation date, return coverage, and inflation observation used."
     category: G
     query_type: portfolio_risk_conservative
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Conservative portfolio risk — tests bond ETF + cash handling, drawdown, real returns context
 
   - id: G6
-    query: "Break down where my money actually ends up by sector. I hold VTI 50%, XLK 30%, AAPL 20%. I bet I'm way overweight tech but I want to see the numbers."
+    query: "Using the latest available VTI and XLK holdings and stating their as-of dates, break down where my money ends up by sector: VTI 50%, XLK 30%, AAPL 20%. Quantify the effective technology concentration."
     category: G
     query_type: portfolio_sector_look_through
+    date_policy: live
     expected_tools: [portfolio_analysis]
     description: Sector allocation with ETF look-through — VTI + XLK + direct AAPL should show massive tech concentration
     smoke: true
@@ -923,56 +1055,76 @@ test_cases:
   # G.2 — Options Analytics (P5)
 
   - id: G7
-    query: "I bought 5 AAPL 200 calls expiring in June for $8.50 each. What happens to my position if the stock drops 5% and vol spikes 10%?"
+    query: "Synthetic scenario: I own five AAPL $200 calls, multiplier 100, bought for $8.50 each with exactly 60 calendar days remaining. Spot starts at $200 and implied volatility at 30%. Estimate P&L after 14 days if spot falls 5% and implied volatility rises by 10 percentage points; state the pricing assumptions."
     category: G
     query_type: options_scenario_whatif
+    date_policy: frozen
     expected_tools: [options_analysis]
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
     description: Scenario analysis — specific position with spot and vol shift, expects P&L grid
     smoke: true
 
   - id: G8
-    query: "I'm thinking about selling covered calls on my NVDA shares. What would the Greeks look like on the 950 strike expiring next month? I want to understand my theta income vs delta risk."
+    query: "Using a fresh NVDA quote, select the listed call nearest spot in the standard monthly expiration 30 to 60 calendar days away. For a covered call on 100 shares, report exact contract, quote timestamp, net delta and theta per day; explain assignment risk."
     category: G
     query_type: options_greeks_hypothetical
+    date_policy: live
     expected_tools: [options_analysis, market_data_analysis]
     description: Hypothetical Greeks computation — may need current NVDA price first
 
   - id: G9
-    query: "I have a straddle on TSLA — long the 250 call and long the 250 put, both expiring in April, paid $12 for the call and $10 for the put. What are my breakevens and max loss?"
+    query: "Synthetic fixture: TSLA spot and strike are $250. I own one call bought for $12 and one put bought for $10, same expiry and multiplier 100. Calculate total debit, expiry breakevens, maximum loss and P&L at $200, $250 and $300."
     category: G
     query_type: options_multi_leg_risk
+    date_policy: frozen
     expected_tools: [options_analysis]
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
     description: Multi-leg position risk profile — straddle breakevens and net Greeks
     smoke: true
 
   - id: G10
-    query: "I sold a naked call on AMZN — 1 contract, 200 strike, July expiry, collected $6.50 premium. How bad can this get? Show me the risk profile."
+    query: "Synthetic fixture: I sold one uncovered AMZN call with $200 strike, 60 days remaining, multiplier 100 and $6.50 premium received. Calculate maximum gain, breakeven and P&L at expiry prices $150, $200, $206.50, $250 and $400; state clearly that maximum loss is unlimited."
     category: G
     query_type: options_naked_call_risk
+    date_policy: frozen
     expected_tools: [options_analysis]
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
     description: Naked short call risk — must show unlimited loss, not a finite number
 
   - id: G11
-    query: "I want to put on an iron condor on SPY — sell the 520 call, buy the 530 call, sell the 480 put, buy the 470 put, all June expiry. What's the risk/reward and where do I break even?"
+    query: "Synthetic iron condor with one shared expiry and multiplier 100: buy the 90 put for $0.75, sell the 95 put for $2.25, sell the 105 call for $2.00, and buy the 110 call for $0.50. Calculate net credit, breakevens, maximum gain, maximum loss and P&L at expiry prices 85, 90, 95, 100, 105, 110 and 115."
     category: G
     query_type: options_iron_condor
+    date_policy: frozen
     expected_tools: [options_analysis]
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
     description: 4-leg iron condor risk profile — max profit capped at premium, max loss = wing width minus premium, two breakevens
 
   # G.3 — Commodities & Futures (P6)
 
   - id: G12
-    query: "Where is gold trading right now?"
+    query: "Retrieve the provider's GCUSD gold commodity reference quote now. State the exact provider symbol, currency, observation timestamp, delay status and whether the instrument is spot, futures or another reference series. Do not relabel it XAU/USD spot or a specific COMEX contract unless the provider metadata establishes that basis, and do not substitute GLD."
     category: G
     query_type: commodity_quote
     expected_tools: [market_data_analysis]
-    description: Basic commodity quote — should resolve GCUSD symbol and use existing quote tool
+    expected_outcome: success
+    date_policy: live
+    description: Gold commodity quote with explicit instrument-basis disclosure.
     smoke: true
 
   - id: G13
     query: "Show me a 6-month daily chart of crude oil. I want to see if it's still trending down."
     category: G
     query_type: commodity_candles
+    date_policy: relative
     expected_tools: [market_data_analysis]
     description: Commodity candle data — should resolve CLUSD and use existing candle tool
 
@@ -980,13 +1132,15 @@ test_cases:
     query: "What commodities can I look up? I want to check copper and natural gas."
     category: G
     query_type: commodity_discovery
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Commodity list discovery — should use list_commodities tool, then quote HGUSD and NGUSD
 
   - id: G15
-    query: "Gold is ripping. Give me the price plus NVDA and AAPL — I want to see how my holdings compare to the gold move today."
+    query: "Verify whether spot gold is rising over the latest common observable window, then compare that return with NVDA and AAPL over matching timestamps. Correct the premise if gold is not rising and distinguish unlike market-session coverage."
     category: G
     query_type: commodity_vs_stocks
+    date_policy: live
     expected_tools: [market_data_analysis]
     description: Mixed commodity + equity quotes in single request — tests that quote tool handles both symbol types
 
@@ -996,6 +1150,7 @@ test_cases:
     query: "I've been running an RSI mean-reversion strategy on AAPL and it looks great in backtest. But is it actually robust or did I just overfit? Run a walk-forward test on it — I have data from 2018 to 2025."
     category: G
     query_type: strategy_walk_forward
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Walk-forward validation request — date range is 7 years, should trigger walk-forward with 5 windows
     smoke: true
@@ -1004,6 +1159,7 @@ test_cases:
     query: "I backtested a MACD crossover on MSFT from 2020-2025 and got a 1.8 Sharpe. That seems too good to be true. Can you stress test it across different time periods so I know it's not curve-fitted garbage?"
     category: G
     query_type: strategy_walk_forward_skeptical
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Overfitting skepticism — should trigger walk-forward, report consistency and degradation
 
@@ -1011,6 +1167,7 @@ test_cases:
     query: "Compare how a Bollinger band strategy on GOOGL holds up: just a normal backtest from 2019-2025, versus a walk-forward validation over the same period. I want to see if the out-of-sample numbers are worse."
     category: G
     query_type: strategy_backtest_vs_walkforward
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Head-to-head single backtest vs walk-forward — should run both and contrast metrics
 
@@ -1020,6 +1177,7 @@ test_cases:
     query: "Backtest an RSI mean-reversion strategy across AAPL, MSFT, GOOGL, AMZN, and NVDA with a shared $100k capital pool. I want to see what happens when multiple signals fire and I can't buy everything."
     category: G
     query_type: strategy_portfolio_mode
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Portfolio allocation mode — shared capital, signal competition, skipped signals tracking
     smoke: true
@@ -1028,6 +1186,7 @@ test_cases:
     query: "I run a 5-stock momentum basket with equal-weight sizing, max 20% per name, and no more than 3 positions at once. Backtest it with shared capital on TSLA, NVDA, AMD, META, NFLX — 2020 to 2025."
     category: G
     query_type: strategy_portfolio_constrained
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Portfolio mode with explicit position sizing constraints — max_positions=3, max_position_pct=20
 
@@ -1035,6 +1194,7 @@ test_cases:
     query: "Run the same SMA crossover strategy on AAPL, MSFT, and GOOGL two ways: first independently per stock, then with shared capital. I want to see the gap between theoretical and realistic returns."
     category: G
     query_type: strategy_independent_vs_portfolio
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: Independent vs portfolio mode comparison — same strategy, different allocation modes, should show capital-constrained drag
 
@@ -1044,6 +1204,7 @@ test_cases:
     query: "Backtest a VWAP reversion strategy on NVDA using 5-min bars — buy when price drops below VWAP with RSI under 35, sell when it crosses back above VWAP. Flat by close. Last 6 months."
     category: G
     query_type: strategy_vwap_intraday
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: VWAP indicator on intraday bars — tests VWAP session reset and intraday-only validation
     smoke: true
@@ -1052,6 +1213,7 @@ test_cases:
     query: "Can you backtest candlestick patterns on AAPL? I want to buy on bullish engulfing patterns and sell when RSI hits 70. Daily bars, 2020-2025."
     category: G
     query_type: strategy_candlestick_pattern
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: Candlestick pattern indicator — CDL_ENGULFING with equals operator, mixed with RSI exit
 
@@ -1059,6 +1221,7 @@ test_cases:
     query: "Build me a trend-following strategy on MSFT that uses the slope of linear regression to confirm the trend direction, not just moving average crosses. Daily data, past 5 years."
     category: G
     query_type: strategy_statistical_indicator
+    date_policy: relative
     expected_tools: [strategy_analysis]
     description: LINEARREG_SLOPE statistical indicator — tests new indicator type for trend confirmation
 
@@ -1066,6 +1229,9 @@ test_cases:
     query: "Try to run a VWAP strategy on daily bars for AAPL."
     category: G
     query_type: strategy_vwap_daily_rejection
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)\bVWAP\b.{0,100}(?:daily|intraday|unsupported|requires?)|(?:daily|intraday).{0,100}\bVWAP\b'
+    date_policy: frozen
     expected_tools: [strategy_analysis]
     description: VWAP on daily bars should produce a clear validation error — VWAP is intraday-only
 
@@ -1075,14 +1241,16 @@ test_cases:
     query: "My portfolio is AAPL 30%, MSFT 20%, QQQ 30%, CASH 20%. Give me the full picture: risk metrics, sector breakdown, and how the market's doing today so I know if I should be worried."
     category: G
     query_type: portfolio_risk_plus_market
+    date_policy: live
     expected_tools: [portfolio_analysis, market_data_analysis]
     description: Multi-agent — portfolio risk + allocation + live market context in one request
     smoke: true
 
   - id: G27
-    query: "I'm long 3 NVDA 900 calls expiring next month. NVDA just reported earnings — what's the news saying and how does my position look under different vol scenarios?"
+    query: "Using a fresh NVDA quote, select the most liquid listed call nearest spot in the standard monthly expiration 30 to 60 days away and assume I buy three contracts at the current ask. Summarize the latest completed earnings, then show position P&L after 14 days for stock moves of -10%, 0% and +10% with implied volatility shifts of -10, 0 and +10 percentage points. Preserve the exact contract and timestamps."
     category: G
     query_type: options_scenario_plus_news
+    date_policy: live
     expected_tools: [events_news_analysis, options_analysis]
     expected_sequence: [events_news_analysis, options_analysis]
     description: Multi-agent — news context informs vol scenario analysis for options position
@@ -1091,6 +1259,7 @@ test_cases:
     query: "Gold is spiking. What's driving it and where is it trading relative to the last 3 months?"
     category: G
     query_type: commodity_with_news
+    date_policy: relative
     expected_tools: [market_data_analysis, events_news_analysis]
     description: Commodity price + news explanation — tests commodity support with multi-agent synthesis
 
@@ -1098,6 +1267,7 @@ test_cases:
     query: "I backtested a mean-reversion strategy on AAPL and it passed walk-forward with 80% consistency. Now I want to check — is AAPL in a mean-reverting regime right now or is it trending? Show me technicals."
     category: G
     query_type: strategy_then_technicals
+    date_policy: live
     expected_tools: [strategy_analysis, market_data_analysis]
     description: Strategy validation followed by current regime check — deployment readiness assessment
 
@@ -1105,6 +1275,7 @@ test_cases:
     query: "My portfolio is 100% in NVDA. Show me how concentrated and risky this is compared to holding VOO, and give me NVDA's latest news so I know if something is about to blow up."
     category: G
     query_type: portfolio_risk_plus_news
+    date_policy: live
     expected_tools: [portfolio_analysis, events_news_analysis]
     description: Concentrated single-stock portfolio risk + catalyst awareness — retail investor reality check
 
@@ -1114,6 +1285,7 @@ test_cases:
     query: "Find the most liquid Polymarket market on the next Fed decision and explain what it is actually asking, how it resolves, and what it is pricing right now."
     category: G
     query_type: prediction_market_explainer
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Finance-market explainer with resolution criteria, pricing, and liquidity
     smoke: true
@@ -1122,6 +1294,7 @@ test_cases:
     query: "Show me a Polymarket market on Bitcoin hitting a price target and tell me whether it looks clean enough for a manual trader to enter right now."
     category: G
     query_type: prediction_market_crypto_execution
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Crypto prediction-market query focused on executable pricing and manual-trade feasibility
 
@@ -1129,6 +1302,7 @@ test_cases:
     query: "Compare the leading Polymarket markets related to the next Fed move and tell me which one has cleaner execution for a manual trader."
     category: G
     query_type: prediction_market_compare_execution
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Market-comparison query emphasizing spread, depth, and liquidity
 
@@ -1136,6 +1310,7 @@ test_cases:
     query: "I bought YES at 0.40 on a Polymarket market about the next Fed rate cut. Review the position for me — what would invalidate the thesis and should I hold or exit?"
     category: G
     query_type: prediction_market_trade_review
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Existing-position review with invalidation and risk framing
 
@@ -1143,6 +1318,7 @@ test_cases:
     query: "Show me the top Polymarket traders right now and summarize what kinds of markets they seem most active in."
     category: G
     query_type: prediction_market_leaderboard
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Leaderboard-driven trader discovery and descriptive activity summary
 
@@ -1150,6 +1326,7 @@ test_cases:
     query: "Pick a top trader from the Polymarket leaderboard and trace their recent activity for me. I want a descriptive summary, not blind copy-trading advice."
     category: G
     query_type: prediction_market_wallet_trace
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Wallet-tracing scenario with explicit anti-alpha framing
 
@@ -1157,6 +1334,7 @@ test_cases:
     query: "Find me a current Polymarket finance market where the spread and liquidity are good enough for manual execution, then give me a trade memo with entry, exit, invalidation, and risks."
     category: G
     query_type: prediction_market_trade_memo
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Human-executable trade memo for a live finance-themed market
     smoke: true
@@ -1165,6 +1343,7 @@ test_cases:
     query: "Run a Polymarket setup test for markets where YES traded around 0.45 with decent liquidity. I want sample size, forward behavior, and limitations."
     category: G
     query_type: prediction_market_setup_backtest
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: Setup-based historical test with explicit expectations about sample size and limitations
 
@@ -1172,6 +1351,7 @@ test_cases:
     query: "Backtest this setup on Polymarket: markets where YES was under 0.30 with at least $50K volume in the crypto category. Show me forward behavior at 1 day and to resolution, and flag any data quality issues."
     category: G
     query_type: prediction_market_backtest_data_quality
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: Backtest with explicit data-quality expectations — tests drift detection, sparse-history handling, and limitations disclosure
 
@@ -1179,6 +1359,7 @@ test_cases:
     query: "Polymarket is pricing odds on the next Fed move. How does that line up with TLT right now?"
     category: G
     query_type: prediction_market_macro_crosscheck
+    date_policy: live
     expected_tools: [prediction_market_analysis, market_data_analysis]
     description: Mixed-domain query comparing prediction-market odds with bond ETF price action
 
@@ -1186,6 +1367,7 @@ test_cases:
     query: "Compare the most liquid Polymarket election-related markets and tell me which one looks easiest to trade manually right now."
     category: G
     query_type: prediction_market_politics_compare
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Politics-market comparison centered on tradability and execution quality
 
@@ -1193,23 +1375,23 @@ test_cases:
     query: "Who is the top performing trader on Polymarket right now? Show me their recent trades and active positions so I can figure out what to copy."
     category: G
     query_type: prediction_market_copy_trader
+    date_policy: live
     expected_tools: [prediction_market_analysis]
     description: Top-performer discovery with copy-trade intent — tests leaderboard, wallet trace, and anti-alpha guardrails
 
   - id: G42
     query: >
-      Previous: Search active Polymarket markets related to 2026 World Cup group-stage outcomes,
-      especially group winner or qualification markets, and return the top tradable candidates
-      with their slugs. Current query: Drill into the best 2 from that prior list using live
-      order-book conditions. Use the prior slugs as the market identifiers. Is either one actually
-      worth trading now? Compare slippage for about $2,000 notional, ability to scale in and out,
-      spread behavior, recent large prints, and catalyst clarity. Give me a concise trade memo with
-      side, entry limit, max size, execution notes, exit plan, invalidation, resolution risk,
-      confidence, and what new information would change it to no trade.
+      Previous: Search active Polymarket markets tied directly to the next scheduled FOMC decision
+      after today and return exact slugs, questions, close dates, resolution sources, prices and
+      liquidity. Current query: Using only the two most-liquid exact slugs from that list, compare
+      live order-book execution for buying $2,000 of YES. Estimate average fill, slippage, scale-in
+      and exit liquidity, and resolution risk. Give a concise trade/no-trade memo and do not replace
+      either market with a different Fed market.
     category: G
     query_type: prediction_market_followup_slug_trade_memo
+    date_policy: live
     expected_tools: [prediction_market_analysis]
-    description: "Single-turn regression for prediction-market follow-up routing: prior World Cup group markets should be drilled down through prediction_market_analysis using slugs, not rephrased market names."
+    description: "Single-turn regression for prediction-market follow-up routing: prior FOMC markets should be drilled down through prediction_market_analysis using exact slugs, not rephrased market names."
 
   # G.8 — Prediction Markets Historical Analytics (Phase 3-5 tools)
   #
@@ -1226,6 +1408,7 @@ test_cases:
     query: "Polymarket politics markets that resolved since the 2024 US election cycle — were the YES prices actually calibrated, or did the market systematically over- or under-price? Group by price bucket and time-to-resolution, and tell me the sample size and reliability label."
     category: G
     query_type: prediction_market_calibration_politics
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: Historical calibration on resolved politics markets — exercises analyze_prediction_calibration; response should quote sample_size, market_count, effective_n, reliability label, and the standard limitations.
     smoke: true
@@ -1234,6 +1417,7 @@ test_cases:
     query: "Run calibration on Polymarket sports markets resolved over the past 12 months. I specifically want to see realized win rate for markets that priced in the 0.90-0.95 range — has heavy-favorite pricing been right? Use 0.05 buckets and report both the market_bucket_once and sample_weighted modes."
     category: G
     query_type: prediction_market_calibration_boundary_bucket
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "Regression for the boundary-bucket fix (0.90 prices must land in the 0.90-0.95 bucket, not 0.85-0.90). Also exercises sampling_mode='both' so the response carries effective_n separately from raw_observation_count."
 
@@ -1241,6 +1425,7 @@ test_cases:
     query: "Has the longshot bias shown up in Polymarket NBA Finals championship markets this season? Look at sub-10¢ longshots versus 90¢+ favorites and tell me realized win rate, implied probability, and per-contract YES return for each tail. Note the sample size limits."
     category: G
     query_type: prediction_market_longshot_nba
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: analyze_longshot_bias on NBA Finals markets — response should report tail counts, distinct markets, excess return, and any sample_size_below_30 / distinct_markets_below_20 quality flags.
     smoke: true
@@ -1249,6 +1434,7 @@ test_cases:
     query: "Backtest this Polymarket rule for the 2026 cycle: buy YES on politics markets when YES was priced between 5¢ and 15¢, hold to resolution, only count markets with at least $25,000 lifetime volume. I want sample size, win rate, return-on-cost distribution, examples, monte_carlo_input, and the lifetime-volume contamination warning. Use backtest_prediction_rule, not the legacy setup test."
     category: G
     query_type: prediction_market_backtest_rule_politics_longshot
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: backtest_prediction_rule on a structured YES longshot rule with explicit min_lifetime_volume + volume_filter_mode lifetime_static. Response must contain monte_carlo_input and the §11.4 lifetime-volume limitation.
 
@@ -1256,13 +1442,15 @@ test_cases:
     query: "Same Polymarket longshot rule as before — YES between 5¢ and 15¢ on politics markets — but only count entries where there are at least 30 days remaining to resolution at the entry timestamp. Show me whether the time-to-resolution filter actually keeps a meaningful sample, or whether it eliminates most markets."
     category: G
     query_type: prediction_market_backtest_ttr_filter
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "Regression for the TTR-at-entry-time fix. Previously min_days_to_resolution>0 silently dropped every closed market (now-end_date is negative); this query must return a non-zero sample when valid early entries exist, and the skipped count should appear as ttr_min_unmet, not ttr_filter_skipped."
 
   - id: G48
-    query: "Take the monte_carlo_input from that 5¢-15¢ politics longshot backtest and stress it with Monte Carlo. Use a $25,000 bankroll, position fraction 5%, 30% max drawdown limit, 2,000 paths, seed 12345. I want median terminal wealth, p5/p95 terminal wealth, p95 and p99 max drawdown, probability of breaching the drawdown limit, and ruin probability. State the IID resampling caveat in the summary."
+    query: "First backtest a Polymarket rule that buys YES on politics markets between 5¢ and 15¢ and holds to resolution, requiring at least $25,000 lifetime volume. Pass that run's returned monte_carlo_input directly into a 2,000-path Monte Carlo stress test with a $25,000 bankroll, 5% position fraction, 30% max-drawdown limit and seed 12345. Report median and p5/p95 terminal wealth, p95/p99 max drawdown, breach probability and ruin probability, with the IID and lifetime-volume caveats."
     category: G
     query_type: prediction_market_monte_carlo_chained
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: monte_carlo_prediction_risk consuming the upstream backtest's monte_carlo_input. Response must state sampling_method='iid_bootstrap' and include the §13.2 IID limitation verbatim.
     smoke: true
@@ -1271,13 +1459,15 @@ test_cases:
     query: "How much should I size a Polymarket longshot trade given the kind of edge that 5-15¢ politics market backtests show? I haven't told you my bankroll or how much drawdown I can stomach — give me the qualitative read first."
     category: G
     query_type: prediction_market_kelly_qualitative
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "Sizing request WITHOUT bankroll/drawdown constraints — per §13.3, estimate_empirical_kelly must return qualitative guidance only and the agent must not invent numerical fractions. Tests the qualitative_sizing_only quality flag."
 
   - id: G50
-    query: "Now size that 5¢-15¢ politics longshot strategy properly. My bankroll is $25,000, I can tolerate at most 20% drawdown, use a confidence haircut of 0.5. Give me naive Kelly, half Kelly, capped Kelly, the drawdown-constrained fraction, and your conservative recommendation. State the IID caveat."
+    query: "First backtest a Polymarket rule that buys YES on politics markets between 5¢ and 15¢ and holds to resolution, requiring at least $25,000 lifetime volume. Use that exact empirical result to size the strategy for a $25,000 bankroll, 20% maximum tolerated drawdown and 0.5 confidence haircut. Give naive, half, capped and drawdown-constrained Kelly fractions plus a conservative recommendation, with IID and lifetime-volume caveats."
     category: G
     query_type: prediction_market_kelly_numerical
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: estimate_empirical_kelly with all risk constraints supplied — response must contain numerical fractions, kelly_method, and the IID caveat. Conservative fraction should be the min of haircut-applied half-Kelly and drawdown-constrained fraction.
 
@@ -1285,6 +1475,7 @@ test_cases:
     query: "Calibrate Polymarket Fed-decision markets since the start of the rate-cut cycle. Use 0.05 price buckets and tell me which time-to-resolution bucket is the most sample-rich. Flag any 0_3h-bucket samples that look suspicious — I don't want terminal 1.0 or 0.0 prints leaking in as 'short horizon' evidence."
     category: G
     query_type: prediction_market_calibration_post_resolution_guard
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "Regression for the post-resolution filter (P1). Calibration on Fed-decision markets must not show degenerate 0_3h observations with implied_probability in {0.0, 1.0}; the loader filters timestamp > end_date at the DB layer."
 
@@ -1292,6 +1483,7 @@ test_cases:
     query: "Run the full historical workflow on Polymarket June 2026 FOMC markets that have resolved. First calibrate by price bucket and time-to-resolution. Then run a longshot bias analysis with longshot threshold 0.15 and favorite threshold 0.85. Then backtest YES buys in the 5¢-15¢ band hold-to-resolution. Then Monte Carlo with $50k bankroll, 10% position size, 25% drawdown cap. Then size with confidence haircut 0.4."
     category: G
     query_type: prediction_market_historical_workflow_end_to_end
+    date_policy: frozen
     expected_tools: [prediction_market_analysis]
     description: End-to-end pipeline across all five new historical tools in a single user turn. Tests that the agent chains calibration → longshot → backtest_prediction_rule → monte_carlo_prediction_risk → estimate_empirical_kelly while preserving the monte_carlo_input fingerprint between tools.
 
@@ -1309,6 +1501,7 @@ test_cases:
     query: "Same 5¢-15¢ YES politics longshot Polymarket backtest, but exit at the first sample at-or-below 2¢ instead of holding to resolution. I want sample size, win rate, the exit_breakdown across stop / take_profit / expiry / resolution, per-trade exit_reason on examples, and the fidelity caveats the tool reports."
     category: G
     query_type: prediction_market_backtest_stop_only
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "backtest_prediction_rule with exit.type=stop_take_profit and stop_price only. Response must include exit_breakdown (four reasons with share summing to 1.0), per-trade exit_reason and time_to_exit_days on examples, and the three stop_take_profit limitations: intra-bucket triggers undercounted, exit price = sampled row price (not trigger level), zero market impact / slippage."
     smoke: true
@@ -1317,6 +1510,7 @@ test_cases:
     query: "Backtest 5¢-15¢ YES politics longshots on resolved Polymarket again, but this time with a 2¢ stop, a 50¢ take-profit, and a 90-day max-hold. Show me the exit breakdown by reason, the median time-to-exit per reason, the win_rate_at_resolution on the resolution slot, how many trades got skipped because no sample straddled the max-hold boundary, and the fidelity limitations."
     category: G
     query_type: prediction_market_backtest_stop_tp_maxhold
+    date_policy: relative
     expected_tools: [prediction_market_analysis]
     description: "Combined stop + take_profit + max_hold_days triggers. Response must surface counts for every exit reason that applies, win_rate_at_resolution on the resolution slot, any no_exit_price_for_max_hold count in resolution_breakdown / skipped_reasons, and the three fidelity caveats. Tests that the agent does not present sampled trigger prices as guaranteed limit-fills."
 
@@ -1324,6 +1518,9 @@ test_cases:
     query: "Backtest a Polymarket politics longshot: YES priced between 5¢ and 15¢, with a 7¢ stop-loss, otherwise hold to resolution. Use the structured rule backtester."
     category: G
     query_type: prediction_market_backtest_stop_overlap_rejection
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)stop[_ -]?(?:price|loss).{0,120}(?:entry|band|overlap|inside|validation)|(?:entry|band|overlap).{0,120}stop[_ -]?(?:price|loss)'
+    date_policy: frozen
     expected_tools: [prediction_market_analysis]
     description: "Schema disjointness regression: stop_price (0.07) sits inside the entry band (0.05-0.15), so validate_rule must reject with a pydantic ValidationError naming stop_price. Agent must surface the validation error to the user, not silently retry with a different stop_price or relabel the request as hold_to_resolution."
 
@@ -1337,9 +1534,10 @@ test_cases:
   # --- H1-H5: Single-tool research (baseline) ---
 
   - id: H1
-    query: "Give me a deep dive on Palantir — what exactly do they do and where are they headed?"
+    query: "Give me a current deep dive on Palantir — what exactly do they do and where are they headed? State the research cutoff/as-of date and separate sourced facts from inference."
     category: H
     query_type: company_profile
+    date_policy: live
     expected_tools: [screener_lookup, research_analysis]
     expected_sequence: [screener_lookup, research_analysis]
     description: Company profile via name — requires ticker resolution first
@@ -1349,28 +1547,32 @@ test_cases:
     query: "Assess Tim Cook's leadership at Apple (AAPL). Focus on strategic decisions, execution quality, and whether he strengthened the business over time."
     category: H
     query_type: leadership
+    date_policy: relative
     expected_tools: [research_analysis]
     description: Leadership research with company and ticker already specified
 
   - id: H3
-    query: "How are Tesla customers receiving the Cybertruck? Focus on owner feedback, reviews, and forums rather than headlines."
+    query: "How are Tesla customers receiving the Cybertruck? Focus on owner feedback, reviews, and forums rather than headlines, and state the research cutoff/as-of date."
     category: H
     query_type: product_sentiment
+    date_policy: live
     expected_tools: [screener_lookup, research_analysis]
     description: Product sentiment — needs ticker resolution for Tesla
     smoke: true
 
   - id: H4
-    query: "Who are CrowdStrike's main competitors, and what does broader qualitative research say about how they stack up on market share and product strength?"
+    query: "Who are CrowdStrike's main competitors, and what does current broader qualitative research say about how they stack up on market share and product strength? State the research cutoff/as-of date."
     category: H
     query_type: competitive_landscape
+    date_policy: live
     expected_tools: [screener_lookup, research_analysis]
     description: Competitive landscape — needs name-to-ticker resolution
 
   - id: H5
-    query: "Using broader qualitative research rather than headline recaps, what does the GLP-1 obesity drug market look like in terms of competition, adoption, and long-term risks?"
+    query: "Using current broader qualitative research rather than headline recaps, what does the GLP-1 obesity drug market look like in terms of competition, adoption, and long-term risks? State the research cutoff/as-of date."
     category: H
     query_type: general_research
+    date_policy: live
     expected_tools: [research_analysis]
     description: Thematic qualitative research — no single company anchor
 
@@ -1380,35 +1582,40 @@ test_cases:
     query: "I'm considering a position in Palantir (PLTR). Give me the full picture — financials, recent news, and what broader qualitative research says about its government vs commercial mix."
     category: H
     query_type: full_picture
+    date_policy: live
     expected_tools: [fundamentals_analysis, events_news_analysis, research_analysis]
     description: Full picture — research + fundamentals + news coordination
     smoke: true
 
   - id: H7
-    query: "Nvidia (NVDA) is trading at 35x forward earnings. Is that justified given its competitive position and product pipeline?"
+    query: "Fetch Nvidia's (NVDA) current forward valuation multiple instead of assuming one. Is that fetched valuation justified by its competitive position, product pipeline and the evidence available today? State valuation timestamp/basis and distinguish sourced facts from inference."
     category: H
     query_type: valuation_plus_research
+    date_policy: live
     expected_tools: [fundamentals_analysis, research_analysis]
     description: Valuation question needs both structured financials and web research
 
   - id: H8
-    query: "AMD (AMD) just reported earnings. Beyond the headline reaction, how is it positioned versus Nvidia (NVDA) in the data center GPU market?"
+    query: "Use AMD's latest completed earnings release and date—do not assume it reported today. Beyond the documented results and market reaction, how is AMD positioned versus Nvidia (NVDA) in the data-center GPU market? State the research cutoff/as-of date."
     category: H
     query_type: event_plus_competitive
+    date_policy: live
     expected_tools: [events_news_analysis, research_analysis]
     description: Recent event plus competitive research — tests recency awareness
 
   - id: H9
-    query: "I own Meta Platforms (META). Focus on broader qualitative research: what is user reception for Quest headsets, and does outside research suggest the metaverse strategy is working?"
+    query: "I own Meta Platforms (META). Focus on current broader qualitative research: what is user reception for Quest headsets, and does outside research suggest the metaverse strategy is working? State the research cutoff/as-of date."
     category: H
     query_type: product_plus_leadership
+    date_policy: live
     expected_tools: [research_analysis]
     description: Product reception + strategy assessment in a single research query
 
   - id: H10
-    query: "Give me the stock-performance context for Snowflake (SNOW) this quarter, then assess from broader qualitative research whether its product is losing ground to Databricks."
+    query: "Give me the stock-performance context for Snowflake (SNOW) this quarter, then assess from current broader qualitative research whether its product is losing ground to Databricks. State the market-data and research as-of dates."
     category: H
     query_type: competitive_plus_price
+    date_policy: live
     expected_tools: [market_data_analysis, research_analysis]
     expected_sequence: [market_data_analysis, research_analysis]
     description: Market context first, then qualitative competitive research
@@ -1419,6 +1626,7 @@ test_cases:
     query: "How has Satya Nadella transformed Microsoft (MSFT) over the past decade?"
     category: H
     query_type: leadership_long_horizon
+    date_policy: relative
     expected_tools: [research_analysis]
     description: Long time horizon — agent should widen the search window
 
@@ -1426,20 +1634,23 @@ test_cases:
     query: "Using broader qualitative research rather than headline recaps, what do supplier reports, industry commentary, and other non-news sources suggest about Boeing's (BA) quality culture right now?"
     category: H
     query_type: recent_research
+    date_policy: live
     expected_tools: [research_analysis]
     description: Recent qualitative research with explicit non-headline framing
 
   - id: H13
-    query: "Research Rivian for me from a business model, competitive position, and demand perspective."
+    query: "Research Rivian from a current business-model, competitive-position, and demand perspective. State the research cutoff/as-of date and separate sourced facts from inference."
     category: H
     query_type: vague_research
+    date_policy: live
     expected_tools: [screener_lookup, research_analysis]
     description: Vague query — agent should still produce a useful company profile
 
   - id: H14
-    query: "What's the bull and bear case for Coinbase (COIN)?"
+    query: "What's the current bull and bear case for Coinbase (COIN)? State the research cutoff/as-of date and distinguish sourced facts from inference."
     category: H
     query_type: bull_bear
+    date_policy: live
     expected_tools: [research_analysis]
     description: Explicit bull/bear request — maps directly to research output format
     smoke: true
@@ -1450,6 +1661,7 @@ test_cases:
     query: "What were AAPL's earnings last quarter?"
     category: H
     query_type: earnings_not_research
+    date_policy: relative
     expected_tools: [events_news_analysis]
     description: Earnings data — should route to events_news, NOT research
 
@@ -1457,6 +1669,7 @@ test_cases:
     query: "Show me insider trades for MSFT in the last 90 days."
     category: H
     query_type: insider_not_research
+    date_policy: relative
     expected_tools: [fundamentals_analysis]
     description: Insider data — should route to fundamentals, NOT research
 
@@ -1464,45 +1677,309 @@ test_cases:
     query: "What's TSLA trading at?"
     category: H
     query_type: price_not_research
+    date_policy: live
     expected_tools: [market_data_analysis]
+    forbidden_tools: [research_analysis]
     description: Simple price query — should NOT trigger research agent
 
   - id: H18
     query: "Any breaking news on Nvidia today?"
     category: H
     query_type: news_not_research
+    date_policy: live
     expected_tools: [events_news_analysis]
+    forbidden_tools: [research_analysis]
     description: Breaking news — should route to events_news, NOT research
 
   # --- H19-H22: Advisor-grade research scenarios ---
 
   - id: H19
-    query: "I'm building a position in cybersecurity. Compare CrowdStrike (CRWD), Palo Alto Networks (PANW), and Zscaler (ZS) on product moat and customer retention."
+    query: "I'm building a position in cybersecurity. Using current research, compare CrowdStrike (CRWD), Palo Alto Networks (PANW), and Zscaler (ZS) on product moat and customer retention. State the research cutoff/as-of date."
     category: H
     query_type: multi_company_competitive
+    date_policy: live
     expected_tools: [research_analysis]
     description: Multi-company competitive comparison in single research call
 
   - id: H20
-    query: "My client wants exposure to AI infrastructure but is worried about concentration risk in NVDA. Find second-tier plays, then assess their business quality using fundamentals plus broader qualitative research."
+    query: "My client wants current exposure to AI infrastructure but is worried about concentration risk in NVDA. Find second-tier plays, then assess their business quality using the latest completed fundamentals plus broader qualitative research. State all data/research as-of dates and screening coverage."
     category: H
     query_type: thematic_research
+    date_policy: live
     expected_tools: [screener_lookup, fundamentals_analysis, research_analysis]
     description: Thematic screening plus fundamentals and qualitative research
 
   - id: H21
-    query: "Uber's CEO turned the company profitable. Is that sustainable — cost cuts or actual growth?"
+    query: "Using Uber's latest completed results and current context, is its profitability sustainable—cost cuts or actual growth? State the fiscal periods, report dates, and analysis as-of date."
     category: H
     query_type: leadership_plus_fundamentals
+    date_policy: live
     expected_tools: [fundamentals_analysis, events_news_analysis]
     description: Profitability sustainability — financials for margin trends, news for context
 
   - id: H22
-    query: "ARM Holdings (ARM) has a licensing model that looks strong on paper. Is it defensible long-term against RISC-V and x86 based on broader qualitative research?"
+    query: "ARM Holdings (ARM) has a licensing model that looks strong on paper. Is it defensible long-term against RISC-V and x86 based on current broader qualitative research? State the research cutoff/as-of date."
     category: H
     query_type: competitive_moat_research
+    date_policy: live
     expected_tools: [research_analysis]
     description: Deep competitive moat analysis — tests structural vs recent data
+
+  # ─────────────────────────────────────────────
+  # Category I: Extended accuracy and crypto depth
+  # ─────────────────────────────────────────────
+  # These cases preserve useful but redundant or expensive coverage removed
+  # from the paid E2E release gate. They are intentionally extended-only.
+
+  - id: I1
+    query: "Resolve Bitcoin, Solana and Chainlink on Coinbase spot. Return exact selected product IDs, base/quote currencies, online/trading-disabled flags, minimum order sizes, increments and any USD/USDC aliases. Use no non-Coinbase source."
+    category: I
+    query_type: crypto_multi_asset_metadata
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Consolidates the former repeated BTC and altcoin product-resolution cases.
+
+  - id: I2
+    query: "For ETH-USD and SOL-USD on Coinbase, pull one timestamped best-bid/ask snapshot for each, calculate dollar and basis-point spreads, and compare current quoted liquidity without implying executable queue position."
+    category: I
+    query_type: crypto_multi_asset_quote
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: live
+    max_age_seconds: 900
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Cross-asset crypto quote and spread comparison.
+
+  - id: I3
+    query: "Pull the latest Coinbase trade for BTC-USD and XRP-USD. For each report price, size, provider side if available, exchange observation timestamp and source-quality freshness; do not invent a separate retrieval timestamp or substitute a quote or remembered price."
+    category: I
+    query_type: crypto_latest_trade_compare
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: live
+    max_age_seconds: 900
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Consolidates two near-identical latest-trade cases.
+
+  - id: I4
+    query: "Inspect Coinbase BTC-USD, SOL-USD and AVAX-USD order books at depth 50. Compare top-of-book spread and visible depth for hypothetical $10,000 paper entries, include snapshot timestamps, and caveat that a snapshot cannot reconstruct queue position."
+    category: I
+    query_type: crypto_orderbook_compare
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: high
+    description: Consolidates the repeated BTC and altcoin order-book cases.
+
+  - id: I5
+    query: "Compare complete Coinbase ETH-USD and SOL-USD daily candles from 2025-06-01 through 2026-06-01. Use one common interval and report total return, annualized volatility, maximum drawdown, missing percentage, gap ranges and exact source-quality status."
+    category: I
+    query_type: crypto_frozen_ohlcv_compare
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Frozen cross-asset OHLCV comparison retained outside the live gate.
+
+  - id: I6
+    query: "Backtest SOL-USD on complete Coinbase daily candles from 2025-01-01 through 2025-12-31 using spot mean reversion: window 20, z-entry -1.25, z-exit 0, $50,000 capital, 60 bps taker fee, 8 bps spread, max position 20% and max bar participation 5%. Report source quality, closed round-trip trade count, hit rate, P&L reconciliation and verdict."
+    category: I
+    query_type: crypto_altcoin_backtest
+    expected_tools: [crypto_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: high
+    description: Altcoin strategy variant retained without duplicating the full BTC lifecycle.
+
+  - id: I7
+    query: "Analyze Binance BTC perpetual funding, liquidations and 10x leverage plus ETH DeFi TVL and whale-wallet flows, then export a Coinbase paper artifact. Identify every unsupported provider, derivatives and on-chain request, refuse fabricated analysis and block artifact export; offer only supported Coinbase spot alternatives."
+    category: I
+    query_type: crypto_unsupported_scope
+    expected_tools: [crypto_analysis]
+    expected_outcome: partial_refusal
+    expected_response_pattern: '(?is)(?=.*(?:(?:cannot|can.t|unable|refus\w*|unsupported|not supported|unavailable).{0,120}(?:Binance|derivatives?|funding|liquidations?|DeFi|TVL|whale|on-chain)|(?:Binance|derivatives?|funding|liquidations?|DeFi|TVL|whale|on-chain).{0,120}(?:cannot|can.t|unable|refus\w*|unsupported|not supported|unavailable)))(?=.*(?:(?:cannot|can.t|unable|refus\w*|block\w*|not).{0,80}(?:export|artifact)|(?:export|artifact).{0,80}(?:cannot|can.t|unable|refus\w*|block\w*|not)))(?=.*Coinbase.{0,80}spot)'
+    forbidden_response_pattern: '(?is)\b(?:(?:completed|performed|ran|finished).{0,80}(?:Binance|derivatives?|funding|liquidations?|DeFi|TVL|whale|on-chain)|(?:exported|created|generated).{0,60}(?:artifact|paper(?:\s+trade)?)|(?:Binance|derivatives?|funding|liquidations?|DeFi|TVL|whale(?:[- ]wallet)?(?:\s+flows?)?|on-chain).{0,60}(?:is|are|was|were|at|of|:|total(?:ed|s)?|show(?:ed|s)?|reported?)\s*(?:[$€£]\s*[+-]?\d[\d,.]*(?:\s*(?:million|billion|trillion|[kmbt]))?|[+-]?\d[\d,.]*\s*(?:%|percent\b)|[+-]?\d[\d,.]*\s+(?:million|billion|trillion)\b)|(?:[$€£]\s*[+-]?\d[\d,.]*(?:\s*(?:million|billion|trillion|[kmbt]))?|[+-]?\d[\d,.]*\s*(?:%|percent\b)|[+-]?\d[\d,.]*\s+(?:million|billion|trillion)\b).{0,30}(?:in|for|of)\s+(?:Binance|derivatives?|funding|liquidations?|DeFi|TVL|whale(?:[- ]wallet)?(?:\s+flows?)?|on-chain))\b'
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Consolidates derivatives, non-Coinbase, DeFi and on-chain boundaries.
+
+  - id: I8
+    query: "Analyze 40% AAPL, 35% MSFT and 25% GOOGL over the frozen daily adjusted-price window 2024-01-02 through 2025-12-31. Report annualized return and volatility, Sharpe, Sortino and max drawdown. Define Sortino downside deviation as sqrt(mean(min(return minus daily risk-free rate, 0)^2)) over every observation."
+    category: I
+    query_type: portfolio_sortino_formula
+    expected_tools: [portfolio_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Independent guard for full-series downside semideviation.
+
+  - id: I9
+    query: "Screen large-cap US technology stocks whose last annual dividend is at least $3.00 per share. Show the dollar dividend per share returned by the provider and do not reinterpret $3 as a 3% yield or invent missing yields."
+    category: I
+    query_type: screener_dividend_dollars_per_share
+    expected_tools: [screener_lookup]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
+    description: Guards dividend amount versus dividend yield semantics.
+
+  - id: I10
+    query: "Show today's top five gainers and losers specifically among Nasdaq-100 constituents. State constituent count, quote coverage and ranking timestamp; do not label the full Nasdaq exchange as the Nasdaq-100."
+    category: I
+    query_type: market_data_nasdaq100_labeling
+    expected_tools: [market_data_analysis]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Guards Nasdaq-100 universe identity and completeness.
+
+  - id: I11
+    query: "Rank the top ten S&P 500 gainers for the latest completed session. Continue with valid rows if any percentage changes are null or quote batches fail, always report failed chunks, coverage percentage and session timestamp, and never present partial coverage as a complete leaderboard."
+    category: I
+    query_type: market_data_partial_movers
+    expected_tools: [market_data_analysis]
+    expected_outcome: success
+    allowed_partial_errors:
+      - tool: market_data_analysis
+        error_pattern: '(?i)(?:quote|batch|chunk|row).{0,100}(?:failed|failure|null|missing)|(?:failed|failure|null|missing).{0,100}(?:quote|batch|chunk|row)'
+        response_pattern: '(?i)(?:(?:batch|chunk).{0,50}(?:failed|failure)|coverage\s*(?:was|is|:)?\s*(?:[1-9]?\d(?:\.\d+)?)%|leaderboard.{0,50}incomplete)'
+        forbidden_response_pattern: '(?i)(?:(?:failed (?:chunks?|batches?)|(?:chunks?|batches?) failed)\s*:\s*(?:none|0)\b|coverage\s*(?:was|is|:)?\s*100(?:\.0+)?%|\b(?:this|the)\s+(?:is|was|represents?)\s+(?:a\s+)?(?:complete|full)\s+leaderboard\b|\b(?:every|all)\s+(?:constituents?|rows?|symbols?)\s+(?:(?:is|are|was|were)\s+)?(?:included|covered|present)\b|\bno\s+(?:omissions?|missing (?:rows?|symbols?|constituents?)|failed (?:chunks?|batches?))\b)'
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Null-safe index ranking and honest partial-coverage behavior without an unsupported pre-market or injected-fault premise.
+
+  - id: I12
+    query: "Synthetic position with leg type exactly uppercase CALL: long two calls, spot $500, strike $500, premium $12 per share, multiplier 100 and one shared expiry. Calculate maximum profit, maximum loss, breakeven and expiry P&L at $450, $500, $512 and $550. Do not flip the payoff into a put."
+    category: I
+    query_type: options_uppercase_call_payoff
+    expected_tools: [options_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
+    description: Deterministic call-payoff casing guard with a known oracle.
+
+  - id: I13
+    query: "I hold one AAPL call expiring in 30 days and one AAPL put expiring in 60 days. Try to produce one shared-expiry max-profit, max-loss and breakeven profile. Detect the mixed expirations and refuse that invalid aggregate instead of silently modeling both at one expiry."
+    category: I
+    query_type: options_mixed_expiry_rejection
+    expected_tools: [options_analysis]
+    expected_outcome: specialist_error
+    expected_error_pattern: '(?i)(?:mixed|same|share(?:d)?|mismatch).{0,100}(?:expir|expiry)|(?:expir|expiry).{0,100}(?:mixed|same|share(?:d)?|mismatch)'
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: false
+    cost_class: low
+    description: Isolates the mixed-expiry validation branch from payoff arithmetic.
+
+  - id: I14
+    query: "Show Apple's most recent completed reported earnings versus estimates, including actual and estimated EPS and revenue, fiscal period and report date. Do not return an upcoming estimated quarter as the most recent reported result."
+    category: I
+    query_type: earnings_reported_before_estimated
+    expected_tools: [events_news_analysis]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: low
+    description: Guards sorting reported rows ahead of upcoming estimates.
+
+  - id: I15
+    query: "Inspect active Polymarket binary markets for one whose outcome array is not ordered YES first. If one exists, match prices to explicit YES/NO labels and estimate a clearly stated hypothetical YES-side edge; reject an unparseable/null price instead of using array position zero. If none exists in the returned sample, say that explicitly and do not fabricate the edge case."
+    category: I
+    query_type: prediction_market_yes_label_mapping
+    expected_tools: [prediction_market_analysis]
+    expected_outcome: success
+    date_policy: live
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Guards label-based outcome price selection.
+
+  - id: I16
+    query: "Backtest a 20/50 SMA crossover on NVDA using split-adjusted daily data from 2015-01-02 through 2024-12-31. Validate adjustment continuity and refetch only if a cached discontinuity is actually detected; report that decision, total return, CAGR, max drawdown and adjustment basis."
+    category: I
+    query_type: backtest_split_cache_refetch
+    expected_tools: [strategy_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: high
+    description: Guards stale pre-split/post-split cache mixtures.
+
+  - id: I17
+    query: "Return AAPL daily candles for calendar 2023 in oldest-first order and calculate AAPL's 10-year total return through 2025-12-31 using split- and dividend-adjusted prices. State pagination limits and adjustment basis."
+    category: I
+    query_type: market_data_candle_order_total_return
+    expected_tools: [market_data_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Guards chronology, pagination disclosure and total-return adjustment.
+
+  - id: I18
+    query: "Backtest buy-and-hold KO from 2015-01-02 through 2024-12-31 using $100,000 initial capital and the strategy engine's split- and dividend-adjusted daily data. Report the supported adjusted total return, data source, adjustment basis and reconciliation. Do not claim a separate price-only return unless an unadjusted series was actually retrieved with captured lineage."
+    category: I
+    query_type: backtest_dividend_total_return
+    expected_tools: [strategy_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: medium
+    description: Guards dividend-adjusted total-return lineage without demanding an unavailable price-only series.
+
+  - id: I19
+    query: "Backtest a frozen TSLA daily breakout from 2020-01-02 through 2024-12-31 with a 2% stop that becomes active immediately on entry. Report entry-bar stop fills, worst losing trades, max consecutive losses and max drawdown; a stop pierced on the entry bar must bind."
+    category: I
+    query_type: backtest_entry_bar_stop
+    expected_tools: [strategy_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: high
+    description: Guards same-bar stop-loss execution in both risk tails and trade logs.
+
+  - id: I20
+    query: "Backtest the same daily 20/50 SMA crossover on AAPL and MSFT from 2020-01-02 through 2024-12-31 with a shared $100,000 pool and equal target weights. Report the chronological forward-filled combined equity curve, total return, Sharpe and max drawdown; do not rebase each symbol independently at every merge."
+    category: I
+    query_type: backtest_combined_equity_curve
+    expected_tools: [strategy_analysis]
+    expected_outcome: success
+    date_policy: frozen
+    extended_only: true
+    requires_builtin_scorers: true
+    cost_class: high
+    description: Guards shared-capital equity-curve aggregation.
 
   # ─────────────────────────────────────────────
   # Category F: Session/Context (Multi-Turn)

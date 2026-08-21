@@ -46,11 +46,21 @@
 
 ## Commands
 ```sh
-uv run ruff check . --fix     # Lint (fix auto-fixable)
-uv run ruff format .          # Format
-uv run mypy src/ --strict     # Type check (must pass with no errors)
-uv run pytest                 # All tests must pass
+uv run ruff check . --fix        # Lint (fix auto-fixable)
+uv run ruff format .             # Format
+./scripts/run-all-typechecks.sh  # Type check (must pass with no errors)
+./scripts/run-all-tests.sh       # All tests must pass
 ```
+
+**Never typecheck or test from the repo root.** Each service has its own venv
+with its own dependency floors, and the root venv's are older. `mypy src/`
+from the root resolves imports against the *root* venv and invents errors that
+do not exist in the environment the service actually runs in — `openai` is
+2.29.0 at the root vs 2.42.0+ in `src/obai`, so `Reasoning(context=...)` reads
+as an unexpected keyword there. Root `pytest` is worse: `testpaths = ["tests"]`
+means it collects a handful of cases and exits 0 while every real suite goes
+unrun. Both scripts `cd` into each service first, which is the only way the
+per-service `[tool.mypy]` block and venv apply.
 
 ## Docs
 - `docs/spec.md` — Product spec: features, business rules (TODO: create)
@@ -62,6 +72,15 @@ uv run pytest                 # All tests must pass
 
 ## Known Pitfalls
 - Update this section every time the repo teaches you the same lesson twice.
+- **Never `uv sync` at the repo root.** The root venv carries an editable
+  install of `src/obai` that no root manifest declares, so `uv sync` prunes it
+  along with its deps: `.venv/bin/obai` disappears, `import core_agents` starts
+  failing, and the E2E gate suite silently loses two preflight tests. After any
+  root `uv lock`, restore it with `uv pip install -e src/obai`.
+- **The root openai floor must not sit below `src/obai`'s.** The gate shells
+  out to `uv run obai query` from the repo root (`run_one.py`), so the root venv
+  runs the same CLI. A lower floor there rejects hub settings the service
+  accepts — `max` reasoning effort needs `openai>=2.45.0` and aborted every case.
 
 ---
 _Every mistake is a rule waiting to be written._

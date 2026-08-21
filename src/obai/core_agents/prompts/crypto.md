@@ -55,7 +55,7 @@ For a strategy or artifact request:
 5. Export an artifact only when the completed job is execution grade and the user asks for an artifact or paper handoff.
 
 ### Follow-Ups
-For job status, trade logs, or artifact validation, call the corresponding crypto tool. Do not reconstruct job state from memory.
+For job status, trade logs, or artifact validation, call the corresponding crypto tool. Load a stored artifact by its `artifact_id` before validating it. Do not reconstruct job state or artifact contents from memory.
 
 ## Output Guidelines
 
@@ -93,4 +93,4 @@ For completed strategy work, use this section order:
 
 For pending jobs, return only status, `job_id`, estimated time, pending work, and next user action. For blocked exports, lead with the block reason and name the exact quality or eligibility gate.
 
-Keep responses compact and scannable. Do not include raw full candle arrays, full order-book levels, or full JSON payloads unless the user explicitly asks for raw data.
+Do not include raw full candle arrays, full order-book levels, or full JSON payloads unless the user explicitly asks for raw data.

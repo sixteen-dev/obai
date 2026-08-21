@@ -6,6 +6,200 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Default hub model → `gpt-5.6-terra` at `max` reasoning effort** (from
+  `gpt-5.6-sol` / `medium`). A fresh install now answers at the deepest setting
+  the hub offers rather than the balanced one; `gpt-5.6-sol` and the lower
+  effort tiers remain one click away in the web UI settings modal, one command
+  away via `obai config set-model` / `set-effort`, and unchanged via
+  `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT`. This is the most
+  expensive and slowest combination — `gpt-5.6-sol` / `high` is the balanced
+  pairing for anyone who would rather trade depth for cost and latency.
+  Existing `~/.obai/settings.json` files are untouched, so only installs that
+  never wrote one see the change. `max` requires `openai>=2.45.0`, already the
+  floor in both the root and `src/obai` manifests.
+
+### Added
+
+- **User-settable hub model and reasoning effort**, persisted in
+  `~/.obai/settings.json` (`hub_model`: `gpt-5.6-sol` | `gpt-5.6-terra`,
+  `hub_reasoning_effort`: `medium` | `high` | `xhigh` | `max`). The web UI
+  settings modal and the new `obai config set-model` / `obai config set-effort`
+  commands write the same file, so the CLI and web clients — separate processes
+  that each build their own hub — resolve one source of truth. Scope is the hub
+  only; specialist models and effort tiers stay code-owned.
+- Resolution order for those two settings is init kwargs > env >
+  `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` and
+  `ORCHESTRATOR_REASONING_EFFORT` are unchanged and still win — the eval A/B
+  comparison and the E2E regression gate pin the hub model by injecting env —
+  so a stale export makes the UI and CLI appear to do nothing. Both surfaces
+  warn when the matching variable is set.
+- Saving in the web UI applies immediately: `PATCH /api/settings` retunes the
+  running hub in place (model, reasoning effort, and the compaction threshold,
+  which is a fraction of the model's window) under the query lock, so the
+  change lands on the next message without dropping the conversation or
+  re-initializing MCP. Env-pinned fields are skipped so precedence holds. Other
+  clients hold their own hub in their own process and pick the change up when
+  they next launch. Save is also a no-op when neither dropdown moved.
+- Saving mid-answer never blocks: the bridge queues the change instead of
+  waiting on the query lock, the next query applies it, and `/api/settings`
+  reports `pending_apply` so the UI says "applies once the current answer
+  finishes" rather than falsely asking for a restart.
+- No migration on upgrade: an absent or empty settings file means "use the
+  shipped defaults", so existing installs behave exactly as before until
+  someone changes a setting. A file that exists but does not parse or validate
+  is reported as an error instead of silently falling back, so a typo cannot
+  quietly move you to another price tier.
+- `ORCHESTRATOR_REASONING_EFFORT` is now documented in the README, both
+  `.env.example` files, and the `obai` skill. It worked before but appeared
+  nowhere user-facing. The specialist and per-agent `*_REASONING_EFFORT`
+  variables are documented alongside it.
+- `obai web --reload` restarts the server on Python source changes. Static
+  assets are deliberately not watched: they are read from disk per request, so
+  a browser refresh already suffices and a restart would spend a full hub
+  re-init to achieve nothing.
+
+### Changed
+
+- The accepted reasoning-effort set is now `none|low|medium|high|xhigh|max`.
+  `minimal` has been removed: it is a valid value in the OpenAI SDK's own type
+  but every `gpt-5.6` model rejects it at request time, so accepting it only
+  traded a config-time error for a mid-query one.
+
+  **Upgrading:** if you have `ORCHESTRATOR_REASONING_EFFORT=minimal` (or any
+  other `*_REASONING_EFFORT=minimal`) exported or set in `~/.obai/.env`, unset
+  it or change it to `low` before upgrading. The value was previously accepted
+  at config time, so on the new version every `obai` command that builds a
+  config will fail validation until it is changed. `obai config show` flags an
+  env value that is not accepted.
+
+### Fixed
+
+- Native `<select>` dropdowns in the web UI settings modal rendered
+  near-white text on the browser's white popup, unreadable except for the
+  hovered row. The stylesheet declared no `color-scheme`, so the browser
+  painted native controls in light mode while the options inherited the dark
+  theme's text colour. Affected the portfolio preference dropdowns too.
+- `setup.sh` aborted at step 6/8 with `mktemp: too few X's in template`. GNU
+  mktemp requires three trailing `X`s, and under `set -euo pipefail` the
+  failed substitution killed the run before the web UI and final
+  configuration steps. BSD/macOS accepts the bare prefix, which is why it
+  went unnoticed. Shell scripts now have test coverage for this.
+
+## [1.6.0] - 2026-07-18
+
+Minor: cost-aware evaluation suite with deterministic outcome contracts, plus a
+regression gate that no longer false-fails correct answers.
+
+### Added
+
+- Cost-aware evaluation corpus: 210 cases across 8 categories (185 default + 25
+  opt-in `extended_only`). New `--include-extended`, `--ids`, and `--limit`
+  options allow surgical, cost-capped paid suite runs.
+- New scorers: `OutcomeContractScorer` (deterministically classifies success,
+  data-unavailable, specialist-error, partial-refusal, and hub-reject from trace
+  evidence), `DatePolicyScorer` (freshness / as-of SLA disclosure), and
+  `PartialRefusalSemanticScorer` (verifies scoped refusals are complete and free
+  of fabricated results or side effects).
+- Fail-fast preflight before any paid query: suite, selection, scorer,
+  `ANTHROPIC_API_KEY`, and export/report-destination checks. Suite runs return
+  defined exit codes (0 pass, 1 contract failure, 2 invalid config, 3 incomplete
+  scoring).
+- `forbidden_tools` support in tool-orchestration scoring.
+- Hub context retention for long sessions, per OpenAI's ARC-AGI-3 finding that
+  retained reasoning plus compaction tripled scores on that benchmark. The hub
+  now sends `reasoning.context="all_turns"` and server-side
+  `context_management` compaction. New `ORCHESTRATOR_COMPACT_RATIO` (default
+  `0.9`, `None` disables) sets the threshold as a fraction of the hub model's
+  context window rather than a fixed token count, so it tracks the model:
+  942,818 tokens on `gpt-5.6-sol` (~1.05M window), 360,000 on `gpt-5.1` (400k).
+  An unrecognized model logs a warning and leaves compaction off rather than
+  guessing a threshold. Hub-only — specialists carry no `Session`.
+
+### Changed
+
+- **Every agent model moved onto the `gpt-5.6` price tier.** `SPECIALIST_MODEL`
+  and the guardrail model `gpt-5-mini → gpt-5.6-luna`; strategy, crypto, and
+  prediction markets `gpt-5.1 → gpt-5.6-terra`. The hub stays on
+  `gpt-5.6-sol`. Both new IDs carry the same ~1.05M context window as the hub
+  model, so the compaction threshold is unchanged where they are used as the
+  hub. A new `test_every_default_model_is_gpt_5_6` pins the whole default set so
+  a stale model name surfaces as a test failure rather than an invoice
+  surprise.
+- **Strategy, crypto, and prediction markets reasoning effort `high → medium`.**
+  Medium is the balanced starting point OpenAI recommends for GPT-5.6; the
+  per-agent env overrides (`STRATEGY_REASONING_EFFORT` and friends) remain the
+  first knobs to turn back up if answer quality slips.
+- `evaluation query`/`evaluate` no longer stamp traces with a hard-coded
+  `gpt-4o` label when `--model` is omitted. `run_query_with_trace` takes
+  `str | None` and falls back to the hub's configured model, so trace metadata
+  reflects the model that actually ran.
+- `openai-agents` `0.17.3 → 0.19.1` and `openai` `2.15.0 → 2.42.0` floors in the
+  `obai` service. `Reasoning.context` landed in `openai` 2.42.0, so the older
+  floor could not express retained reasoning under `mypy --strict`.
+- Faithfulness scoring now labels financial figures (strike, spot, bid/ask,
+  greeks, premium) and fails outright on a labeled-number contradiction the
+  semantic judge can no longer override; numeric parsing handles signed,
+  scientific-notation, and accounting-negative values.
+- `EfficiencyScorer` measures redundancy by identical route+argument signature,
+  so reusing a specialist with different arguments is no longer penalized.
+- Opik dataset names carry a per-selection fingerprint, preventing stale rows in
+  a reused base dataset from leaking into a filtered run.
+- E2E regression gate: accept a synchronous walk-forward completion instead of
+  aborting the suite, normalize typographic hyphens/dashes before text
+  assertions, broaden refusal detection to inflected forms, and re-baseline
+  specialist-call ceilings to observed multi-step counts (core planning budget
+  157 -> 181).
+- **Breaking:** the suite loader now raises on malformed YAML, unknown fields,
+  duplicate IDs, or multi-turn rows (previously warn-and-skip). Suite exit codes
+  were remapped (`2` = invalid config/selection, `3` = incomplete/errored
+  scoring), and `evaluate --suite` no longer silently falls back to built-in
+  cases when the YAML suite file is missing.
+
+### Security
+
+- `mcp` raised to 1.28.1 across every service lock (CVE-2026-52869 principal
+  verification, CVE-2026-52870 task-handler isolation, CVE-2026-59950 WebSocket
+  Host/Origin validation).
+- `click` raised past PYSEC-2026-2132 in every per-service lock (`obai` to
+  8.3.3, the ten service locks to 8.4.2). The 1.5.4 pin covered the root lock
+  only, so each service still resolved a vulnerable `click`. `uv audit` now
+  reports no known vulnerabilities for the root and every service except
+  `obai`, which still carries `setuptools` 82.0.1 (GHSA-h35f-9h28-mq5c /
+  PYSEC-2026-3447, fixed in 83.0.0).
+
+### Fixed
+
+- **Empty replies from `strategy_analysis` are fixed at the runtime layer.** The
+  relay only surfaced output containing `#### 1. Verdict` or `Job ID` +
+  `Estimated Time`; every other shape fell through unrelayed, and because the
+  hub is instructed to emit nothing but the relayed output, the user got a blank
+  response with no error. A completed walk-forward job-status poll returning
+  2917 characters of fold results was reproduced as an empty reply. Also
+  silently affected: Mode 3 diagnostics (supported indicators/operators,
+  trade-log review), missing-input clarifications, engine errors, and refusals.
+  Any non-empty response is now relayed verbatim, matching `crypto_analysis`
+  and `prediction_market_analysis`.
+- Strategy specialist now formats a **completed** async job-status poll as the
+  full Completed Strategy Response (`#### 1. Verdict` contract). Previously a
+  completed walk-forward follow-up emitted an ad-hoc summary that the new
+  deterministic relay did not recognize, dropping it to an empty UI reply. The
+  e2e gate's `CORE-WALKFORWARD` case now requires the verdict deliverable.
+- Options chain snapshots no longer fail on a null `day` block. The provider
+  sends `"day": null` for contracts with no daily bar, which raised
+  `AttributeError` while surfacing daily volume and failed the whole chain
+  request (and the single-contract path that reuses the same filter).
+- Continuous experiment metrics (efficiency, answer-relevance, LLM-judge rubric
+  average) are recorded correctly; the extractor previously read result keys that
+  never matched and silently dropped these values.
+- Scorers that do not apply to a row no longer record false-zero scores in Opik
+  aggregates; N/A rows are omitted with an explicit applicability flag.
+
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.5.5 → 1.6.0`.
+
 ## [1.5.5] - 2026-07-14
 
 Patch: keep the install-manifest's `managed` flag stable across `setup.sh`

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from src.response_filters import filter_option_chain_snapshot
 from src.response_utils import MAX_RESPONSE_CHARS, truncate_response
 
 
@@ -92,3 +93,61 @@ class TestTruncateResponse:
     def test_default_max_chars_is_40000(self) -> None:
         """Test default max chars matches the module constant."""
         assert MAX_RESPONSE_CHARS == 40000
+
+
+class TestFilterOptionChainSnapshot:
+    """Tests for option chain snapshot filtering."""
+
+    def test_chain_snapshot_keeps_volume_and_timestamps(self) -> None:
+        """Day volume, quote timestamp, and underlying last_updated survive filtering."""
+        raw_contract: dict[str, Any] = {
+            "break_even_price": 180.50,
+            "day": {"change": 0.5, "close": 5.25, "volume": 4200},
+            "details": {
+                "contract_type": "call",
+                "expiration_date": "2024-01-19",
+                "strike_price": 175.0,
+                "ticker": "O:AAPL240119C00175000",
+            },
+            "greeks": {"delta": 0.65, "gamma": 0.03, "theta": -0.05, "vega": 0.15},
+            "implied_volatility": 0.25,
+            "last_quote": {
+                "ask": 5.30,
+                "ask_size": 50,
+                "bid": 5.20,
+                "bid_size": 100,
+                "last_updated": 1705600000000000000,
+            },
+            "open_interest": 15000,
+            "underlying_asset": {
+                "last_updated": 1705600000000000000,
+                "price": 178.25,
+                "ticker": "AAPL",
+            },
+        }
+
+        result = filter_option_chain_snapshot([raw_contract])
+
+        assert len(result) == 1
+        contract = result[0]
+        assert contract["volume"] == 4200
+        assert contract["last_quote"]["last_updated"] == 1705600000000000000
+        assert contract["underlying_last_updated"] == 1705600000000000000
+
+    def test_chain_snapshot_handles_null_day_block(self) -> None:
+        """A null ``day`` block yields volume=None instead of raising.
+
+        The provider sends ``"day": null`` for contracts with no daily bar
+        (e.g. not yet traded today). Chaining ``.get("day", {}).get(...)``
+        only defaults when the key is absent, so an explicit null raised
+        ``AttributeError`` and failed the whole chain request.
+        """
+        raw_contract: dict[str, Any] = {
+            "day": None,
+            "details": {"ticker": "O:AAPL240119C00175000"},
+        }
+
+        result = filter_option_chain_snapshot([raw_contract])
+
+        assert len(result) == 1
+        assert result[0]["volume"] is None

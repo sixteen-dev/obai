@@ -8,6 +8,7 @@ import pytest
 
 from src.clients.fmp_client import FMPAPIError, FMPClient
 from src.config import Settings
+from src.tools.screening import screen_stocks
 
 
 class TestFMPClientRetry:
@@ -189,3 +190,86 @@ class TestFMPClientHealthCheck:
                 result = await client.health_check()
 
             assert result is False
+
+
+def test_dividend_filter_is_dollars_per_share() -> None:
+    """Dividend filter params must be documented as dollars-per-share, not yield.
+
+    Guards accuracy.md §18: FMP's dividendMoreThan filters on lastAnnualDividend
+    (dollars per share), so the docstring must not call it a dividend yield.
+    """
+    doc = FMPClient.screen_stocks.__doc__
+    assert doc is not None
+    assert "dollars per share" in doc
+    assert "Minimum dividend yield" not in doc
+    assert "Maximum dividend yield" not in doc
+
+
+def _screen_rows(n: int) -> list[dict[str, Any]]:
+    """Build ``n`` minimal screener rows that survive the field filter."""
+    return [
+        {"symbol": f"SYM{i}", "companyName": f"Company {i}", "marketCap": 10_000_000_000}
+        for i in range(n)
+    ]
+
+
+def _mock_client_cm(rows: list[dict[str, Any]]) -> MagicMock:
+    """Build a mock FMPClient async context manager whose screener returns ``rows``."""
+    client = AsyncMock()
+    client.screen_stocks = AsyncMock(return_value=rows)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm
+
+
+class TestScreenMetaSignals:
+    """Screener truncation signals and ranking honesty (accuracy.md §19)."""
+
+    def test_screen_docstring_makes_no_unqualified_ranking_claim(self) -> None:
+        """The tool docstring must not call the output a 'ranked'/'top' list.
+
+        No local sort is applied, so results are in provider-default order and
+        must not be advertised as ranked.
+        """
+        doc = screen_stocks.__doc__
+        assert doc is not None
+        assert "ranked list" not in doc.lower()
+        assert "top " not in doc.lower()
+
+    @pytest.mark.asyncio
+    async def test_screen_meta_signals_truncation(self, mock_settings: Settings) -> None:
+        """meta must expose has_more/returned/limit when more rows exist."""
+        limit = 3
+        # Provider returns limit+1 rows: the tool over-fetches one extra to
+        # detect truncation, then trims back to the requested limit.
+        cm = _mock_client_cm(_screen_rows(limit + 1))
+        with (
+            patch("src.tools.screening.FMPClient", return_value=cm),
+            patch("src.tools.screening.get_settings", return_value=mock_settings),
+        ):
+            result = await screen_stocks(sector="Technology", limit=limit)
+
+        meta = result["meta"]
+        assert meta["has_more"] is True
+        assert meta["returned"] == limit
+        assert meta["limit"] == limit
+        assert len(result["results"]) == limit
+        # The response must not advertise the order as ranked/top.
+        assert "ranked" not in str(meta).lower()
+
+    @pytest.mark.asyncio
+    async def test_screen_meta_no_more_when_within_limit(self, mock_settings: Settings) -> None:
+        """has_more must be False when the provider returns at/under the limit."""
+        limit = 5
+        cm = _mock_client_cm(_screen_rows(2))
+        with (
+            patch("src.tools.screening.FMPClient", return_value=cm),
+            patch("src.tools.screening.get_settings", return_value=mock_settings),
+        ):
+            result = await screen_stocks(sector="Technology", limit=limit)
+
+        meta = result["meta"]
+        assert meta["has_more"] is False
+        assert meta["returned"] == 2
+        assert meta["limit"] == limit

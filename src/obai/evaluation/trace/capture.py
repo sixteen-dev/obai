@@ -7,7 +7,7 @@ Hooks into Agent SDK streaming events to capture:
 - Timing breakdown
 
 Usage:
-    async with TraceCapture(query="What is AAPL?", model="gpt-4o") as capture:
+    async with TraceCapture(query="What is AAPL?", model="gpt-5.6-sol") as capture:
         result = Runner.run_streamed(agent, query)
         async for event in result.stream_events():
             capture.process_event(event)
@@ -44,7 +44,7 @@ class TraceCapture:
 
     Example:
         ```python
-        capture = TraceCapture(query="AAPL price?", model="gpt-4o")
+        capture = TraceCapture(query="AAPL price?", model="gpt-5.6-sol")
         capture.start()
 
         result = Runner.run_streamed(agent, query)
@@ -65,7 +65,7 @@ class TraceCapture:
 
         Args:
             query: User query being executed.
-            model: Model name (e.g., "gpt-4o").
+            model: Model name (e.g., "gpt-5.6-sol").
             session_id: Optional session ID for context tracking.
         """
         self.query = query

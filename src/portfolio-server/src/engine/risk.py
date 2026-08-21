@@ -19,6 +19,10 @@ MIN_DATA_POINTS = 30
 MIN_SERIES_LENGTH = 2  # Minimum data points to compute returns
 TRADING_DAYS_PER_YEAR = 252
 
+# Coverage tolerances
+COVERAGE_WEIGHT_TOLERANCE = 1e-6  # Min unpriceable-equity weight worth renormalizing
+COVERAGE_WINDOW_RATIO = 0.9  # Disclose truncation below this fraction of the longest history
+
 
 async def _resolve_weights(
     positions: list[Position],
@@ -169,6 +173,115 @@ def _compute_max_drawdown(
     return max_dd, current_dd, dd_start, dd_end
 
 
+def _renormalize_priced_weights(
+    weights: NDArray[np.float64],
+    total_weight: float,
+    missing_weight: float,
+) -> NDArray[np.float64]:
+    """Rescale priced-equity weights to remove dropped unpriceable weight.
+
+    An unpriceable equity contributes zero return every day, so leaving its
+    weight in the denominator makes it masquerade as zero-return cash and drags
+    risk toward zero. Removing that weight and rescaling the remaining priced
+    holdings (and any genuine cash) back to the full portfolio share keeps
+    intended cash dampening while pricing the sub-portfolio correctly.
+
+    Args:
+        weights: Priced-equity weights (portfolio shares).
+        total_weight: Sum of all position weights (cash + priced + unpriceable).
+        missing_weight: Total weight of the unpriceable equities being dropped.
+
+    Returns:
+        Rescaled priced-equity weights (unchanged if the retained weight is
+        non-positive, which cannot happen while any priced holding remains).
+
+    """
+    retained = total_weight - missing_weight
+    if retained <= 0:
+        return weights
+    return weights * (total_weight / retained)
+
+
+def _resolve_coverage(
+    available: list[tuple[str, float]],
+    equity_positions: list[tuple[str, float]],
+    weighted_positions: list[tuple[str, float]],
+    missing: list[str],
+    warnings: list[str],
+) -> tuple[list[str], NDArray[np.float64], bool]:
+    """Renormalize priced-equity weights away from unpriceable holdings and disclose.
+
+    When any equity's weight is missing price data, drop it and rescale the
+    remaining priced holdings so the metrics reflect the priced sub-portfolio
+    rather than diluting toward zero. Appends a loud disclosure to ``warnings``
+    (side effect) naming the dropped symbols and their total weight.
+
+    Args:
+        available: Priced (symbol, weight) equity tuples.
+        equity_positions: All non-cash (symbol, weight) tuples.
+        weighted_positions: All (symbol, weight) tuples including cash.
+        missing: Equity symbols lacking price data.
+        warnings: Accumulated warnings, appended to in place.
+
+    Returns:
+        Tuple of (available symbols, renormalized weights, coverage_incomplete).
+
+    """
+    avail_symbols = [s for s, _ in available]
+    avail_weights = np.array([w for _, w in available], dtype=np.float64)
+
+    missing_weight = sum(w for s, w in equity_positions if s in missing)
+    if missing_weight <= COVERAGE_WEIGHT_TOLERANCE:
+        return avail_symbols, avail_weights, False
+
+    total_weight = sum(w for _, w in weighted_positions)
+    avail_weights = _renormalize_priced_weights(avail_weights, total_weight, missing_weight)
+    warnings.append(
+        f"Coverage incomplete: dropped unpriceable holdings {', '.join(missing)} "
+        f"({missing_weight:.1%} of portfolio); risk metrics renormalized over "
+        "priced holdings only."
+    )
+    return avail_symbols, avail_weights, True
+
+
+def _coverage_shortfall_warning(
+    price_data: dict[str, list[dict[str, Any]]],
+    aligned_dates: list[str],
+) -> str | None:
+    """Disclose window truncation when one holding's short history shrinks the sample.
+
+    Inner-join alignment collapses every symbol to the common dates, so a
+    recently-listed holding truncates the whole window. Return a warning naming
+    the shortest-history holding and the effective window when the aligned sample
+    falls materially below the longest-history holding, else None.
+
+    Args:
+        price_data: Map of equity symbol to its price-dict list.
+        aligned_dates: Sorted common dates after alignment.
+
+    Returns:
+        A disclosure string, or None when truncation is immaterial.
+
+    """
+    per_symbol_len = {sym: len({d["date"] for d in data}) for sym, data in price_data.items()}
+    if not per_symbol_len or not aligned_dates:
+        return None
+
+    longest_sym = max(per_symbol_len, key=lambda s: per_symbol_len[s])
+    longest_len = per_symbol_len[longest_sym]
+    aligned_len = len(aligned_dates)
+    if aligned_len >= longest_len * COVERAGE_WINDOW_RATIO:
+        return None
+
+    limiting_sym = min(per_symbol_len, key=lambda s: per_symbol_len[s])
+    return (
+        f"Window truncated to {aligned_len} overlapping points "
+        f"({aligned_dates[0]}→{aligned_dates[-1]}) by shortest-history holding "
+        f"{limiting_sym} ({per_symbol_len[limiting_sym]} points vs {longest_len} for "
+        f"{longest_sym}); annualized risk reflects this shorter window."
+    )
+
+
 async def compute_portfolio_risk(
     positions: list[Position],
     fmp_client: FMPClient,
@@ -236,9 +349,12 @@ async def compute_portfolio_risk(
         rfr_decimal = await fmp_client.get_risk_free_rate()
         risk_free_rate = float(rfr_decimal)
 
-    # Do NOT renormalize — cash weight dampens returns/risk naturally
-    avail_symbols = [s for s, _ in available]
-    avail_weights = np.array([w for _, w in available], dtype=np.float64)
+    # Renormalize away unpriceable-equity weight so it does not masquerade as
+    # zero-return cash (which understates vol/drawdown). Genuine cash stays a
+    # dampener; only priced holdings + cash are rescaled.
+    avail_symbols, avail_weights, coverage_incomplete = _resolve_coverage(
+        available, equity_positions, weighted_positions, missing, warnings
+    )
 
     # Build price data dict (excluding benchmark)
     sym_price_data = {s: price_data[s] for s in avail_symbols}
@@ -251,6 +367,10 @@ async def compute_portfolio_risk(
 
     # Step 4: Align dates
     aligned_dates, symbol_arrays, bench_closes = _align_price_series(sym_price_data, bench_data)
+
+    truncation_warning = _coverage_shortfall_warning(sym_price_data, aligned_dates)
+    if truncation_warning:
+        warnings.append(truncation_warning)
 
     if len(aligned_dates) < MIN_DATA_POINTS:
         warnings.append(
@@ -282,7 +402,39 @@ async def compute_portfolio_risk(
         lookback_days=lookback_days,
         aligned_dates=aligned_dates,
         warnings=warnings,
+        coverage_incomplete=coverage_incomplete,
     )
+
+
+def _compute_sortino(
+    port_returns: NDArray[np.float64],
+    annualized_mean: float,
+    risk_free_rate: float,
+) -> float:
+    """Compute the annualized Sortino ratio via full-series downside semideviation.
+
+    Downside deviation is ``sqrt(mean(min(r - daily_rf, 0)^2)) * sqrt(252)`` over
+    the FULL return series: positive/zero observations contribute 0 to the
+    shortfall square, and the per-period risk-free rate is the target (MAR).
+    Taking ``std`` of only the negative returns about their own mean discards
+    zero/positive days and the MAR, which overstates Sortino for rare-but-severe
+    loss profiles.
+
+    Args:
+        port_returns: Portfolio daily return series.
+        annualized_mean: Annualized mean daily portfolio return.
+        risk_free_rate: Annual risk-free rate (MAR).
+
+    Returns:
+        Annualized Sortino ratio, or 0.0 when downside deviation is non-positive.
+
+    """
+    daily_rf = risk_free_rate / TRADING_DAYS_PER_YEAR
+    shortfall = np.minimum(port_returns - daily_rf, 0.0)
+    downside = float(np.sqrt(np.mean(np.square(shortfall))) * np.sqrt(TRADING_DAYS_PER_YEAR))
+    if downside <= 0:
+        return 0.0
+    return float((annualized_mean - risk_free_rate) / downside)
 
 
 def _build_risk_metrics(  # noqa: PLR0913
@@ -292,6 +444,7 @@ def _build_risk_metrics(  # noqa: PLR0913
     lookback_days: int,
     aligned_dates: list[str],
     warnings: list[str],
+    coverage_incomplete: bool = False,
 ) -> RiskMetrics:
     """Build RiskMetrics from computed return series.
 
@@ -302,6 +455,8 @@ def _build_risk_metrics(  # noqa: PLR0913
         lookback_days: Requested lookback period.
         aligned_dates: Aligned date strings.
         warnings: Accumulated warnings.
+        coverage_incomplete: True when unpriceable holdings were dropped and the
+            priced weights renormalized (metrics reflect the priced sub-portfolio).
 
     Returns:
         Populated RiskMetrics.
@@ -315,13 +470,8 @@ def _build_risk_metrics(  # noqa: PLR0913
     annualized_mean = mean_daily * TRADING_DAYS_PER_YEAR
     sharpe = (annualized_mean - risk_free_rate) / annual_vol if annual_vol > 0 else 0.0
 
-    # Sortino ratio (downside deviation)
-    negative_returns = port_returns[port_returns < 0]
-    if len(negative_returns) > 0:
-        downside_dev = float(np.std(negative_returns, ddof=1)) * np.sqrt(TRADING_DAYS_PER_YEAR)
-        sortino = (annualized_mean - risk_free_rate) / downside_dev if downside_dev > 0 else 0.0
-    else:
-        sortino = 0.0
+    # Sortino ratio (full-series downside semideviation against the MAR)
+    sortino = _compute_sortino(port_returns, annualized_mean, risk_free_rate)
 
     # Beta and R-squared. Constant return series (zero variance) make
     # covariance and correlation undefined — guard explicitly and emit
@@ -387,6 +537,7 @@ def _build_risk_metrics(  # noqa: PLR0913
         lookback_days=lookback_days,
         data_start=aligned_dates[0] if aligned_dates else "",
         data_end=aligned_dates[-1] if aligned_dates else "",
+        coverage_incomplete=coverage_incomplete,
         warnings=warnings,
     )
 

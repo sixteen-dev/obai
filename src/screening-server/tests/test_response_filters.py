@@ -57,6 +57,29 @@ class TestFilterScreenResults:
         assert "ceo" not in item
         assert "website" not in item
 
+    def test_dividend_fields_survive(self) -> None:
+        """Dividend amount fields must survive the screen result filter.
+
+        Guards accuracy.md §18: lastDividend/lastAnnualDividend must reach the
+        model so it can report/compute real yields instead of fabricating them.
+        """
+        raw_data: list[dict[str, Any]] = [
+            {
+                "symbol": "AAPL",
+                "companyName": "Apple Inc.",
+                "price": 175.50,
+                "lastDividend": 0.25,
+                "lastAnnualDividend": 1.00,
+            }
+        ]
+
+        result = filter_screen_results(raw_data)
+
+        assert len(result) == 1
+        item = result[0]
+        assert item["lastDividend"] == 0.25
+        assert item["lastAnnualDividend"] == 1.00
+
     def test_handles_empty_list(self) -> None:
         """Test filtering empty list returns empty list."""
         result = filter_screen_results([])

@@ -14,7 +14,7 @@ Usage:
     # Programmatic
     from evaluation import TraceCapture, Trace
 
-    capture = TraceCapture(query="What is AAPL?", model="gpt-4o")
+    capture = TraceCapture(query="What is AAPL?", model="gpt-5.6-sol")
     capture.start()
     # ... process events ...
     trace = capture.finalize()

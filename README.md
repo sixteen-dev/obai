@@ -1,7 +1,11 @@
 <div align="center">
-  <img src="assets/banner.png" alt="OBaI - Multi-agent AI for market research" width="100%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/obai-logo-lockup-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/obai-logo-lockup-light.svg" />
+    <img src="assets/obai-logo-lockup-light.svg" alt="OBaI - Multi-agent AI for market research" width="100%" />
+  </picture>
   <br/>
-  <strong>Open-source multi-agent platform for stock research, strategy backtesting, and prediction market intelligence.</strong>
+  <strong>Open-source multi-agent platform for stock research, strategy backtesting, crypto, and prediction market intelligence.</strong>
   <br/>
   <sub>pronounced <i>"oww-bee"</i></sub>
   <br/><br/>
@@ -9,6 +13,8 @@
   &nbsp;·&nbsp;
   <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
+
+> ⚡ **OBaI is now completely powered by the GPT-5.6 family — Terra and friends.** Every agent runs on the 5.6 tier: `gpt-5.6-terra` on the Hub (at `max` reasoning effort) and on Strategy, Crypto, and Prediction Markets, and `gpt-5.6-luna` on the remaining specialists and the guardrail. No legacy models remain. The Hub ships at its deepest setting — switch it to `gpt-5.6-sol` or a lower effort tier any time from [Settings](#hub-model--reasoning-effort).
 
 > 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
@@ -32,7 +38,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end and scores the final output. The Hub uses `gpt-5.6-sol` for routing and synthesis, the Strategy Agent uses `gpt-5.1` for stronger backtest reasoning, and the remaining specialists use `gpt-5-mini`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-5.6-terra` at `max` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-5.6-terra` for stronger analysis, and the remaining specialists use `gpt-5.6-luna`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
 ---
 
@@ -53,9 +59,11 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 
 ## Prerequisites
 
+- **Linux or macOS** -- the installer refuses any other platform, Windows included. On Windows, run OBaI inside WSL2.
 - **Python 3.12+**
 - **uv** -- [install uv](https://docs.astral.sh/uv/getting-started/installation/)
-- **Docker + Docker Compose v2** -- [Docker Engine](https://docs.docker.com/engine/install/) (Linux) or [Docker Desktop](https://docs.docker.com/desktop/) (macOS/Windows)
+- **git** -- required, not optional: `setup.sh` aborts without it
+- **Docker + Docker Compose v2** -- [Docker Engine](https://docs.docker.com/engine/install/) (Linux) or [Docker Desktop](https://docs.docker.com/desktop/) (macOS)
 
 ---
 
@@ -82,7 +90,15 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 curl -fsSL https://openbell.ai/install.sh | bash
 ```
 
-Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services (including the web UI), and installs the `obai` CLI. Then chat with OBaI:
+Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services (including the web UI), and installs the `obai` CLI.
+
+> **Note:** the key prompts read from stdin, which the pipe above is already using
+> for the script itself. To be prompted, download and run it in two steps instead:
+> `curl -fsSL https://openbell.ai/install.sh -o install.sh && bash install.sh`.
+> Piping still works — it just skips the prompts, and you add your keys to
+> `~/.obai/.env` afterwards.
+
+Then chat with OBaI:
 
 - **Web UI (recommended):** open **http://127.0.0.1:8090** in your browser
 - **Terminal:** run `obai chat`
@@ -152,11 +168,18 @@ The setup script:
 OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
 
 ```bash
-git checkout v1.5.5
+git checkout v1.6.0
 ./setup.sh
 ```
 
-To update to latest: `obai upgrade` (or `git checkout main && git pull && ./setup.sh`).
+Checking out a tag leaves you on a detached HEAD, and `obai upgrade` refuses to
+run there — it tells you to check out a branch first. So to leave a pinned
+version, go back to a branch and then upgrade:
+
+```bash
+git checkout main
+obai upgrade
+```
 
 ---
 
@@ -189,21 +212,36 @@ docker compose -p obai-opik -f infra/opik/docker-compose.yml up -d  # start just
 ## CLI Usage
 
 ```bash
-# Single query (streams response to stdout)
+# Single query (the full answer prints once it is complete)
 obai query "What is AAPL trading at?"
 
-# JSON output (for piping to other tools)
-obai query "AAPL fundamentals" --json
+# Read the query from stdin
+echo "What is AAPL trading at?" | obai query -
 
-# Named session for multi-turn conversation
-obai query "What is AAPL's P/E ratio?" --session research1
+# JSON output (for piping to other tools)
+obai query "AAPL fundamentals" --json          # -j
+
+# Named session for multi-turn conversation, persisted to ~/.obai/sessions.db
+obai query "What is AAPL's P/E ratio?" --session research1   # -s
 obai query "How does that compare to MSFT?" --session research1
 
-# Interactive REPL
-obai chat
+# Override the hub model for this one query
+obai query "Design a momentum strategy" --model gpt-5.6-sol  # -m
 
-# Check MCP server connectivity
-obai status
+# Score the response for faithfulness + completeness
+obai query "AAPL fundamentals" --scoring
+
+# Interactive REPL, and the full-screen terminal UI
+obai chat
+obai tui
+
+# Lifecycle and health
+obai status      # check MCP server connectivity
+obai start       # start the stack
+obai stop        # stop it, preserving data
+obai restart     # cycle it
+obai upgrade     # pull the latest version and restart
+obai web         # serve the web UI
 ```
 
 ---
@@ -213,7 +251,7 @@ obai status
 | Server | Port | Data Source | Key Capabilities |
 |--------|------|-------------|-----------------|
 | **fundamentals-server** | 8001 | FMP | Company financials, ratios, SEC filings, insider trades. Qdrant-backed vector search over financial education PDFs is shipped but disabled by default (`QDRANT_ENABLED=false`). |
-| **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday data (5min/15min/1hr), technical indicators, index-scoped movers (S&P 500, Nasdaq, Dow Jones) |
+| **market-data-server** | 8002 | FMP | Real-time/historical prices, intraday and daily candles (1min/5min/15min/30min/1hour/4hour/daily), technical indicators, index-scoped movers (S&P 500, Nasdaq, Dow Jones) |
 | **events-news-server** | 8003 | FMP + Tavily | Earnings calendar, dividends, AI-powered news search |
 | **options-server** | 8004 | Massive.com | Options chains, Greeks, implied volatility, open interest |
 | **screening-server** | 8005 | FMP | Stock screening with financial filters, ticker discovery |
@@ -254,9 +292,9 @@ Strategy Agent workflow:
   Final strategy JSON: { ... }
 ```
 
-The agent uses `gpt-5.1` by default (not `gpt-5-mini` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
+The agent uses `gpt-5.6-terra` by default (not `gpt-5.6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
 
-**Backtest server tools:** `run_strategy`, `get_job_status`, `get_supported_indicators`, `download_data`, `list_available_data`, `get_trade_log`, `compare_strategies`, `clear_cache`
+**Backtest server tools:** `backtest_run_strategy_tool`, `backtest_get_job_status_tool`, `backtest_get_supported_indicators_tool`, `backtest_download_data_tool`, `backtest_list_available_data_tool`, `backtest_manage_storage_tool`, `backtest_get_trade_log_tool`, `backtest_compare_strategies_tool`, `backtest_clear_cache_tool`, `backtest_walk_forward_tool`
 
 ---
 
@@ -267,12 +305,17 @@ OBaI ships a browser-based client with a dark glassmorphism interface:
 - Real-time streaming via WebSocket
 - Session management with persistent conversation history
 - Live agent activity panel showing tool calls and specialist routing
-- Portfolio preferences and Opik trace links in settings
+- Portfolio preferences, hub model / reasoning effort, and Opik trace links in settings
 
 ```bash
 obai web                  # Launch on http://127.0.0.1:8090
 obai web --port 3000      # Custom port
+obai web --reload         # Dev: restart on Python source changes
 ```
+
+`--reload` watches Python sources only. Static assets (CSS/JS/HTML) are read
+from disk per request, so a browser refresh is enough for those — and every
+Python reload rebuilds the hub, which costs 30-60s of MCP re-init.
 
 The web UI is automatically started by `setup.sh`. It runs a single-process FastAPI/uvicorn server with minimal resource overhead — the heavy computation happens in the MCP servers (Docker) and the OpenAI API (remote).
 
@@ -311,13 +354,16 @@ Each trace captures the complete execution graph:
 
 ### Custom Evaluation Metrics
 
-OBaI registers custom scorers with Opik that run on every traced query:
+OBaI ships custom scorers that the evaluation harness builds per test case and
+reports to Opik. They run when you invoke `python -m evaluation`, not on every
+traced query — a normal `obai query` is traced but not scored unless you set
+`ENABLE_INLINE_SCORING=true` or pass `--scoring`:
 
 | Scorer | What it measures | How it works |
 |--------|-----------------|--------------|
 | **Faithfulness** | Is the response grounded in tool outputs? | Extracts numbers from the final response and cross-checks against raw MCP tool data. Reports `numeric_accuracy` (0-1) and a pass/fail verdict. |
 | **Completeness** | Does the response address the full query? | Checks coverage of available data points from tool outputs that should appear in the answer. Reports `coverage_score` (0-1). |
-| **LLM Judge** | Overall quality assessment | Cross-family evaluation using Anthropic Claude as judge (requires `ANTHROPIC_API_KEY`). Scores task completion, tool correctness, hallucination, and answer relevance. |
+| **LLM Judge** | Overall quality assessment | Cross-family evaluation using Anthropic Claude as judge (requires `ANTHROPIC_API_KEY`). Scores five rubric dimensions 1-5 — factual accuracy, completeness, clarity, tool use quality, and reasoning soundness — each passing at 3. |
 
 ### Running Evaluations
 
@@ -331,10 +377,12 @@ uv run python -m evaluation query "What is AAPL trading at?" --verbose
 # Run evaluation with all scorers
 uv run python -m evaluation evaluate "What is AAPL trading at?"
 
-# Run the full test suite (176 cases, categories: A/B/C/D/E/G/H)
+# Run the test suite (185 of 210 cases; the other 25 are extended_only.
+# Categories: A/B/C/D/E/G/H/I — add --include-extended for all 210)
 uv run python -m evaluation evaluate --suite
 
-# Fast mode — skip LLM judge, just faithfulness + completeness
+# Fast mode — skip every LLM-based scorer (the Opik built-ins AND the LLM
+# judge), leaving only the deterministic contract/tool/sequence scorers
 uv run python -m evaluation evaluate --suite --no-builtin
 
 # Export markdown report
@@ -360,16 +408,116 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-5.6-sol` | Model for the Central Hub (needs strong reasoning) |
-| `SPECIALIST_MODEL` | `gpt-5-mini` | Model for specialist agents |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-terra` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
+| `ORCHESTRATOR_REASONING_EFFORT` | `max` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Overrides `~/.obai/settings.json` |
+| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Model for specialist agents |
+| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
-| `ENABLE_INLINE_SCORING` | `true` | Run faithfulness/completeness scoring on every query |
+| `ENABLE_INLINE_SCORING` | `false` | Run faithfulness/completeness scoring on every query in the TUI/CLI |
 | `OPIK_ENABLED` | `true` | Enable Opik tracing |
 | `OPIK_URL` | `http://localhost:5173` | Opik server URL |
-| `MCP_TIMEOUT` | `30` | MCP request timeout (seconds) |
+| `MCP_TIMEOUT` | `180` | MCP request timeout (seconds), between 1 and 300 |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`.
+
+Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists, and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent. Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` model, so OBaI does not accept it.)
+
+---
+
+## Hub Model & Reasoning Effort
+
+The Central Hub's model and reasoning effort are the two knobs worth changing without editing code — together they set the cost and the depth of every query. OBaI stores your choice in `~/.obai/settings.json`:
+
+```json
+{
+  "hub_model": "gpt-5.6-terra",
+  "hub_reasoning_effort": "max"
+}
+```
+
+| Field | Default | Choices |
+|-------|---------|---------|
+| `hub_model` | `gpt-5.6-terra` | `gpt-5.6-terra` (heavier analysis, shipped default, also used by the strategy, crypto, and prediction-markets specialists), `gpt-5.6-sol` (balanced — faster and cheaper) |
+| `hub_reasoning_effort` | `max` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
+
+OBaI ships the Hub at its deepest setting, `gpt-5.6-terra` / `max`, so a fresh
+install answers as well as it can out of the box. Deeper is not automatically
+dearer here: on the `core` regression tier `gpt-5.6-terra` / `max` scored at
+least as well as `gpt-5.6-sol` / `medium` at **lower** total cost and slightly
+lower median latency, because a stronger Hub settles routing and synthesis in
+fewer turns. See [Why the Hub defaults to `gpt-5.6-terra` at `max`
+effort](docs/hub-default-model-rationale.md) for the numbers and the caveats.
+If you would rather trade depth for latency, `gpt-5.6-sol` / `high` is the
+balanced pairing — change it in the settings modal or with `obai config`, both
+shown below.
+
+Specialist models and efforts are not settable here; they stay code-owned and are tuned through the environment variables above.
+
+**Change it from the web UI** — open the settings modal in `obai web` and pick a model and effort tier.
+
+<p align="center">
+  <img src="assets/hub-settings-modal.png" alt="OBaI settings modal showing the Opik Tracing link, the Hub Model selector set to gpt-5.6-terra, and the Hub Reasoning Effort selector set to max" width="620" />
+</p>
+
+The screenshot above shows the top two of the modal's three groups. **Links**
+points at your self-hosted Opik instance at `OPIK_URL`, so the traces for the
+conversation you are in are one click away — it reads *Not configured* when
+`OPIK_URL` is unset. **Model** holds the same two fields as the file above,
+`Hub Model` and `Hub Reasoning Effort`, populated from the validated choice
+lists, so the dropdowns can never offer a value the hub would reject. Below
+them sits **Portfolio Preferences** (risk tolerance, horizon, benchmark,
+capital, currency, market) — see [User Preferences](#user-preferences).
+
+The line under the two dropdowns, *Running now: `model` / `effort`*, is the pair
+the live hub is actually using, which can legitimately differ from what is saved.
+Read it before you hit **Save**. If a save cannot take effect yet, the same line
+says so: *Saved values apply after you restart OBaI*, or *Saved values apply once
+the current answer finishes*. And if an environment variable outranks the file, a
+warning appears against that specific field naming the variable and its value.
+
+**Change it from the CLI:**
+
+```bash
+obai config set-model gpt-5.6-terra    # hub model
+obai config set-effort high            # hub reasoning effort
+```
+
+Both write the same `~/.obai/settings.json`. The file is created on first write; if it is missing, OBaI uses the defaults above, so there is nothing to migrate on upgrade. You can also edit it by hand — an unparseable or out-of-range file is reported as an error rather than silently ignored, so a typo can never quietly bill you at a different tier.
+
+### Two things to know
+
+**Environment variables win.** Resolution order for these two settings is `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` → `~/.obai/settings.json` → shipped default. They are fully supported, not deprecated — the eval A/B comparison and the E2E regression gate both pin the hub model by injecting env. But that also means a stale `export ORCHESTRATOR_MODEL=...` in your shell profile, or a leftover `ORCHESTRATOR_MODEL=` line in `~/.obai/.env` (the CLI loads it into the environment at startup), makes the web UI and `obai config` appear to do nothing. Both surfaces warn you when the matching variable is set; if a change does not take, that is the first place to look.
+
+**Saving in the web UI applies immediately.** The web server retunes its own
+running hub in place, so the change lands on your next message — no restart, no
+lost conversation, no 30-60s of hub re-initialization. Everything else about
+the hub (skills, MCP connections, open WebSockets) is untouched.
+
+Other clients are separate processes holding their own hub, so they cannot be
+signalled from the browser. Only the hub reads these settings; the MCP servers
+and Opik are unaffected either way:
+
+| Client | What to do |
+|--------|------------|
+| Web UI | **Nothing.** Applies on your next message. |
+| `obai query` | **Nothing.** Each invocation is a new process that builds a fresh hub. |
+| `obai chat` / `obai tui` | Exit and relaunch. Both build the hub once at startup and hold it for the whole session, so `clear` does not pick up a change. |
+| Everything | `obai restart` — full `teardown.sh` + `setup.sh`, which rebuilds the Docker stacks too. Never needed for a settings change. |
+
+Saving while an answer is streaming is queued rather than applied mid-turn, so
+the model never changes underneath a running answer; the modal says "applies
+once the current answer finishes", and the next message uses the new settings.
+
+The one case where the web UI still asks you to restart is a save that lands
+while the hub is still initializing — there is no agent to retune yet. The
+modal and the sidebar both say so when it happens.
+
+To check what a new hub would pick up, without starting one:
+
+```bash
+obai config show
+```
 
 ---
 
@@ -385,6 +533,10 @@ OBaI stores personal preferences in `~/.obai/preferences.json`. These persist ac
 | `initial_capital` | `100000` | Starting capital for backtests |
 | `currency` | `USD` | Currency code |
 | `market` | `US` | Market scope |
+
+**Update from the web UI** — the same settings modal that holds the hub model has
+a **Portfolio Preferences** section carrying all six fields. See
+[Hub Model & Reasoning Effort](#hub-model--reasoning-effort) for the screenshot.
 
 **Update via chat** — just tell OBaI in conversation:
 
@@ -418,6 +570,10 @@ obai/
 ├── setup.sh                        # One-shot setup script
 ├── docker-compose.yml              # All 10 MCP servers
 ├── pyproject.toml                  # Monorepo dev tooling config
+├── scripts/                        # run-all-tests.sh, run-all-typechecks.sh
+├── skills/                         # 13 agent skills (see Agent Skills below)
+├── docs/                           # Architecture diagram and design docs
+├── assets/                         # Logo lockups and screenshots
 ├── infra/
 │   └── opik/                       # Opik tracing stack (Docker Compose)
 ├── src/
@@ -437,12 +593,14 @@ obai/
 │       │   ├── central_hub_agent.py
 │       │   ├── base_agent.py
 │       │   ├── config.py
+│       │   ├── hub_settings.py     # ~/.obai/settings.json (hub model + effort)
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
 │       │   └── *_agent.py          # 10 specialist agents
 │       ├── clients/
 │       │   ├── cli/                # CLI + TUI clients
-│       │   │   ├── chat.py         # Headless CLI (obai query/chat/status)
+│       │   │   ├── chat.py         # CLI entry point — query/chat/tui/status/web,
+│       │   │   │                   #   start/stop/restart/upgrade, and `obai config`
 │       │   │   └── tui.py          # Textual TUI
 │       │   └── web/                # Browser client
 │       │       ├── server.py       # FastAPI + WebSocket server
@@ -470,12 +628,23 @@ uv run ruff check . --fix
 # Format
 uv run ruff format .
 
-# Type check (strict mode)
-uv run mypy src/ --strict
+# Type check every service (strict mode)
+./scripts/run-all-typechecks.sh
 
-# Run tests
-uv run pytest
+# Run every service's test suite
+./scripts/run-all-tests.sh
 ```
+
+**Type check and test through the scripts, never directly from the repo root.**
+Each service has its own venv with its own dependency floors, and the root
+venv's are older. `mypy src/` from the root fails outright — the services each
+have a `src/` package, so it reports `Duplicate module named "src"` — and where
+it does resolve, it resolves against the *root* venv and invents errors that do
+not exist in the environment the service actually runs in. Root `pytest` is
+quieter and worse: `testpaths = ["tests"]` means it collects a handful of cases
+and exits 0 while every real suite goes unrun. Both scripts `cd` into each
+service first, which is the only way the per-service `[tool.mypy]` block and
+venv apply.
 
 ---
 
@@ -516,9 +685,9 @@ OBaI ships with agent skills that let any AI agent autonomously interact with th
 ### Next
 
 - [ ] Options strategy analysis and backtesting
-- [x] Polymarket prediction market analysis (11 tools, executable pricing, trade memos, wallet tracing)
-- [ ] Crypto market analysis
-- [ ] Semantic caching via LangCache (Redis)
+- [x] Polymarket prediction market analysis (12 tools, executable pricing, trade memos, wallet tracing)
+- [x] Crypto market analysis (11 tools — Coinbase spot quotes, order books, OHLCV, spot backtests, paper-ledger artifacts)
+- [x] Semantic caching via LangCache (Redis) — shipped, disabled by default; set the `LANGCACHE_*` variables to enable
 - [x] Web client (FastAPI + WebSocket, dark glassmorphism UI)
 
 ---

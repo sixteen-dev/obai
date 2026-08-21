@@ -263,6 +263,43 @@ class TestStopLossTriggers:
         assert stop_trades[0].pnl < 0
 
 
+class TestEntryBarStopBinds:
+    """A stop pierced on the bar a lot opens must close that same bar."""
+
+    def test_entry_bar_stop_binds(self) -> None:
+        """Lot opened on a bar whose low pierces the stop exits that bar via stop."""
+        # Entry signal on bar 0 -> fill at bar 1 open (100). Stop at 95.
+        # Bar 1's low (94) pierces the stop on the entry bar itself.
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0, 100.0],
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+            lows=[99.0, 94.0, 99.0, 99.0],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+        result = run_portfolio_backtest(
+            signal_dfs={"TEST": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            slippage_pct=0.0,
+            commission_pct=0.0,
+            stop_loss_pct=5.0,
+        )
+
+        stop_trades = [t for t in result.trades if t.exit_reason == "stop_loss"]
+        assert len(stop_trades) == 1
+        trade = stop_trades[0]
+        # Closed on the entry bar itself, at the stop level not the close.
+        assert trade.entry_date == trade.exit_date
+        assert trade.exit_price == pytest.approx(95.0)
+        assert trade.pnl < 0
+
+
 class TestCloseRemainingAtEnd:
     """Test that open positions are closed at the final bar."""
 
@@ -389,3 +426,69 @@ class TestPortfolioVolumeScaledSlippage:
         )
         # Results should differ when volume scaling is on
         assert flat.equity_curve != scaled.equity_curve
+
+
+class TestCoFiringEntryAndExit:
+    """A bar whose entry and exit both fire must not open and close in one bar."""
+
+    def test_co_firing_signals_do_not_wash_the_position(self) -> None:
+        """The prior bar's exit belongs to the position it closed, not the new one.
+
+        Entries fill on the bar after the signal, so a lot opened here was
+        opened BY the prior bar's entry. Re-reading that same prior bar's exit
+        flag closed it immediately: a same-day round trip with zero holding
+        days and two commissions charged, repeated for every bar the two
+        signals co-fire.
+        """
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0, 100.0, 100.0],
+            entries=[True, True, True, False, False],
+            exits=[True, True, True, False, False],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+
+        result = run_portfolio_backtest(
+            signal_dfs={"AAA": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            commission_pct=0.1,
+        )
+
+        same_bar = [t for t in result.trades if t.entry_date == t.exit_date]
+        assert same_bar == [], f"opened and closed on one bar: {same_bar}"
+
+    def test_stop_loss_still_binds_on_the_entry_bar(self) -> None:
+        """The entry-bar recheck exists for price levels; that must still work.
+
+        A stop pierced by the entry bar's own low has to close that bar, or
+        the backtest reports a loss the strategy would never have taken.
+        """
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0],
+            entries=[True, False, False],
+            exits=[False, False, False],
+            lows=[100.0, 80.0, 100.0],
+            highs=[101.0, 101.0, 101.0],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+
+        result = run_portfolio_backtest(
+            signal_dfs={"AAA": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            commission_pct=0.1,
+            stop_loss_pct=5.0,
+        )
+
+        assert [t.exit_reason for t in result.trades] == ["stop_loss"]
+        assert result.trades[0].entry_date == result.trades[0].exit_date

@@ -10,6 +10,7 @@ from datetime import date, datetime
 
 import polars as pl
 
+from ..clients.fmp_client import price_basis_for
 from ..logging_config import get_logger
 from .db import DuckDBManager
 
@@ -157,20 +158,22 @@ class DataStore:
             conn.execute(
                 """
                 INSERT INTO _meta (symbol, timeframe, first_timestamp, last_timestamp,
-                                   row_count, last_refreshed)
+                                   row_count, last_refreshed, price_basis)
                 VALUES ($1, $2,
                     (SELECT MIN(timestamp) FROM ohlcv WHERE symbol = $1 AND timeframe = $2),
                     (SELECT MAX(timestamp) FROM ohlcv WHERE symbol = $1 AND timeframe = $2),
                     (SELECT COUNT(*) FROM ohlcv WHERE symbol = $1 AND timeframe = $2),
-                    NOW()
+                    NOW(),
+                    $3
                 )
                 ON CONFLICT (symbol, timeframe) DO UPDATE SET
                     first_timestamp = EXCLUDED.first_timestamp,
                     last_timestamp = EXCLUDED.last_timestamp,
                     row_count = EXCLUDED.row_count,
-                    last_refreshed = EXCLUDED.last_refreshed
+                    last_refreshed = EXCLUDED.last_refreshed,
+                    price_basis = EXCLUDED.price_basis
                 """,
-                [sym, timeframe],
+                [sym, timeframe, price_basis_for(timeframe)],
             )
             conn.execute("COMMIT")
         except Exception:
@@ -277,6 +280,70 @@ class DataStore:
             [timeframe],
         ).fetchall()
         return [row[0] for row in result]
+
+    def get_price_basis(
+        self,
+        symbol: str,
+        timeframe: str = "daily",
+    ) -> str | None:
+        """Return the adjustment basis a symbol's cached rows were written on.
+
+        Args:
+            symbol: Stock ticker symbol.
+            timeframe: Bar timeframe.
+
+        Returns:
+            The stored basis, or None when nothing is cached or the rows
+            predate basis tracking and their basis is therefore unknown.
+
+        """
+        result = self.db.conn.execute(
+            """
+            SELECT price_basis
+            FROM _meta
+            WHERE symbol = $1 AND timeframe = $2
+            """,
+            [symbol.upper(), timeframe],
+        ).fetchone()
+        if result is None or result[0] is None:
+            return None
+        return str(result[0])
+
+    def delete_symbol(
+        self,
+        symbol: str,
+        timeframe: str = "daily",
+    ) -> int:
+        """Drop every cached row for a symbol/timeframe and forget its metadata.
+
+        Args:
+            symbol: Stock ticker symbol.
+            timeframe: Bar timeframe.
+
+        Returns:
+            Number of OHLCV rows removed.
+
+        """
+        sym = symbol.upper()
+        conn = self.db.conn
+        removed = conn.execute(
+            "SELECT COUNT(*) FROM ohlcv WHERE symbol = $1 AND timeframe = $2",
+            [sym, timeframe],
+        ).fetchone()
+        count = int(removed[0]) if removed else 0
+
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            conn.execute("DELETE FROM ohlcv WHERE symbol = $1 AND timeframe = $2", [sym, timeframe])
+            conn.execute("DELETE FROM _meta WHERE symbol = $1 AND timeframe = $2", [sym, timeframe])
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            logger.exception("delete_symbol_failed", symbol=sym, timeframe=timeframe)
+            raise
+
+        logger.info("symbol_cache_deleted", symbol=sym, timeframe=timeframe, rows=count)
+        return count
 
     def get_last_modified(
         self,

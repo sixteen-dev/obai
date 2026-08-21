@@ -80,6 +80,11 @@ def filter_earnings(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _apply_filter(data, "earnings")
 
 
+def filter_earnings_calendar(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter market-wide earnings-calendar rows to essential fields."""
+    return _apply_filter(data, "earnings_calendar")
+
+
 def filter_dividends(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter dividends data to essential fields."""
     return _apply_filter(data, "dividends")

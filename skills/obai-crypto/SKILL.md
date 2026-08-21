@@ -21,8 +21,9 @@ is required.
 - `crypto_backtest_run_strategy` - Run a Coinbase spot strategy backtest (`strategy_spec`, `data_config`, `execution_config` as JSON strings)
 - `crypto_backtest_get_job_status` - Job status for a backtest `job_id`
 - `crypto_backtest_get_trade_log` - Stored trade log for a `job_id`
-- `crypto_strategy_validate_artifact` - Validate a Coinbase v1 strategy artifact
-- `crypto_strategy_export_artifact` - Export a validated artifact from a completed job
+- `crypto_strategy_validate_artifact` - Check a candidate artifact's shape and internal consistency; pass `artifact_id` to also bind it to the stored key
+- `crypto_strategy_export_artifact` - Export a validated artifact from a completed job; returns the `artifact_id` to reference it later
+- `crypto_strategy_get_artifact` - Load a stored artifact by `artifact_id` and revalidate it against the key it was filed under
 
 ## Scope
 

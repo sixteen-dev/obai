@@ -224,3 +224,65 @@ class TestDuckDBManager:
         # Reconnect via .conn property
         conn = manager.conn
         assert conn is not None
+
+
+class TestPriceBasisVersioning:
+    """Cached rows carry the adjustment basis they were fetched on."""
+
+    def test_daily_write_records_the_dividend_adjusted_basis(self, store: DataStore) -> None:
+        """Without this stamp nothing can tell a rebased cache from a current one."""
+        df = pl.DataFrame(
+            {
+                "date": [date(2024, 1, 2), date(2024, 1, 3)],
+                "open": [100.0, 101.0],
+                "high": [102.0, 103.0],
+                "low": [99.0, 100.0],
+                "close": [101.0, 102.0],
+                "volume": [1_000_000, 1_100_000],
+            }
+        )
+
+        store.write_ohlcv("AAPL", df, timeframe="daily")
+
+        assert store.get_price_basis("AAPL", timeframe="daily") == "dividend_adjusted"
+
+    def test_intraday_write_records_the_raw_basis(self, store: DataStore) -> None:
+        """Intraday bars are not dividend adjusted and must not claim to be."""
+        df = pl.DataFrame(
+            {
+                "date": [datetime(2024, 1, 2, 10, 0), datetime(2024, 1, 2, 10, 5)],
+                "open": [100.0, 101.0],
+                "high": [102.0, 103.0],
+                "low": [99.0, 100.0],
+                "close": [101.0, 102.0],
+                "volume": [1_000, 1_100],
+            }
+        )
+
+        store.write_ohlcv("AAPL", df, timeframe="5min")
+
+        assert store.get_price_basis("AAPL", timeframe="5min") == "raw"
+
+    def test_unknown_symbol_has_no_basis(self, store: DataStore) -> None:
+        assert store.get_price_basis("NOPE", timeframe="daily") is None
+
+    def test_delete_symbol_removes_rows_and_metadata(self, store: DataStore) -> None:
+        """A purge has to take the metadata too, or the cache looks present."""
+        df = pl.DataFrame(
+            {
+                "date": [date(2024, 1, 2), date(2024, 1, 3)],
+                "open": [100.0, 101.0],
+                "high": [102.0, 103.0],
+                "low": [99.0, 100.0],
+                "close": [101.0, 102.0],
+                "volume": [1_000_000, 1_100_000],
+            }
+        )
+        store.write_ohlcv("AAPL", df, timeframe="daily")
+
+        removed = store.delete_symbol("AAPL", timeframe="daily")
+
+        assert removed == 2
+        assert store.read_ohlcv("AAPL", timeframe="daily") is None
+        assert store.get_date_range("AAPL", timeframe="daily") is None
+        assert store.get_price_basis("AAPL", timeframe="daily") is None

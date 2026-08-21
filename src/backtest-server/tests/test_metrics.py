@@ -53,6 +53,40 @@ class TestComputeMetrics:
 
         assert result.sharpe_ratio != 0.0
 
+    def test_sharpe_uses_nonzero_rfr(self) -> None:
+        """A nonzero risk-free rate lowers Sharpe by the annualized rf/sigma shift.
+
+        Guards accuracy.md §5: Sharpe must be computed against the supplied
+        risk-free rate, and the chosen rate must be surfaced on the result.
+        """
+        n = 252
+        rng = np.random.default_rng(7)
+        returns = 0.0008 + rng.normal(0.0, 0.006, n)
+        equity = 100_000.0 * np.cumprod(1.0 + returns)
+        dates = [date(2023, 1, 3) + timedelta(days=i) for i in range(n)]
+        equity_df = pl.DataFrame({"date": dates, "equity": equity.tolist()})
+
+        result_zero = compute_metrics(
+            equity_df, [], strategy_name="RF", symbols=["X"], risk_free_rate=0.0
+        )
+        result_five = compute_metrics(
+            equity_df, [], strategy_name="RF", symbols=["X"], risk_free_rate=0.05
+        )
+
+        # Positive-drift curve: charging a risk-free rate reduces excess return.
+        assert result_five.sharpe_ratio < result_zero.sharpe_ratio
+
+        # Golden gap: Sharpe_0 - Sharpe_rf = rf / (per-bar std * sqrt(bars/yr)),
+        # matching _compute_sharpe's annualization for the daily timeframe.
+        internal_returns = np.diff(equity) / equity[:-1]
+        std = float(np.std(internal_returns, ddof=1))
+        expected_gap = 0.05 / (std * np.sqrt(252))
+        actual_gap = result_zero.sharpe_ratio - result_five.sharpe_ratio
+        assert abs(actual_gap - expected_gap) < 1e-3
+
+        # The chosen rate must be surfaced on the result for disclosure.
+        assert result_five.risk_free_rate == 0.05
+
     def test_max_drawdown_negative(self, equity_df: pl.DataFrame) -> None:
         """Max drawdown should be negative (percentage decline)."""
         result = compute_metrics(

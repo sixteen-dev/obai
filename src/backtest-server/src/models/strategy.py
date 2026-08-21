@@ -46,6 +46,8 @@ class WalkForwardResult:
     consistency_score: float  # % of windows where test Sharpe > 0
     degradation: float  # mean(train_sharpe - test_sharpe)
     total_runtime_seconds: float
+    execution_config: dict[str, Any]  # resolved slippage/commission/capital the windows ran under
+    strategy: dict[str, Any]  # resolved definition, so a polled job is self-describing
     failed_windows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,7 +63,16 @@ class WalkForwardResult:
             "consistency_score": round(self.consistency_score, 2),
             "degradation": round(self.degradation, 4),
             "total_runtime_seconds": round(self.total_runtime_seconds, 2),
+            "execution_config": self.execution_config,
+            "strategy": self.strategy,
+            "fill_timing": FILL_TIMING,
         }
+
+
+# The engine evaluates conditions on a bar's close and fills at the next bar's
+# open (see portfolio_backtester's use of ``opens[bar_idx]``). Naming it in the
+# payload is what lets a later turn rule out look-ahead from a stored result.
+FILL_TIMING = "signal_at_bar_close_fill_at_next_bar_open"
 
 
 SUPPORTED_INDICATORS: set[str] = {

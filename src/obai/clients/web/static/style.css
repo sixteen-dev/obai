@@ -1,7 +1,16 @@
 :root {
+    /* The UI is dark-only. Without this, the browser paints native controls
+       — most visibly <select> dropdown popups — in light mode, so options
+       inherit the near-white --text onto a white popup and are unreadable
+       until hovered. */
+    color-scheme: dark;
     --bg: #000000;
     --panel: rgba(17, 18, 22, 0.58);
     --surface: rgba(255, 255, 255, 0.04);
+    /* Opaque counterpart to --surface, for surfaces the browser composites
+       itself (select popups) where a translucent white would sit on the
+       popup's own backdrop instead of on the modal. */
+    --surface-solid: #16171b;
     --line: rgba(255, 255, 255, 0.08);
     --line-strong: rgba(255, 255, 255, 0.14);
     --text: #f3f3f5;
@@ -311,6 +320,19 @@ body {
     color: var(--text-secondary);
 }
 
+/* Saved hub settings that are not yet running. Sits under the model rows,
+   which report the live hub. */
+.model-summary-pending {
+    flex-basis: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--danger);
+    font-size: 10px;
+}
+
 #settings-btn {
     display: flex;
     align-items: center;
@@ -424,6 +446,25 @@ body {
 .settings-row select:focus {
     border-color: var(--line-strong);
     background: var(--surface);
+}
+
+/* Belt and braces for the popup: color-scheme above handles Chrome and
+   Firefox, but an option that inherits the select's transparent background
+   still renders on the browser's own backdrop, so paint it explicitly. */
+.settings-row select option {
+    background-color: var(--surface-solid);
+    color: var(--text);
+}
+
+.settings-note {
+    padding: 0 0 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.settings-note.warn {
+    color: var(--danger);
 }
 
 .settings-link {

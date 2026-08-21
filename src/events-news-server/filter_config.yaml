@@ -25,6 +25,17 @@ filters:
       - revenueEstimated
       - lastUpdated
 
+  earnings_calendar:
+    # Market-wide earnings calendar - keep who/when/estimate/actual/freshness
+    keep_fields:
+      - symbol
+      - date
+      - epsActual
+      - epsEstimated
+      - revenueActual
+      - revenueEstimated
+      - lastUpdated
+
   dividends:
     # Dividends by ticker - keep dividend amounts, dates, and yield
     keep_fields:

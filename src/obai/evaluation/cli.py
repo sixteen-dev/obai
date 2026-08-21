@@ -19,7 +19,9 @@ Usage:
 
 import asyncio
 import json
+import os
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -40,8 +42,15 @@ from evaluation.eval_runner import (  # noqa: E402
     OBaIEvaluator,
     TestCase,
     load_test_cases,
+    scorer_skip_is_allowed,
 )
-from evaluation.experiment import run_evaluate_as_experiment, run_experiment  # noqa: E402
+from evaluation.experiment import (  # noqa: E402
+    _filter_test_cases,
+    _validate_builtin_scorer_requirements,
+    _validate_semantic_scorer_credentials,
+    run_evaluate_as_experiment,
+    run_experiment,
+)
 from evaluation.trace.capture import TraceCapture  # noqa: E402
 from evaluation.trace.types import (  # noqa: E402
     AgentEvent,
@@ -236,14 +245,17 @@ def print_tool_breakdown(trace: Trace) -> None:
 
 async def run_query_with_trace(
     query: str,
-    model: str,
+    model: str | None,
     verbose: bool = False,
 ) -> Trace:
     """Run a query and capture full trace.
 
+    The hub always runs on its configured model; ``model`` only labels the
+    captured trace. Pass None to label it with the model that actually ran.
+
     Args:
         query: User query.
-        model: Model to use.
+        model: Model label for the trace, or None to use the hub's own model.
         verbose: Whether to print verbose output.
 
     Returns:
@@ -251,8 +263,6 @@ async def run_query_with_trace(
     """
     # Import agent components
     try:
-        from agents import Runner
-
         from core_agents.central_hub_agent import (
             clear_agent_activity_tracking,
             create_central_hub,
@@ -298,19 +308,15 @@ async def run_query_with_trace(
             console.print("[red]Agent not initialized[/red]")
             raise typer.Exit(1)
 
-        result = Runner.run_streamed(
-            starting_agent=hub.agent,
-            input=query,
-        )
-
-        # Process streaming events
-        async for event in result.stream_events():
+        # Drive the hub through the same entry point the web, CLI and TUI use.
+        # Running hub.agent directly skipped the sandbox run config the hub
+        # builds, and a SandboxAgent without one raises UserError, so no case
+        # scored at all. It also skipped the phase-aware answer assembly,
+        # terminal passthrough and cache behaviour that decide what a user
+        # actually receives -- scoring a different execution path than the one
+        # that ships is the single thing this harness must not do.
+        async for event in hub.run(query):
             capture.process_sdk_event(event)
-
-            # Print progress if verbose
-            if verbose:
-                # We'll print the full trace at the end
-                pass
 
         # Attach raw MCP outputs from specialist inner calls
         capture.set_inner_tool_outputs(get_inner_tool_outputs())
@@ -354,7 +360,7 @@ def query(
     console.print()
 
     # Run query
-    trace = asyncio.run(run_query_with_trace(query_text, model or "gpt-4o", verbose))
+    trace = asyncio.run(run_query_with_trace(query_text, model, verbose))
 
     # Print output based on verbosity
     if verbose:
@@ -687,6 +693,9 @@ def print_eval_results(results: dict[str, Any], verbose: bool = False) -> None:
 
 # Map scorer keys to their boolean pass field
 _SCORER_PASS_KEYS: dict[str, str] = {
+    "OutcomeContractScorer": "outcome_pass",
+    "PartialRefusalSemanticScorer": "partial_refusal_semantic_pass",
+    "DatePolicyScorer": "date_policy_pass",
     "ToolOrchestrationScorer": "correct_tools",
     "SequenceScorer": "correct_sequence",
     "ResponseQualityScorer": "quality_pass",
@@ -724,24 +733,86 @@ def _test_case_passed(result: dict[str, Any]) -> bool | None:
     if "error" in result and "scores" not in result:
         return None
 
-    # Guardrail rejection tests: explicit True = pass, explicit False = fail
-    if "guardrail_rejected" in result:
-        return bool(result["guardrail_rejected"])
-
     scores = result.get("scores", {})
-    if not scores:
+    if not isinstance(scores, dict) or not scores:
+        return None
+    required_scorers = result.get("_required_scorers")
+    expected_scorers = result.get("expected_scorers")
+    if (
+        not isinstance(required_scorers, list)
+        or not required_scorers
+        or not all(isinstance(name, str) and name for name in required_scorers)
+        or len(set(required_scorers)) != len(required_scorers)
+        or not isinstance(expected_scorers, list)
+        or not expected_scorers
+        or not all(isinstance(name, str) and name for name in expected_scorers)
+        or len(set(expected_scorers)) != len(expected_scorers)
+        or expected_scorers != required_scorers
+        or set(scores) != set(required_scorers)
+        or any(name not in _SCORER_PASS_KEYS for name in required_scorers)
+    ):
         return None
 
-    for scorer_name, score_data in scores.items():
+    outcome_score = scores.get("OutcomeContractScorer")
+    if not isinstance(outcome_score, dict):
+        return None
+    if (
+        result.get("aborted")
+        or "error" in outcome_score
+        or outcome_score.get("skipped") is True
+        or not isinstance(outcome_score.get("outcome_pass"), bool)
+    ):
+        # Infrastructure and explicitly unclassifiable partial executions
+        # confound every downstream product assertion.
+        return None
+
+    scorer_error = False
+    for scorer_name in required_scorers:
+        score_data = scores[scorer_name]
         if not isinstance(score_data, dict):
+            scorer_error = True
             continue
         if "error" in score_data:
+            scorer_error = True
+            continue
+        if score_data.get("skipped") is True:
+            if not scorer_skip_is_allowed(scorer_name, score_data):
+                scorer_error = True
             continue
         pass_key = _SCORER_PASS_KEYS.get(scorer_name)
-        if pass_key and pass_key in score_data and not score_data[pass_key]:
-            return False
+        if pass_key and (pass_key not in score_data or not isinstance(score_data[pass_key], bool)):
+            scorer_error = True
 
-    return True
+    product_failure = False
+    for scorer_name in required_scorers:
+        score_data = scores[scorer_name]
+        if not isinstance(score_data, dict) or score_data.get("skipped") is True:
+            continue
+        pass_key = _SCORER_PASS_KEYS.get(scorer_name)
+        if pass_key and score_data.get(pass_key) is False:
+            product_failure = True
+
+    # Preserve captured product evidence when an unrelated semantic scorer also
+    # crashes.  If no product failure was established, an evaluator error keeps
+    # the row incomplete rather than green.
+    if product_failure:
+        return False
+    return None if scorer_error else True
+
+
+def _preflight_output_path(path: Path, *, label: str) -> None:
+    """Reject an unusable suite output destination before paid execution."""
+    if path.exists():
+        if not path.is_file():
+            raise ValueError(f"{label} path is not a regular file: {path}")
+        if not os.access(path, os.W_OK):
+            raise ValueError(f"{label} path is not writable: {path}")
+        return
+    parent = path.parent
+    if not parent.exists() or not parent.is_dir():
+        raise ValueError(f"{label} parent directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise ValueError(f"{label} parent directory is not writable: {parent}")
 
 
 def _get_failure_reason(result: dict[str, Any]) -> str:
@@ -1082,6 +1153,13 @@ def evaluate_cmd(
         str | None, typer.Argument(help="Single query to evaluate (or use --suite)")
     ] = None,
     suite: Annotated[bool, typer.Option("--suite", "-s", help="Run standard test suite")] = False,
+    include_extended: Annotated[
+        bool,
+        typer.Option(
+            "--include-extended",
+            help="Include extended-only suite cases (additional API cost)",
+        ),
+    ] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
     model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
     judge_model: Annotated[
@@ -1092,6 +1170,14 @@ def evaluate_cmd(
     ] = False,
     category: Annotated[
         str | None, typer.Option("--category", "-c", help="Filter by category (A/B/C/D)")
+    ] = None,
+    ids: Annotated[
+        str | None,
+        typer.Option("--ids", "-i", help="Comma-separated test IDs (for a surgical paid run)"),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", "-l", help="Maximum selected cases (additional cost cap)"),
     ] = None,
     file: Annotated[Path | None, typer.Option("--file", "-f", help="Custom YAML test file")] = None,
     export: Annotated[
@@ -1121,6 +1207,9 @@ def evaluate_cmd(
 
         # Evaluate without LLM-based scorers (faster)
         python -m evaluation evaluate "AAPL price" --no-builtin
+
+    Suite exit codes are 0 for all-pass, 1 for a captured contract failure,
+    2 for invalid configuration, and 3 for incomplete/errored scoring.
     """
     print_banner()
     console.print()
@@ -1133,45 +1222,146 @@ def evaluate_cmd(
         # Suite mode: run through Opik experiment pipeline so every
         # eval run is tracked as an experiment (not just traces).
         try:
-            run_test_cases = load_test_cases(path=file, category=category)
-        except FileNotFoundError:
-            console.print("[yellow]YAML suite not found, using built-in test cases[/yellow]")
-            run_test_cases = STANDARD_TEST_CASES
+            run_test_cases = load_test_cases(
+                path=file,
+                category=category,
+                include_extended=include_extended,
+            )
+        except FileNotFoundError as exc:
+            # Suite mode is paid. Substituting a different built-in corpus when
+            # the requested/default manifest is missing silently changes both
+            # coverage and spend, so fail before starting any query.
+            missing_path = file if file is not None else str(exc)
+            console.print(f"[red]Test suite file not found: {missing_path}[/red]")
+            raise typer.Exit(2) from exc
+        except ValueError as exc:
+            console.print(f"[red]Invalid test suite: {exc}[/red]")
+            raise typer.Exit(2) from exc
 
-        if category and not run_test_cases:
-            console.print(f"[red]No test cases found for category '{category}'[/red]")
-            raise typer.Exit(1)
+        id_list = (
+            [test_id.strip() for test_id in ids.split(",") if test_id.strip()]
+            if ids is not None
+            else None
+        )
+        if ids is not None and not id_list:
+            console.print("[red]--ids must contain at least one non-empty test ID[/red]")
+            raise typer.Exit(2)
+        try:
+            if id_list:
+                requested_ids = {test_id.upper() for test_id in id_list}
+                available_ids = {test_case.id.upper() for test_case in run_test_cases}
+                unavailable_ids = sorted(requested_ids - available_ids)
+                if unavailable_ids:
+                    raise ValueError(
+                        "Requested test IDs are unavailable: "
+                        + ", ".join(unavailable_ids)
+                        + ". Extended-only cases require --include-extended."
+                    )
+            run_test_cases = _filter_test_cases(
+                run_test_cases,
+                ids=id_list,
+                limit=limit,
+            )
+            _validate_builtin_scorer_requirements(run_test_cases, no_builtin=no_builtin)
+            _validate_semantic_scorer_credentials(run_test_cases, no_builtin=no_builtin)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
+
+        if not run_test_cases:
+            filter_msg = f" for category '{category}'" if category else ""
+            console.print(
+                f"[red]No test cases found{filter_msg}. "
+                "Extended-only cases require --include-extended.[/red]"
+            )
+            raise typer.Exit(2)
+
+        try:
+            if export is not None:
+                _preflight_output_path(export, label="Export")
+            if report is not None:
+                _preflight_output_path(report, label="Report")
+            if export is not None and report is not None and export.resolve() == report.resolve():
+                raise ValueError("--export and --report must use different files")
+            trusted_evaluator = OBaIEvaluator(
+                use_builtin_scorers=not no_builtin,
+                judge_model=judge_model,
+            )
+            required_scorers_by_id = {
+                case.id: trusted_evaluator.expected_scorer_names(case) for case in run_test_cases
+            }
+        except Exception as exc:
+            console.print(f"[red]Invalid evaluation configuration: {exc}[/red]")
+            raise typer.Exit(2) from exc
 
         cat_msg = f" (category {category.upper()})" if category else ""
         n = len(run_test_cases)
         console.print(f"[cyan]Running {n} test cases{cat_msg} as experiment...[/cyan]\n")
 
-        exp_name, results = run_evaluate_as_experiment(
-            query_runner=run_query_with_trace,
-            test_cases=run_test_cases,
-            judge_model=judge_model,
-            no_builtin=no_builtin,
-        )
+        try:
+            exp_name, results = run_evaluate_as_experiment(
+                query_runner=run_query_with_trace,
+                test_cases=run_test_cases,
+                judge_model=judge_model,
+                no_builtin=no_builtin,
+            )
+        except Exception as exc:
+            # Selection/schema validation has already completed above.  Any
+            # exception from task execution or experiment collection is an
+            # incomplete evaluation, not a product failure or config typo.
+            console.print(f"[yellow]Evaluation did not complete: {exc}[/yellow]")
+            raise typer.Exit(3) from exc
         console.print(f"\n[dim]Experiment:[/dim] {exp_name}")
+
+        expected_ids = [case.id for case in run_test_cases]
+        observed_ids = [
+            str(result.get("test_id", "")) if isinstance(result, dict) else "" for result in results
+        ]
+        if len(results) != len(run_test_cases) or Counter(observed_ids) != Counter(expected_ids):
+            missing = sorted((Counter(expected_ids) - Counter(observed_ids)).elements())
+            unexpected = sorted((Counter(observed_ids) - Counter(expected_ids)).elements())
+            details = []
+            if missing:
+                details.append(f"missing={missing}")
+            if unexpected:
+                details.append(f"unexpected={unexpected}")
+            console.print(
+                "[yellow]Evaluation result set is incomplete or mismatched"
+                + (f" ({', '.join(details)})" if details else "")
+                + ".[/yellow]"
+            )
+            raise typer.Exit(3)
+        result_by_id = {str(result["test_id"]): result for result in results}
+        results = [result_by_id[test_id] for test_id in expected_ids]
+        for result, test_id in zip(results, expected_ids, strict=True):
+            # Derived locally from the selected case, never trusted from a
+            # task result or mutable remote dataset row.
+            result["_required_scorers"] = required_scorers_by_id[test_id]
 
     else:
         # Single query mode: run directly (no experiment needed).
+        test_cases = [
+            TestCase(
+                query=query_text or "",
+                expected_tools=[],
+                query_type="ad_hoc",
+                description="Ad-hoc query evaluation",
+            )
+        ]
+        try:
+            _validate_semantic_scorer_credentials(test_cases, no_builtin=no_builtin)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
+
         async def _run_single() -> tuple[list[dict[str, Any]], list[TestCase]]:
             evaluator = OBaIEvaluator(
                 use_builtin_scorers=not no_builtin,
                 judge_model=judge_model,
             )
-            test_cases = [
-                TestCase(
-                    query=query_text or "",
-                    expected_tools=[],
-                    query_type="ad_hoc",
-                    description="Ad-hoc query evaluation",
-                )
-            ]
             trace = await run_query_with_trace(
                 query=test_cases[0].query,
-                model=model or "gpt-4o",
+                model=model,
                 verbose=verbose,
             )
             result = await evaluator.evaluate_trace(trace, test_cases[0])
@@ -1182,8 +1372,8 @@ def evaluate_cmd(
 
         results, run_test_cases = asyncio.run(_run_single())
 
-    # Aggregate summary for suite runs
-    if suite and len(results) > 1:
+    # Suite results are a regression gate even when filtering selects one row.
+    if suite:
         print_suite_summary(results, run_test_cases)
     else:
         console.rule("[bold cyan]SUMMARY[/bold cyan]")
@@ -1191,16 +1381,27 @@ def evaluate_cmd(
         errors = sum(1 for r in results if "error" in r and "scores" not in r)
         console.print(f"Total: {total}, Errors: {errors}")
 
-    # Export if requested
-    if export:
-        export.write_text(json.dumps(results, indent=2, default=str))
-        console.print(f"[green]Results exported to {export}[/green]")
+    try:
+        if export:
+            export.write_text(json.dumps(results, indent=2, default=str))
+            console.print(f"[green]Results exported to {export}[/green]")
 
-    # Markdown report
-    if report:
-        md = generate_markdown_report(results, run_test_cases)
-        report.write_text(md)
-        console.print(f"[green]Markdown report exported to {report}[/green]")
+        if report:
+            md = generate_markdown_report(results, run_test_cases)
+            report.write_text(md)
+            console.print(f"[green]Markdown report exported to {report}[/green]")
+    except Exception as exc:
+        console.print(f"[yellow]Evaluation output could not be written: {exc}[/yellow]")
+        raise typer.Exit(3 if suite else 1) from exc
+
+    if suite:
+        statuses = [_test_case_passed(result) for result in results]
+        if any(status is False for status in statuses):
+            raise typer.Exit(1)
+        if not statuses or any(status is None for status in statuses):
+            # Distinguish an incomplete/crashed evaluator from a captured
+            # product-contract failure and from configuration errors (2).
+            raise typer.Exit(3)
 
 
 @app.command()
@@ -1208,6 +1409,13 @@ def list_tests(
     category: Annotated[
         str | None, typer.Option("--category", "-c", help="Filter by category (A/B/C/D)")
     ] = None,
+    include_extended: Annotated[
+        bool,
+        typer.Option(
+            "--include-extended",
+            help="Include extended-only cases",
+        ),
+    ] = False,
     file: Annotated[Path | None, typer.Option("--file", "-f", help="Custom YAML test file")] = None,
 ) -> None:
     """List available test cases.
@@ -1219,11 +1427,18 @@ def list_tests(
 
     # Try loading from YAML, fall back to STANDARD_TEST_CASES
     try:
-        test_cases = load_test_cases(path=file, category=category)
+        test_cases = load_test_cases(
+            path=file,
+            category=category,
+            include_extended=include_extended,
+        )
         source = str(file) if file else "suite.yaml"
     except FileNotFoundError:
         test_cases = STANDARD_TEST_CASES
         source = "built-in"
+    except ValueError as exc:
+        console.print(f"[red]Invalid test suite: {exc}[/red]")
+        raise typer.Exit(2) from exc
 
     cat_msg = f" (category {category.upper()})" if category else ""
     table = Table(title=f"Test Cases — {source}{cat_msg}")
@@ -1263,6 +1478,13 @@ def experiment_cmd(
     smoke: Annotated[
         bool, typer.Option("--smoke", help="Only run smoke-test cases (marked in suite.yaml)")
     ] = False,
+    include_extended: Annotated[
+        bool,
+        typer.Option(
+            "--include-extended",
+            help="Include extended-only cases (additional API cost)",
+        ),
+    ] = False,
     ids: Annotated[
         str | None, typer.Option("--ids", "-i", help="Comma-separated test IDs (e.g. A1,A3,B4)")
     ] = None,
@@ -1293,24 +1515,31 @@ def experiment_cmd(
     so you can compare them side-by-side in the Opik UI.
 
     Examples:
-        # Compare current models vs gpt-5.4 (3 test cases)
-        python -m evaluation experiment --name "v54" --compare gpt-5.4 --limit 3
+        # Compare current models vs a candidate hub model (3 test cases)
+        python -m evaluation experiment --name "cand" --compare gpt-5.6-terra --limit 3
 
         # Compare with both orchestrator and specialist overrides
-        python -m evaluation experiment --name "v54" --compare gpt-5.4,gpt-5.4-mini --smoke
+        python -m evaluation experiment --name "cand" --compare gpt-5.6-terra,gpt-5.6-luna --smoke
 
         # Single experiment (no comparison)
         python -m evaluation experiment --name "baseline" --limit 3
 
         # Smoke test comparison without LLM scorers (cheapest)
-        python -m evaluation experiment --name "quick" --compare gpt-5.4 --smoke --no-builtin
+        python -m evaluation experiment --name "quick" --compare gpt-5.6-terra --smoke --no-builtin
     """
     print_banner()
     console.print()
 
-    id_list = [tid.strip() for tid in ids.split(",")] if ids else None
+    id_list = (
+        [test_id.strip() for test_id in ids.split(",") if test_id.strip()]
+        if ids is not None
+        else None
+    )
+    if ids is not None and not id_list:
+        console.print("[red]--ids must contain at least one non-empty test ID[/red]")
+        raise typer.Exit(2)
 
-    # Parse --compare: "gpt-5.4" or "gpt-5.4,gpt-5.4-mini"
+    # Parse --compare: "gpt-5.6-terra" or "gpt-5.6-terra,gpt-5.6-luna"
     compare_orchestrator: str | None = None
     compare_specialist: str | None = None
     if compare:
@@ -1324,25 +1553,32 @@ def experiment_cmd(
     else:
         console.print("[cyan]Starting Opik experiment...[/cyan]")
 
-    exp_names = run_experiment(
-        query_runner=run_query_with_trace,
-        experiment_name=name,
-        category=category,
-        smoke=smoke,
-        ids=id_list,
-        limit=limit,
-        judge_model=judge_model,
-        no_builtin=no_builtin,
-        dataset_name=dataset_name,
-        compare_orchestrator=compare_orchestrator,
-        compare_specialist=compare_specialist,
-    )
+    try:
+        exp_names = run_experiment(
+            query_runner=run_query_with_trace,
+            experiment_name=name,
+            category=category,
+            smoke=smoke,
+            include_extended=include_extended,
+            ids=id_list,
+            limit=limit,
+            judge_model=judge_model,
+            no_builtin=no_builtin,
+            dataset_name=dataset_name,
+            compare_orchestrator=compare_orchestrator,
+            compare_specialist=compare_specialist,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
 
     console.print()
     for exp in exp_names:
         console.print(f"  [green bold]✓[/green bold] {exp}")
     console.print()
-    console.print(f"[dim]Dataset:[/dim] {dataset_name}")
+    console.print(
+        f"[dim]Dataset base:[/dim] {dataset_name} [dim](selection fingerprint appended)[/dim]"
+    )
     if len(exp_names) > 1:
         console.print(
             "[bold]Compare:[/bold] http://localhost:5173 → "
