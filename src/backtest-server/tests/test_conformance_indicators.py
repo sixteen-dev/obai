@@ -17,10 +17,15 @@ from tests.conformance_fixtures import (
 
 
 def _assert_series_close(actual: pl.Series, expected: pl.Series, tolerance: float = 1e-10) -> None:
-    """Assert two numeric Polars series match, treating NaN as equal."""
+    """Assert two numeric Polars series match, treating undefined bars as equal.
+
+    Every bar the reference defines must match to ``tolerance``; a bar is
+    exempt only when BOTH sides call it undefined, so nulling out a bar
+    TA-Lib actually computes still fails here.
+    """
     assert len(actual) == len(expected)
     for actual_value, expected_value in zip(actual.to_list(), expected.to_list(), strict=True):
-        if _is_nan(actual_value) and _is_nan(expected_value):
+        if _is_undefined(actual_value) and _is_undefined(expected_value):
             continue
         assert (
             actual_value == expected_value
@@ -28,9 +33,14 @@ def _assert_series_close(actual: pl.Series, expected: pl.Series, tolerance: floa
         )
 
 
-def _is_nan(value: object) -> bool:
-    """Return True for floating NaN values."""
-    return isinstance(value, float) and math.isnan(value)
+def _is_undefined(value: object) -> bool:
+    """Return True for a warm-up bar, however its source spells it.
+
+    compute_indicators normalizes TA-Lib's NaN warm-up to null so an
+    indicator without a value cannot satisfy a comparison. The reference
+    expressions here call polars-talib directly and still return NaN.
+    """
+    return value is None or (isinstance(value, float) and math.isnan(value))
 
 
 class TestIndicatorParity:

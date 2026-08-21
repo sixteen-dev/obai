@@ -1290,8 +1290,53 @@ def _prepare_symbol_signals(
     timeframe = strategy.data_config.timeframe
     enriched, warnings = compute_indicators(extended_df, strategy.indicators, timeframe=timeframe)
     trimmed = _trim_warmup(enriched, requested_start)
+    warnings.extend(_unprimed_indicator_warnings(trimmed, strategy.indicators))
     signaled = generate_signals(trimmed, strategy.entry_rules, strategy.exit_rules)
     return signaled, warnings
+
+
+def _unprimed_indicator_warnings(
+    windowed: pl.DataFrame, indicators: list[IndicatorConfig]
+) -> list[str]:
+    """Report indicators still undefined once the requested window has started.
+
+    The pre-roll is sized from the largest declared parameter, but a TA-Lib
+    lookback runs longer than that: ADX(14) needs 27 bars, TEMA(20) needs 57.
+    The window can therefore open before an indicator holds a value, and those
+    bars cannot produce a signal. Measuring the primed frame says so exactly,
+    without this having to model each indicator's lookback formula.
+
+    Args:
+        windowed: Signal frame already trimmed to the requested window.
+        indicators: Strategy indicator configs.
+
+    Returns:
+        One warning per indicator that is undefined on the window's first bar.
+
+    """
+    if windowed.height == 0:
+        return []
+
+    messages: list[str] = []
+    for config in indicators:
+        if config.id not in windowed.columns:
+            continue
+        series = windowed[config.id]
+        if not series.dtype.is_float() or series[0] is not None:
+            continue
+        defined_at = series.is_not_null().arg_true()
+        if defined_at.is_empty():
+            messages.append(
+                f"Indicator '{config.id}' has no value anywhere in the requested "
+                "window, so it cannot generate signals. Widen the date range or "
+                "shorten its lookback."
+            )
+            continue
+        messages.append(
+            f"Indicator '{config.id}' has no value until bar {defined_at[0]} of the "
+            "requested window; no signal can fire before then."
+        )
+    return messages
 
 
 async def _execute_strategy(  # noqa: PLR0915

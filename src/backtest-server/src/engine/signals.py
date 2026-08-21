@@ -29,9 +29,13 @@ def generate_signals(
     entry_expr = _build_ruleset_expr(entry_rules)
     exit_expr = _build_ruleset_expr(exit_rules)
 
+    # A comparison against an indicator that has not warmed up yet is null,
+    # not False. Resolving that to False here keeps "undefined" from reading
+    # as a signal, and leaves the boolean columns free of nulls for the
+    # engines that convert them straight to numpy.
     return df.with_columns(
-        entry_expr.alias("entry_signal"),
-        exit_expr.alias("exit_signal"),
+        entry_expr.fill_null(value=False).alias("entry_signal"),
+        exit_expr.fill_null(value=False).alias("exit_signal"),
     )
 
 
