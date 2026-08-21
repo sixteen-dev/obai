@@ -266,12 +266,10 @@ class TestRiskProfile:
         assert result["max_loss"] == "unlimited"
 
     def test_short_put_finite_loss(self) -> None:
-        """Short put with low strike has finite loss within the scan range.
+        """Short put with a low strike has a finite loss.
 
-        A short put at strike=30 with underlying=100 means the scan range
-        [50, 150] fully captures the payoff. At spot=50 the put is far OTM
-        so the payoff curve has flattened — max_loss is detected as finite
-        (not 'unlimited').
+        The scan runs from a spot of zero, so the whole payoff is captured
+        and the deepest loss is the strike less the premium.
         """
         contract: dict[str, object] = {
             "underlying_price": 100.0,
@@ -285,9 +283,90 @@ class TestRiskProfile:
             "risk_free_rate": 0.045,
         }
         result = position_risk_profile([contract])
-        # Strike=30 is far below the scan floor (50), so max loss is finite
         assert isinstance(result["max_loss"], float)
-        assert result["max_loss"] != "unlimited"
+        assert result["max_loss"] == pytest.approx(-2990.0)
+
+    def test_long_put_profit_is_bounded_by_a_zero_underlying(self) -> None:
+        """A put's upside ends where the underlying does, at a spot of zero.
+
+        The scan used to start at half the spot and treat that arbitrary floor
+        as an open boundary, so any put still sloped there was reported as
+        "unlimited". Nothing can fall below zero, so the true maximum is the
+        strike less the premium.
+        """
+        contract: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "put",
+            "direction": "long",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        result = position_risk_profile([contract])
+        assert result["max_profit"] == pytest.approx(9600.0)
+        assert result["max_loss"] == pytest.approx(-400.0)
+
+    def test_short_put_loss_is_bounded_by_a_zero_underlying(self) -> None:
+        """The mirror case: a short put's loss is capped, never unlimited."""
+        contract: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "put",
+            "direction": "short",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        result = position_risk_profile([contract])
+        assert result["max_loss"] == pytest.approx(-9600.0)
+        assert result["max_profit"] == pytest.approx(400.0)
+
+    def test_long_straddle_keeps_unlimited_upside(self) -> None:
+        """A put leg must not mask the call leg's open-ended upside.
+
+        Scanning down to a spot of zero puts the straddle's global maximum on
+        the put side, so a rule that asked whether the top of the scan held
+        the maximum would report a finite profit for a position that has none.
+        The test that matters is whether the payoff is still climbing there.
+        """
+        call: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "call",
+            "direction": "long",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        put = dict(call, option_type="put")
+        result = position_risk_profile([call, put])
+        assert result["max_profit"] == "unlimited"
+        assert result["max_loss"] == pytest.approx(-800.0)  # exact: both legs at the strike
+
+    def test_short_straddle_keeps_unlimited_downside(self) -> None:
+        """The mirror: a short call leg leaves the loss open-ended."""
+        call: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "call",
+            "direction": "short",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        put = dict(call, option_type="put")
+        result = position_risk_profile([call, put])
+        assert result["max_loss"] == "unlimited"
+        assert result["max_profit"] == pytest.approx(800.0)  # exact: both legs at the strike
 
     def test_uppercase_call_payoff_matches_greeks(self) -> None:
         """Uppercase 'CALL' legs must compute a CALL payoff, not a put payoff.
