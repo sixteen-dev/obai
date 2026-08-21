@@ -9,6 +9,7 @@ import pytest
 from src.clients.fmp_client import FMPClient
 from src.clients.tavily_client import TavilyClient
 from src.config import Settings
+from src.tools.earnings import get_earnings_calendar
 
 
 class TestFMPClientRetry:
@@ -416,3 +417,70 @@ class TestEarningsCalendarTool:
         assert called_url.endswith("/earnings-calendar")
         assert called_params["from"] == "2024-07-22"
         assert called_params["to"] == "2024-07-26"
+
+
+class TestEarningsCalendarTruncation:
+    """A capped calendar must stay date-ordered and admit what it dropped."""
+
+    @staticmethod
+    def _rows() -> list[dict[str, Any]]:
+        """Five days of two companies each, in deliberately scrambled order."""
+        rows: list[dict[str, Any]] = []
+        for day in ("2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"):
+            for sym in ("ZZZ", "AAA"):
+                rows.append(
+                    {
+                        "symbol": sym,
+                        "date": day,
+                        "epsActual": None,
+                        "epsEstimated": 1.0,
+                        "revenueActual": None,
+                        "revenueEstimated": 1000.0,
+                        "lastUpdated": day,
+                    }
+                )
+        return [rows[i] for i in (7, 2, 9, 0, 5, 3, 8, 1, 6, 4)]
+
+    async def _calendar(self, settings: Settings, limit: int) -> dict[str, Any]:
+        """Run the tool against a stubbed provider response."""
+        with (
+            patch("src.tools.earnings.get_settings", return_value=settings),
+            patch("src.tools.earnings.FMPClient") as mock_cls,
+        ):
+            client = mock_cls.return_value
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=None)
+            client.get_earnings_calendar = AsyncMock(return_value=self._rows())
+            return await get_earnings_calendar("2026-08-24", "2026-08-28", limit=limit)
+
+    @pytest.mark.asyncio
+    async def test_cap_keeps_the_earliest_days_not_an_arbitrary_slice(
+        self, mock_settings: Settings
+    ) -> None:
+        """Provider order is arbitrary, so slicing it can drop whole days.
+
+        "Who reports next week" answered from an unsorted prefix can return
+        one day of a five-day window and still look complete.
+        """
+        result = await self._calendar(mock_settings, limit=4)
+
+        days = [row["date"] for row in result["earnings_calendar"]]
+        assert days == ["2026-08-24", "2026-08-24", "2026-08-25", "2026-08-25"]
+
+    @pytest.mark.asyncio
+    async def test_truncation_is_reported(self, mock_settings: Settings) -> None:
+        """Returning only count lets a partial answer read as the whole market."""
+        result = await self._calendar(mock_settings, limit=4)
+
+        assert result["count"] == 4
+        assert result["total_available"] == 10
+        assert result["truncated"] is True
+
+    @pytest.mark.asyncio
+    async def test_complete_result_is_not_flagged(self, mock_settings: Settings) -> None:
+        """A full answer must not carry a truncation warning."""
+        result = await self._calendar(mock_settings, limit=100)
+
+        assert result["count"] == 10
+        assert result["total_available"] == 10
+        assert result["truncated"] is False
