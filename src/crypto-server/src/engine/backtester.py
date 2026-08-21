@@ -25,6 +25,15 @@ POSITION_EPSILON = 1e-12
 # misspelled one ran a backtest it never asked for and was told it
 # succeeded. Callers get the accepted set back instead.
 STRATEGY_SPEC_KEYS = frozenset({"template", "parameters"})
+# The same promise one level down. STRATEGY_SPEC_KEYS admits "parameters"
+# wholesale, so a typo inside it kept falling through to a default -- the very
+# thing the check above exists to stop. Which keys are valid depends on the
+# template, and the check has to run before the defaults are read, because
+# that is where the typo disappears.
+TEMPLATE_PARAMETER_KEYS: dict[str, frozenset[str]] = {
+    "spot_mean_reversion": frozenset({"window", "z_entry", "z_exit"}),
+    "spot_trend_follow": frozenset({"fast_window", "slow_window"}),
+}
 EXECUTION_CONFIG_KEYS = frozenset(
     {
         "initial_capital_usd",
@@ -284,6 +293,14 @@ def _generate_signal(
     template: str,
     parameters: dict[str, Any],
 ) -> list[int]:
+    accepted = TEMPLATE_PARAMETER_KEYS.get(template)
+    if accepted is None:
+        msg = f"Unsupported v1 crypto strategy template: {template}"
+        raise ValueError(msg)
+    reject_unknown_keys(
+        parameters, accepted, config_name=f"strategy_spec.parameters for {template}"
+    )
+
     closes = np.array([c.close for c in candles], dtype=float)
     if template == "spot_mean_reversion":
         window = int(parameters.get("window", 20))
@@ -300,6 +317,8 @@ def _generate_signal(
             msg = "spot_trend_follow requires 1 <= fast_window < slow_window"
             raise ValueError(msg)
         return _trend_signal(closes, fast=fast, slow=slow)
+    # Reached only if TEMPLATE_PARAMETER_KEYS gains a template that has no
+    # branch here, which the guard above cannot catch.
     msg = f"Unsupported v1 crypto strategy template: {template}"
     raise ValueError(msg)
 

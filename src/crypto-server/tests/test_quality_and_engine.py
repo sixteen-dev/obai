@@ -782,3 +782,74 @@ async def test_unbound_validation_declares_its_own_scope(
     assert bound["scope"] == "storage_bound"
     assert bound["valid"] is False
     assert "fingerprint does not match storage key" in bound["errors"]
+
+
+def _trend_spec(**params: Any) -> dict[str, Any]:
+    """Build a trend-follow spec with caller-supplied parameters."""
+    return {"template": "spot_trend_follow", "parameters": params}
+
+
+def test_misspelled_parameter_is_rejected_not_defaulted() -> None:
+    """A typo inside parameters ran a different strategy and reported success.
+
+    Unknown keys are rejected on strategy_spec itself, so the promise is
+    already made; it just stopped one level above the values that decide
+    what the backtest does. slow_widow silently became slow_window=50.
+    """
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    with pytest.raises(ValueError, match="slow_widow"):
+        run_bar_backtest(
+            candles=candles,
+            strategy_spec=_trend_spec(fast_window=2, slow_widow=5),
+            execution_config={"initial_capital_usd": 100_000},
+        )
+
+
+def test_correctly_spelled_parameters_still_run() -> None:
+    """The accepted set must not reject the keys the template documents."""
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    windowed = run_bar_backtest(
+        candles=candles,
+        strategy_spec=_trend_spec(fast_window=2, slow_window=5),
+        execution_config={"initial_capital_usd": 100_000},
+    )
+    defaulted = run_bar_backtest(
+        candles=candles,
+        strategy_spec=_trend_spec(),
+        execution_config={"initial_capital_usd": 100_000},
+    )
+
+    # The windows have to reach the signal: with slow_window defaulting to 50
+    # against twelve candles the strategy never trades at all, which is what
+    # the misspelled key silently produced.
+    assert windowed.trades
+    assert not defaulted.trades
+
+
+def test_parameters_are_validated_per_template() -> None:
+    """Each template accepts only its own parameters, not the other's."""
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    with pytest.raises(ValueError, match="fast_window"):
+        run_bar_backtest(
+            candles=candles,
+            strategy_spec={
+                "template": "spot_mean_reversion",
+                "parameters": {"window": 5, "fast_window": 2},
+            },
+            execution_config={"initial_capital_usd": 100_000},
+        )
+
+
+def test_unsupported_template_is_still_rejected() -> None:
+    """Validating parameters must not swallow an unknown template."""
+    candles = [_candle(idx, close=100.0 + idx) for idx in range(12)]
+
+    with pytest.raises(ValueError, match="Unsupported v1 crypto strategy template"):
+        run_bar_backtest(
+            candles=candles,
+            strategy_spec={"template": "spot_momentum", "parameters": {}},
+            execution_config={"initial_capital_usd": 100_000},
+        )
