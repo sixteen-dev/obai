@@ -426,3 +426,69 @@ class TestPortfolioVolumeScaledSlippage:
         )
         # Results should differ when volume scaling is on
         assert flat.equity_curve != scaled.equity_curve
+
+
+class TestCoFiringEntryAndExit:
+    """A bar whose entry and exit both fire must not open and close in one bar."""
+
+    def test_co_firing_signals_do_not_wash_the_position(self) -> None:
+        """The prior bar's exit belongs to the position it closed, not the new one.
+
+        Entries fill on the bar after the signal, so a lot opened here was
+        opened BY the prior bar's entry. Re-reading that same prior bar's exit
+        flag closed it immediately: a same-day round trip with zero holding
+        days and two commissions charged, repeated for every bar the two
+        signals co-fire.
+        """
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0, 100.0, 100.0],
+            entries=[True, True, True, False, False],
+            exits=[True, True, True, False, False],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+
+        result = run_portfolio_backtest(
+            signal_dfs={"AAA": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            commission_pct=0.1,
+        )
+
+        same_bar = [t for t in result.trades if t.entry_date == t.exit_date]
+        assert same_bar == [], f"opened and closed on one bar: {same_bar}"
+
+    def test_stop_loss_still_binds_on_the_entry_bar(self) -> None:
+        """The entry-bar recheck exists for price levels; that must still work.
+
+        A stop pierced by the entry bar's own low has to close that bar, or
+        the backtest reports a loss the strategy would never have taken.
+        """
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0],
+            entries=[True, False, False],
+            exits=[False, False, False],
+            lows=[100.0, 80.0, 100.0],
+            highs=[101.0, 101.0, 101.0],
+        )
+        sizing = PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=5,
+            allocation_mode="portfolio",
+        )
+
+        result = run_portfolio_backtest(
+            signal_dfs={"AAA": df},
+            initial_capital=100_000.0,
+            position_sizing=sizing,
+            commission_pct=0.1,
+            stop_loss_pct=5.0,
+        )
+
+        assert [t.exit_reason for t in result.trades] == ["stop_loss"]
+        assert result.trades[0].entry_date == result.trades[0].exit_date
