@@ -70,19 +70,61 @@ For this repo, "industry standard" means:
    covariance/variance beta.
 3. Trade statistics remain trade-based, not period-based. This is intentional:
    OBaI reports closed-trade win rate, profit factor, average trade return, and
-   holding period separately from return-series risk metrics.
+   holding period separately from return-series risk metrics. Profit factor is
+   the ratio of gross dollar profit to gross dollar loss whenever every closed
+   trade reports a realized PnL, which both engines do; a ledger missing any
+   of them falls back to summed percentage returns rather than mixing bases.
+   Calmar keeps the sign of CAGR: only the drawdown is taken in magnitude, so
+   a losing strategy reports a negative ratio.
 4. Signal execution avoids lookahead: entry and signal-exit decisions from
    `close[t]` fill at `open[t+1]`.
 5. Intrabar stop and take-profit checks use high/low ranges. If a long stop and
    target are both touched in one bar, the stop wins as the conservative
-   assumption.
+   assumption. The stop level is frozen at the fill — a percentage below it
+   (`stop_loss_pct`), or `stop_atr_multiple` times the ATR printed on the bar
+   whose close produced the signal (`atr_indicator`) — and is not recomputed as
+   the price moves. Both engines check that same level. An entry whose ATR is
+   undefined on the signal bar is skipped before any fill or commission, and
+   counted under `atr_undefined`. A trailing stop (`trailing_stop_pct` or
+   `trailing_stop_atr_multiple`) adds a second level that ratchets: it is
+   recomputed at the end of every bar the position survives, from the highest
+   high since entry and that bar's own ATR, and never falls. The effective
+   stop is the higher of the frozen and trailed levels, so a high printed
+   later in a bar cannot tighten the stop that same bar was checked against.
+   The exit is labelled `trailing_stop` only when the trail sits strictly
+   above the frozen level; a tie belongs to `stop_loss`.
 6. Gap-through stop exits fill at the worse open, matching LEAN-style
    conservative stop behavior.
-7. Slippage and spread move fills in the unfavorable direction. Percent
-   commission is charged on both entry and exit.
-8. Portfolio mode uses shared cash, discrete share counts, exits before entries
-   on the same bar, and final close-out of open positions at the last available
-   close.
+7. Slippage and spread move fills in the unfavorable direction on entry and
+   signal-exit fills. Stop, trailing-stop and target exits fill at their level
+   or the worse open, and the forced exits — `eod_close`, `time_stop` and
+   `end_of_backtest` — fill at that bar's close, so none of them carries those
+   costs — a stop-heavy result therefore reads better than it would. Percent
+   commission is charged on both entry and exit. Results state both conventions
+   in their `fill_timing` and `fill_model` fields.
+8. Portfolio mode uses shared cash, discrete share counts, and runs each day in
+   phases: a signal exit scheduled by the previous close fills at the open,
+   then entries are sized against equity marked at that same open, then stops
+   and targets pierced later inside the bar bind, and last the holding cap
+   closes at that bar's close. Cash released intrabar is therefore not
+   available to that day's opening fills. A held symbol with no bar on a
+   portfolio date keeps its last observed mark instead of reverting to its
+   entry price. Both engines close any position still open
+   when the run ends, at the last available close, so a zero-trade result never
+   hides an entry. In single-symbol mode a signal exit scheduled by the previous
+   bar fills at the open ahead of that bar's stop or target. `close_eod` applies
+   to the entry bar too, and on daily bars every bar ends a session, so a daily
+   strategy with `close_eod` enters at the open and exits at that day's close.
+   `max_holding_bars` closes at the close of the Nth bar the symbol held,
+   counting the entry bar as the first and skipping portfolio dates the symbol
+   never printed; `close_eod` outranks it on a bar that ends a session, since
+   that exit would happen whatever the cap said and both fill at the close.
+   `reentry_cooldown_bars` blocks a symbol from entering again until more than
+   that many of its own bars have passed since its last exit, whatever closed
+   it. In portfolio mode an exit and a re-entry at the same open are zero bars
+   apart, so any cooldown blocks that same-bar flip; the blocked signals are
+   counted under `cooldown` and never gain the earlier-signal priority that
+   competes for capital.
 9. Data-quality metadata is observability only. It must count coverage and
    zero/null prices without changing metrics or requiring the agent eval harness.
 
@@ -103,8 +145,9 @@ OBaI intentionally differs from some public libraries in these areas:
 - VWAP is in-house, not TA-Lib parity. OBaI implements session-resetting intraday
   VWAP as cumulative typical-price volume divided by cumulative volume per
   session. Daily VWAP requests are rejected.
-- Single-symbol mode tracks proportional equity exposure, while portfolio mode
-  tracks discrete shares and cash. Conformance tests cover both models.
+- Single-symbol mode sizes a fixed notional at entry and marks it to market as
+  a constant share count for the life of the trade, while portfolio mode tracks
+  discrete shares and cash. Conformance tests cover both models.
 - The volume-scaled slippage model is a simplified square-root participation
   model with clamps. It borrows the market-impact concept from Zipline/LEAN but
   is not an exact implementation of either engine's model.

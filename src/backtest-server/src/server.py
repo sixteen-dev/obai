@@ -6,6 +6,8 @@ import asyncio
 import json
 import math
 import time
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -20,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__
-from .clients.fmp_client import FMPClient
+from .clients.fmp_client import FMPClient, price_basis_for
 from .config import Settings, load_settings
 from .data.db import DuckDBManager
 from .data.downloader import DataDownloader
@@ -33,23 +35,34 @@ from .engine.backtester import (
     run_multi_symbol_backtest,
 )
 from .engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
-from .engine.indicators import INDICATOR_REGISTRY, compute_indicators, get_supported_indicators
+from .engine.indicators import (
+    attach_benchmark_close,
+    compute_indicators,
+    get_supported_indicators,
+    indicator_stack_versions,
+)
 from .engine.metrics import (
     _compute_portfolio_specific,
+    _convert_portfolio_trades,
     compute_metrics,
     expected_trading_days,
 )
 from .engine.portfolio_backtester import PortfolioBacktestResult, run_portfolio_backtest
 from .engine.session import session_end as _session_end
-from .engine.signals import generate_signals
+from .engine.signals import count_condition_hits, generate_signals
 from .engine.spread import cs_window_for_timeframe, estimate_spread_corwin_schultz
 from .engine.walk_forward import walk_forward_validate
 from .jobs import JobStatus, JobStore
 from .logging_config import configure_logging, get_logger
+from .models.indicator_catalog import INDICATOR_CATALOG, IndicatorSpec, ParamSpec
 from .models.strategy import (
     BARS_PER_DAY,
+    BENCHMARK_CLOSE_COLUMN,
+    FILL_MODEL,
+    FILL_TIMING,
     SUPPORTED_TIMEFRAMES,
     IndicatorConfig,
+    RuleSet,
     StrategyDefinition,
 )
 from .response_utils import format_api_error
@@ -186,7 +199,8 @@ async def backtest_run_strategy_tool(
         "title": "Get Backtest Job Status",
         "readOnlyHint": True,
         "destructiveHint": False,
-        "idempotentHint": True,
+        # Job state is mutable, so this opts out of the hub result cache.
+        "idempotentHint": False,
         "openWorldHint": False,
     },
 )
@@ -814,6 +828,11 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
         risk_free_rate=rate,
         risk_free_rate_source=source,
     )
+    # A fold carries the same data-quality evidence the sync path reports; a
+    # window that ran on a critical gap must not read as a clean one.
+    result.warnings = exec_result.warnings
+    result.dependency_versions = indicator_stack_versions()
+    result.price_basis = price_basis_for(strategy.data_config.timeframe)
     # Walk-forward reports pre-roll per fold, and the trimmed frames it receives
     # no longer show it. The scarcest symbol governs: one unprimed symbol is
     # what makes a fold's indicators unreliable, not the average across them.
@@ -827,12 +846,27 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
 
 
 def _build_cache_key(strategy: StrategyDefinition) -> str:
-    """Build cache key from strategy + data fingerprint."""
+    """Build cache key from strategy + data fingerprint.
+
+    The benchmark's bars are part of every result — they set alpha, beta and
+    the benchmark return, and a strategy can read the benchmark close directly
+    — so refreshing the benchmark invalidates the entry exactly as refreshing a
+    traded symbol does.
+
+    Args:
+        strategy: Strategy definition being run.
+
+    Returns:
+        Deterministic cache key for this strategy over this data.
+
+    """
     store = _state.require("data_store")
     symbols = strategy.universe.symbols
     timeframe = strategy.data_config.timeframe
+    benchmark = strategy.universe.benchmark
+    keyed_symbols = [*symbols, benchmark] if benchmark else symbols
     mtimes: dict[str, float] = {}
-    for sym in symbols:
+    for sym in keyed_symbols:
         mtime = store.get_last_modified(sym, timeframe=timeframe)
         if mtime is not None:
             mtimes[sym] = mtime
@@ -878,6 +912,8 @@ async def _run_sync_backtest(
         risk_free_rate_source=source,
     )
     result.warnings = exec_result.warnings
+    result.dependency_versions = indicator_stack_versions()
+    result.price_basis = price_basis_for(strategy.data_config.timeframe)
 
     # Train/test split: compute separate metrics for each period
     train_test = _compute_train_test_split(
@@ -906,7 +942,7 @@ async def _run_sync_backtest(
     # Persist the miss-path finalization blocks so cache hits don't lose
     # the train/test split or portfolio_metrics that the strategy agent
     # relies on for robustness comparisons.
-    extras: dict[str, Any] = {}
+    extras: dict[str, Any] = {"signal_diagnostics": exec_result.signal_diagnostics}
     if train_test is not None:
         extras["train_test_split"] = train_test
     if exec_result.portfolio_result is not None:
@@ -922,6 +958,7 @@ async def _run_sync_backtest(
         cache_hit=False,
         portfolio_result=exec_result.portfolio_result,
         train_test=train_test,
+        signal_diagnostics=exec_result.signal_diagnostics,
     )
 
 
@@ -932,6 +969,7 @@ def _finalize_backtest_response(  # noqa: PLR0913
     cache_hit: bool,
     portfolio_result: PortfolioBacktestResult | None,
     train_test: dict[str, Any] | None = None,
+    signal_diagnostics: dict[str, Any] | None = None,
     cache_key: str | None = None,
 ) -> dict[str, Any]:
     """Build the tool response from a BacktestResult.
@@ -943,6 +981,10 @@ def _finalize_backtest_response(  # noqa: PLR0913
     """
     output: dict[str, Any] = dict(result.to_dict())
     output["cache_hit"] = cache_hit
+    # Name the execution assumptions in the payload: which bar an order filled
+    # on, and which fills carried the configured costs.
+    output["fill_timing"] = FILL_TIMING
+    output["fill_model"] = FILL_MODEL
 
     extras: dict[str, object] | None = None
     if cache_hit and cache_key is not None:
@@ -956,6 +998,13 @@ def _finalize_backtest_response(  # noqa: PLR0913
             train_test = cached_split
     if train_test is not None:
         output["train_test_split"] = train_test
+
+    if signal_diagnostics is None and extras is not None:
+        cached_diagnostics = extras.get("signal_diagnostics")
+        if isinstance(cached_diagnostics, dict):
+            signal_diagnostics = cached_diagnostics
+    if signal_diagnostics is not None:
+        output["signal_diagnostics"] = signal_diagnostics
 
     if portfolio_result is not None:
         output["portfolio_metrics"] = _compute_portfolio_specific(
@@ -1002,6 +1051,14 @@ def _compute_train_test_split(
     Phase 3.8: datetime-aware boundary for intraday. For intraday data,
     the split boundary is end-of-session on the train_end date. Trade
     bucketing uses parsed datetime comparison, not lexical strings.
+
+    The test slice starts at the last train row so the return into the first
+    test bar is counted rather than discarded. That baseline bar is kept
+    rather than trimmed, so the test period is reported from the boundary date
+    and its ``data_points_processed`` includes it. Trades are still bucketed
+    whole by exit date, so a position opened in train and closed in test
+    contributes all of its PnL to the test trade statistics while the test
+    equity slice only measures the part that fell inside the window.
     """
     train_end = strategy.data_config.get_train_end()
     if equity_df is None or not isinstance(equity_df, pl.DataFrame):
@@ -1018,10 +1075,13 @@ def _compute_train_test_split(
         split_boundary = train_end
 
     train_eq = equity_df.filter(pl.col("date") <= split_boundary)
-    test_eq = equity_df.filter(pl.col("date") > split_boundary)
+    after_boundary = equity_df.filter(pl.col("date") > split_boundary)
 
-    if train_eq.is_empty() or test_eq.is_empty():
+    if train_eq.is_empty() or after_boundary.is_empty():
         return None
+
+    # Carry the last train row in as the test slice's baseline.
+    test_eq = equity_df.filter(pl.col("date") >= train_eq["date"][-1])
 
     # Trade bucketing uses ISO string comparison matching Trade.exit_date format
     train_end_str = split_boundary.isoformat()
@@ -1127,6 +1187,8 @@ class _ExecutionResult:
     # Pre-start bars that primed the indicators, per symbol. Counted before the
     # warm-up is trimmed away, since nothing downstream can recover it after.
     warmup_bars: dict[str, int] = field(default_factory=dict)
+    # Predicate and fill-skip counts for reading a zero- or few-trade run.
+    signal_diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
@@ -1170,6 +1232,61 @@ async def _resolve_benchmark_df(  # noqa: PLR0913
     return bench_dfs.get(benchmark_sym)
 
 
+async def _attach_benchmark_features(
+    extended_dfs: dict[str, pl.DataFrame],
+    strategy: StrategyDefinition,
+    downloader: Any,
+    fetch_start: str,
+) -> tuple[dict[str, pl.DataFrame], pl.DataFrame | None, list[str]]:
+    """Attach the benchmark close to every symbol frame, when one is referenced.
+
+    The benchmark is fetched over the same warm-up-extended window as the
+    traded symbols and attached before indicators are computed, so a momentum
+    or correlation measure built on it is primed by the same pre-roll as one
+    built on the symbol, and both engines read one identical column.
+
+    Args:
+        extended_dfs: Warm-up-extended OHLCV frames, keyed by symbol.
+        strategy: Strategy definition, which names the benchmark.
+        downloader: Data downloader, used when the benchmark is not traded.
+        fetch_start: Warm-up-extended start date (YYYY-MM-DD).
+
+    Returns:
+        Tuple of (frames carrying the column, the untrimmed benchmark frame or
+        None when nothing referenced it, alignment warnings).
+
+    Raises:
+        ValueError: If the column is referenced with no benchmark configured,
+            or the benchmark has no data to align.
+
+    """
+    if not strategy.references_benchmark_close():
+        return extended_dfs, None, []
+    benchmark = strategy.universe.benchmark
+    if not benchmark:
+        msg = f"{BENCHMARK_CLOSE_COLUMN} is referenced but universe.benchmark is not set"
+        raise ValueError(msg)
+    bench = extended_dfs.get(benchmark)
+    if bench is None:
+        fetched = await downloader.ensure_data(
+            symbols=[benchmark],
+            start_date=fetch_start,
+            end_date=strategy.data_config.end_date,
+            timeframe=strategy.data_config.timeframe,
+        )
+        bench = fetched.get(benchmark)
+    if bench is None or bench.is_empty():
+        msg = f"Benchmark {benchmark} has no data; {BENCHMARK_CLOSE_COLUMN} cannot be computed"
+        raise ValueError(msg)
+
+    attached: dict[str, pl.DataFrame] = {}
+    warnings: list[str] = []
+    for symbol, frame in extended_dfs.items():
+        attached[symbol], frame_warnings = attach_benchmark_close(frame, bench, symbol)
+        warnings.extend(frame_warnings)
+    return attached, bench, warnings
+
+
 # Warm-up pre-roll. Indicators with a lookback window (SMA-200, RSI-14, ADX…)
 # emit nulls for their first N bars. Without history before start_date those
 # null bars fall inside the traded window — acute for short walk-forward test
@@ -1180,49 +1297,131 @@ async def _resolve_benchmark_df(  # noqa: PLR0913
 _WARMUP_MARGIN = 1.5  # headroom so the longest lookback is comfortably satisfied
 _MAX_WARMUP_BARS = 2000  # cap so a pathological period can't extend the fetch without limit
 _CALENDAR_DAYS_PER_TRADING_DAY = 7 / 5  # ~5 trading days per 7 calendar days
-
-# Indicator params that express a lookback period (in bars). Non-lookback params
-# (std_dev, acceleration, maximum) are deliberately excluded.
-_LOOKBACK_PARAM_KEYS: tuple[str, ...] = (
-    "length",
-    "fast_length",
-    "slow_length",
-    "signal_length",
-    "fastk_period",
-    "slowk_period",
-    "slowd_period",
-)
+# A recursive indicator holds a value as soon as its seed window closes, but
+# that value still carries the seed's error. Three windows decay it to about
+# e^-2 (13.5%) for a Wilder 1/n gain and e^-4 (1.8%) for an EMA 2/(n+1) gain.
+_STABILIZATION_MULTIPLIER = 3
 
 
-def _max_indicator_lookback(indicators: list[IndicatorConfig]) -> int:
-    """Return the largest declared lookback period (in bars) across indicators.
+@dataclass(frozen=True)
+class _WarmupPlan:
+    """How much history the indicators need, and how much will be fetched.
 
-    Reads lookback-style params from each indicator config. Indicators with no
-    declared period (OBV, VWAP, SAR, candlestick patterns) contribute nothing.
-    Bounded to ``_MAX_WARMUP_BARS`` so a pathological period cannot extend the
-    fetch without limit.
-
-    Args:
-        indicators: Strategy indicator configs.
-
-    Returns:
-        Max lookback in bars, clamped to ``_MAX_WARMUP_BARS`` (0 if none declared).
+    Attributes:
+        bars: Pre-roll to fetch, after the cap is applied.
+        required_bars: Pre-roll the indicators need, before the cap.
 
     """
-    max_period = 0
-    for indicator in indicators:
-        for key in _LOOKBACK_PARAM_KEYS:
-            value = indicator.params.get(key)
-            if isinstance(value, (int, float)) and int(value) > max_period:
-                max_period = int(value)
-    return min(max_period, _MAX_WARMUP_BARS)
+
+    bars: int
+    required_bars: int
+
+    @property
+    def truncated(self) -> bool:
+        """Return whether the cap cut the pre-roll short of what is needed."""
+        return self.required_bars > self.bars
+
+
+def _required_warmup_bars(
+    indicators: list[IndicatorConfig],
+    cap: int = _MAX_WARMUP_BARS,
+) -> _WarmupPlan:
+    """Plan the pre-roll that leaves every indicator defined and stabilized.
+
+    Walks the indicators in declaration order — the order the engine computes
+    them in — so one reading another's column adds its own lookback to the bars
+    that column already needed. Recursive indicators are planned at
+    ``_STABILIZATION_MULTIPLIER`` times their lookback, because their first
+    value is only seeded and not yet converged.
+
+    Args:
+        indicators: Strategy indicator configs, in declaration order.
+        cap: Largest pre-roll to fetch, in bars.
+
+    Returns:
+        The plan: bars to fetch, and the bars the indicators actually require.
+
+    """
+    planned: dict[str, int] = {}
+    required = 0
+    for config in indicators:
+        spec = INDICATOR_CATALOG.get(config.type.upper())
+        if spec is None:
+            continue
+        params = _plannable_params(spec, config.params)
+        own = max(spec.lookback(params), 0)
+        if spec.recursive:
+            own *= _STABILIZATION_MULTIPLIER
+        refs = spec.source_refs(config.source, params)
+        total = own + max((planned.get(ref, 0) for ref in refs), default=0)
+        required = max(required, total)
+        planned[config.id] = total
+        planned.update({f"{config.id}_{suffix}": total for suffix in spec.outputs or ()})
+    return _WarmupPlan(bars=min(required, cap), required_bars=required)
+
+
+def _plannable_params(spec: IndicatorSpec, params: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one indicator's params, dropping periods the formula can't use.
+
+    Params reach the planner exactly as the caller wrote them, so a period that
+    is not an integer would break the lookback formula. Dropping it plans from
+    the catalog default, which is also the value the engine falls back to when
+    the native call rejects the supplied one.
+
+    Args:
+        spec: Catalog entry for the indicator being planned.
+        params: Params as the caller supplied them.
+
+    Returns:
+        Resolved params whose lookback entries are all integers.
+
+    """
+    usable = {
+        name: value for name, value in params.items() if _is_plannable(spec.params.get(name), value)
+    }
+    return spec.resolve_params(usable)
+
+
+def _is_plannable(param: ParamSpec | None, value: Any) -> bool:
+    """Return whether a supplied value can drive a lookback formula.
+
+    Args:
+        param: Catalog spec for the param, or None when it is not a real param.
+        value: Value the caller supplied.
+
+    Returns:
+        True unless the value is a period the formula cannot take.
+
+    """
+    if param is None or param.kind != "lookback":
+        return True
+    return type(value) is int
+
+
+def _warmup_truncation_warnings(plan: _WarmupPlan) -> list[str]:
+    """Report a pre-roll the cap cut short of what the indicators need.
+
+    Args:
+        plan: Pre-roll plan for this strategy's indicators.
+
+    Returns:
+        One warning when the cap bound the fetch, otherwise an empty list.
+
+    """
+    if not plan.truncated:
+        return []
+    return [
+        f"Warm-up pre-roll capped at {plan.bars} bars; the indicators need "
+        f"{plan.required_bars} bars to be defined and stabilized, so the earliest "
+        "bars of the window may be undefined or unstabilized."
+    ]
 
 
 def _warmup_calendar_days(indicators: list[IndicatorConfig], timeframe: str) -> int:
-    """Compute the calendar-day pre-roll needed to prime the longest indicator.
+    """Compute the calendar-day pre-roll needed to prime every indicator.
 
-    Converts the max lookback (bars) to trading days via bars-per-day, then to
-    calendar days with a margin so the lookback is comfortably satisfied.
+    Converts the planned pre-roll (bars) to trading days via bars-per-day, then
+    to calendar days with a margin so the lookback is comfortably satisfied.
 
     Args:
         indicators: Strategy indicator configs.
@@ -1232,7 +1431,7 @@ def _warmup_calendar_days(indicators: list[IndicatorConfig], timeframe: str) -> 
         Calendar days to fetch before start_date (0 when no lookback indicators).
 
     """
-    lookback_bars = _max_indicator_lookback(indicators)
+    lookback_bars = _required_warmup_bars(indicators).bars
     if lookback_bars <= 0:
         return 0
     bars_per_day = BARS_PER_DAY.get(timeframe, 1)
@@ -1295,16 +1494,75 @@ def _prepare_symbol_signals(
     return signaled, warnings
 
 
+def _signal_diagnostics(
+    prepped: dict[str, pl.DataFrame],
+    strategy: StrategyDefinition,
+    skipped: Mapping[str, int],
+) -> dict[str, Any]:
+    """Count what the rules did, so a zero-trade run can be read rather than guessed.
+
+    Separates the three reasons a run trades little: a predicate that never
+    fires, predicates that all fire whose combination does not, and signals
+    that fired but could not be filled.
+
+    Args:
+        prepped: Per-symbol signal frames, trimmed to the requested window.
+        strategy: Strategy whose entry and exit rules were evaluated.
+        skipped: Count of unfilled entry signals by reason.
+
+    Returns:
+        Bar and signal totals, per-condition hit counts in declaration order,
+        and the fill-skip counts keyed by reason.
+
+    """
+    frames = list(prepped.values())
+    return {
+        "bars": sum(df.height for df in frames),
+        "entry_signal_bars": sum(int(df["entry_signal"].sum()) for df in frames),
+        "exit_signal_bars": sum(int(df["exit_signal"].sum()) for df in frames),
+        "entry_conditions": _pooled_condition_hits(frames, strategy.entry_rules),
+        "exit_conditions": _pooled_condition_hits(frames, strategy.exit_rules),
+        "entries_skipped_by_reason": {reason: skipped[reason] for reason in sorted(skipped)},
+    }
+
+
+def _pooled_condition_hits(
+    frames: list[pl.DataFrame],
+    ruleset: RuleSet,
+) -> list[dict[str, Any]]:
+    """Sum each condition's hit count across symbols, by declaration position.
+
+    Args:
+        frames: Per-symbol signal frames.
+        ruleset: Conditions to count, evaluated against every frame.
+
+    Returns:
+        One ``{"rule": label, "true_bars": total}`` per condition, in
+        declaration order, labelled from the first symbol.
+
+    """
+    per_symbol = [count_condition_hits(df, ruleset) for df in frames]
+    if not per_symbol:
+        return []
+    return [
+        {
+            "rule": hit["rule"],
+            "true_bars": sum(int(symbol_hits[position]["true_bars"]) for symbol_hits in per_symbol),
+        }
+        for position, hit in enumerate(per_symbol[0])
+    ]
+
+
 def _unprimed_indicator_warnings(
     windowed: pl.DataFrame, indicators: list[IndicatorConfig]
 ) -> list[str]:
     """Report indicators still undefined once the requested window has started.
 
-    The pre-roll is sized from the largest declared parameter, but a TA-Lib
-    lookback runs longer than that: ADX(14) needs 27 bars, TEMA(20) needs 57.
-    The window can therefore open before an indicator holds a value, and those
-    bars cannot produce a signal. Measuring the primed frame says so exactly,
-    without this having to model each indicator's lookback formula.
+    The pre-roll the planner asks for is not always the pre-roll that arrives:
+    the bar cap can truncate it, and the data can simply start later than the
+    fetch did. The window then opens before an indicator holds a value, and
+    those bars cannot produce a signal. Measuring the primed frame says so
+    exactly, whatever the cause.
 
     Args:
         windowed: Signal frame already trimmed to the requested window.
@@ -1319,9 +1577,10 @@ def _unprimed_indicator_warnings(
 
     messages: list[str] = []
     for config in indicators:
-        if config.id not in windowed.columns:
+        column = _primed_column(config, windowed.columns)
+        if column is None:
             continue
-        series = windowed[config.id]
+        series = windowed[column]
         if not series.dtype.is_float() or series[0] is not None:
             continue
         defined_at = series.is_not_null().arg_true()
@@ -1339,6 +1598,61 @@ def _unprimed_indicator_warnings(
     return messages
 
 
+def _primed_column(config: IndicatorConfig, columns: list[str]) -> str | None:
+    """Return the column whose first value dates this indicator, if it has one.
+
+    A multi-output indicator writes ``{id}_{suffix}`` columns and no bare ``id``
+    column, so its first output stands in for the whole indicator.
+
+    Args:
+        config: One indicator config.
+        columns: Column names present on the windowed frame.
+
+    Returns:
+        The column to measure, or None when the indicator produced none.
+
+    """
+    if config.id in columns:
+        return config.id
+    spec = INDICATOR_CATALOG.get(config.type.upper())
+    if spec is None or not spec.outputs:
+        return None
+    first = f"{config.id}_{spec.outputs[0]}"
+    return first if first in columns else None
+
+
+async def _benchmark_frame_for_run(
+    downloader: Any,
+    strategy: StrategyDefinition,
+    benchmark_source: pl.DataFrame | None,
+    symbol_dfs: dict[str, pl.DataFrame],
+) -> pl.DataFrame | None:
+    """Return the benchmark frame for the requested window, fetching it if needed.
+
+    Args:
+        downloader: Data downloader used when the benchmark was not already fetched.
+        strategy: Strategy whose universe names the benchmark and window.
+        benchmark_source: Extended benchmark frame already fetched for
+            ``benchmark_close``, or None when the strategy does not reference it.
+        symbol_dfs: Trimmed symbol frames, reused when the benchmark is in the universe.
+
+    Returns:
+        Benchmark OHLCV trimmed to the requested window, or None without a benchmark.
+
+    """
+    requested_start = strategy.data_config.start_date
+    if benchmark_source is not None:
+        return _trim_warmup(benchmark_source, requested_start)
+    return await _resolve_benchmark_df(
+        downloader,
+        strategy.universe.benchmark,
+        requested_start,
+        strategy.data_config.end_date,
+        strategy.data_config.timeframe,
+        symbol_dfs,
+    )
+
+
 async def _execute_strategy(  # noqa: PLR0915
     strategy: StrategyDefinition,
 ) -> _ExecutionResult:
@@ -1351,6 +1665,8 @@ async def _execute_strategy(  # noqa: PLR0915
     # Fetch a warm-up pre-roll before start_date so lookback indicators are live
     # across the whole window (see _warmup_calendar_days). Applies to every call
     # path, so each walk-forward window fetches its own pre-roll automatically.
+    # The plan is held onto so a pre-roll the cap truncated can be reported.
+    warmup_plan = _required_warmup_bars(strategy.indicators)
     warmup_days = _warmup_calendar_days(strategy.indicators, timeframe)
     fetch_start = _warmup_fetch_start(requested_start, warmup_days)
     extended_dfs = await downloader.ensure_data(
@@ -1363,6 +1679,13 @@ async def _execute_strategy(  # noqa: PLR0915
     if not extended_dfs:
         msg = "No data available for any symbol"
         raise ValueError(msg)
+
+    extended_dfs, benchmark_source, benchmark_warnings = await _attach_benchmark_features(
+        extended_dfs,
+        strategy,
+        downloader,
+        fetch_start,
+    )
 
     # Warm-up bars prime indicators only. Coverage checks, the benchmark, and
     # the data-quality report all measure the REQUESTED window, so trim here.
@@ -1378,14 +1701,11 @@ async def _execute_strategy(  # noqa: PLR0915
         end_date,
         timeframe,
     )
+    data_warnings.extend(_warmup_truncation_warnings(warmup_plan))
+    data_warnings.extend(benchmark_warnings)
 
-    benchmark_df = await _resolve_benchmark_df(
-        downloader,
-        strategy.universe.benchmark,
-        requested_start,
-        end_date,
-        timeframe,
-        symbol_dfs,
+    benchmark_df = await _benchmark_frame_for_run(
+        downloader, strategy, benchmark_source, symbol_dfs
     )
 
     exec_cfg = strategy.execution_config
@@ -1398,15 +1718,40 @@ async def _execute_strategy(  # noqa: PLR0915
     )
 
     all_warnings: list[str] = list(data_warnings)
+    skipped: Counter[str] = Counter()
 
-    if len(extended_dfs) == 1:
-        symbol = next(iter(extended_dfs))
+    prepped: dict[str, Any] = {}
+    for symbol, extended_df in extended_dfs.items():
         signaled, warnings = _prepare_symbol_signals(
-            extended_dfs[symbol],
+            extended_df,
             strategy,
             requested_start,
         )
         all_warnings.extend(warnings)
+        prepped[symbol] = signaled
+
+    # The requested allocation mode decides the engine, ahead of how many
+    # symbols came back: a universe of one is a portfolio of one, and running
+    # the independent engine instead would silently change quantity semantics.
+    if strategy.position_sizing.allocation_mode == "portfolio":
+        # Stamped here rather than threaded through: only this scope ever saw
+        # the untrimmed frames, and portfolio mode has no other use for them.
+        portfolio_exec = _run_portfolio_mode(
+            prepped, strategy, all_warnings, benchmark_df, symbol_dfs
+        )
+        portfolio = portfolio_exec.portfolio_result
+        return replace(
+            portfolio_exec,
+            warmup_bars=warmup_bars,
+            signal_diagnostics=_signal_diagnostics(
+                prepped,
+                strategy,
+                portfolio.entries_skipped_by_reason if portfolio is not None else {},
+            ),
+        )
+
+    if len(prepped) == 1:
+        symbol, signaled = next(iter(prepped.items()))
 
         if exec_cfg.estimate_spread:
             highs = signaled["high"].to_numpy().astype(np.float64)
@@ -1422,6 +1767,7 @@ async def _execute_strategy(  # noqa: PLR0915
             strategy.position_sizing,
             strategy.risk_management,
             config,
+            skipped=skipped,
         )
         return _ExecutionResult(
             equity_df=eq,
@@ -1430,25 +1776,7 @@ async def _execute_strategy(  # noqa: PLR0915
             benchmark_df=benchmark_df,
             symbol_dfs=symbol_dfs,
             warmup_bars=warmup_bars,
-        )
-
-    prepped: dict[str, Any] = {}
-    for symbol, extended_df in extended_dfs.items():
-        signaled, warnings = _prepare_symbol_signals(
-            extended_df,
-            strategy,
-            requested_start,
-        )
-        all_warnings.extend(warnings)
-        prepped[symbol] = signaled
-
-    # Route to portfolio backtester if allocation_mode is "portfolio"
-    if strategy.position_sizing.allocation_mode == "portfolio":
-        # Stamped here rather than threaded through: only this scope ever saw
-        # the untrimmed frames, and portfolio mode has no other use for them.
-        return replace(
-            _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs),
-            warmup_bars=warmup_bars,
+            signal_diagnostics=_signal_diagnostics(prepped, strategy, skipped),
         )
 
     # For multi-symbol independent mode, compute per-symbol spread estimates
@@ -1476,6 +1804,7 @@ async def _execute_strategy(  # noqa: PLR0915
                 strategy.position_sizing,
                 strategy.risk_management,
                 sym_cfg,
+                skipped=skipped,
             )
             equity_curves.append(eq_curve.rename({"equity": f"equity_{symbol}"}))
             all_trades.extend(sym_trades)
@@ -1491,6 +1820,7 @@ async def _execute_strategy(  # noqa: PLR0915
             strategy.position_sizing,
             strategy.risk_management,
             config,
+            skipped=skipped,
         )
     return _ExecutionResult(
         equity_df=eq,
@@ -1499,6 +1829,7 @@ async def _execute_strategy(  # noqa: PLR0915
         benchmark_df=benchmark_df,
         symbol_dfs=symbol_dfs,
         warmup_bars=warmup_bars,
+        signal_diagnostics=_signal_diagnostics(prepped, strategy, skipped),
     )
 
 
@@ -1547,6 +1878,7 @@ def _run_portfolio_mode(
         timeframe=strategy.data_config.timeframe,
         volume_scaled_slippage=exec_cfg.volume_scaled_slippage,
         spread_estimates=spread_ests,
+        risk_management=strategy.risk_management,
     )
 
     # Build equity DataFrame from portfolio result
@@ -1569,24 +1901,9 @@ def _run_portfolio_mode(
         }
     )
 
-    # Convert PortfolioTradeRecords to Trade objects for metrics
-    trades = [
-        Trade(
-            symbol=r.symbol,
-            entry_date=r.entry_date,
-            entry_price=r.entry_price,
-            exit_date=r.exit_date,
-            exit_price=r.exit_price,
-            return_pct=r.return_pct,
-            holding_days=r.holding_days,
-            exit_reason=r.exit_reason,
-        )
-        for r in portfolio_result.trades
-    ]
-
     return _ExecutionResult(
         equity_df=equity_df,
-        trades=trades,
+        trades=_convert_portfolio_trades(portfolio_result.trades),
         warnings=all_warnings,
         benchmark_df=benchmark_df,
         symbol_dfs=symbol_dfs,
@@ -1691,8 +2008,8 @@ def _indicator_weight(ind: IndicatorConfig) -> float:
         Weight multiplier for this indicator.
 
     """
-    entry = INDICATOR_REGISTRY.get(ind.type.upper(), {})
-    return 1.5 if entry.get("outputs") else 1.0
+    spec = INDICATOR_CATALOG.get(ind.type.upper())
+    return 1.5 if spec is not None and spec.outputs else 1.0
 
 
 def _compute_poll_delay(estimated: float) -> int:

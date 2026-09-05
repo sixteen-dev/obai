@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from src.engine.signals import generate_signals
+from src.engine.signals import count_condition_hits, generate_signals
 from src.models.strategy import Condition, Operand, RuleSet
 
 
@@ -84,6 +84,29 @@ class TestGenerateSignals:
         assert not entries[0]
         # At idx 3: prev fast(25) > prev slow(20), so NOT crosses_above
         assert entries[3] is not True
+
+    def test_crosses_above_a_constant_threshold_fires(self) -> None:
+        """A threshold's previous value is the threshold, so the cross is seen.
+
+        Shifting a broadcast literal yields null, which made every crossover
+        against a constant resolve to null and then to False — the idiom the
+        prompt teaches for "breaks above X" silently never fired.
+        """
+        df = pl.DataFrame({"date": [1, 2, 3, 4, 5], "close": [1.0, 2.0, 3.0, 2.0, 3.0]})
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="close"),
+                    operator="crosses_above",
+                    right=Operand(constant=2.5),
+                ),
+            ],
+        )
+
+        result = generate_signals(df, entry, RuleSet(logic="OR", conditions=[]))
+
+        assert result["entry_signal"].to_list() == [False, False, True, False, True]
 
     def test_crosses_below_signal(self) -> None:
         """crosses_below should detect downward crossover."""
@@ -309,3 +332,69 @@ class TestGenerateSignals:
         result = generate_signals(df, entry, exit_rules)
         entries = result["entry_signal"].to_list()
         assert entries == [True, False, True]
+
+
+class TestCountConditionHits:
+    """Per-predicate hit counts for diagnosing a zero-trade run."""
+
+    def test_counts_each_predicate_and_the_combination_separately(self) -> None:
+        """Both predicates fire on two bars each while their AND never fires."""
+        df = pl.DataFrame(
+            {
+                "date": [1, 2, 3, 4, 5],
+                "close": [95.0, 101.0, 102.0, 88.0, 89.0],
+            }
+        )
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="close"),
+                    operator="greater_than",
+                    right=Operand(constant=100.0),
+                ),
+                Condition(
+                    left=Operand(indicator="close"),
+                    operator="less_than",
+                    right=Operand(constant=90.0),
+                ),
+            ],
+        )
+
+        hits = count_condition_hits(df, entry)
+
+        assert [h["true_bars"] for h in hits] == [2, 2]
+        signaled = generate_signals(df, entry, RuleSet(logic="OR", conditions=[]))
+        assert signaled["entry_signal"].sum() == 0
+
+    def test_crossover_predicate_counts_transition_bars_only(self) -> None:
+        """A crossover counts the bars it transitions on, not every bar above."""
+        df = pl.DataFrame({"date": [1, 2, 3, 4, 5], "close": [1.0, 2.0, 3.0, 2.0, 3.0]})
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="close"),
+                    operator="crosses_above",
+                    right=Operand(constant=2.5),
+                ),
+            ],
+        )
+
+        assert count_condition_hits(df, entry)[0]["true_bars"] == 2
+
+    def test_labels_name_operands(self) -> None:
+        """The label reads as the rule the agent wrote."""
+        df = pl.DataFrame({"date": [1, 2], "close": [95.0, 101.0]})
+        entry = RuleSet(
+            logic="AND",
+            conditions=[
+                Condition(
+                    left=Operand(indicator="close"),
+                    operator="greater_than",
+                    right=Operand(constant=100.0),
+                ),
+            ],
+        )
+
+        assert count_condition_hits(df, entry)[0]["rule"] == "close greater_than 100.0"

@@ -2,204 +2,31 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
+import numpy as np
 import polars as pl
 import polars_talib as ta  # type: ignore[import-untyped]
+from numpy.lib.stride_tricks import sliding_window_view
 
 from ..logging_config import get_logger
-from ..models.strategy import RAW_PRICE_COLUMNS, IndicatorConfig
+from ..models.indicator_catalog import (
+    INDICATOR_CATALOG,
+    IndicatorSpec,
+    ParamSpec,
+    parse_iso_date,
+)
+from ..models.strategy import BENCHMARK_CLOSE_COLUMN, RAW_PRICE_COLUMNS, IndicatorConfig
+from .session import MARKET_OPEN
 
 logger = get_logger(__name__)
 
-# Map indicator type → polars-talib function + param mapping
-# Each entry: (function, {config_param_name: talib_param_name}, multi_output_suffixes | None)
-# Optional keys:
-#   "input_type": "ohlc" | "dual" | "custom" — determines how _apply_indicator builds the expr
-#   "second_source": default second column name for dual-input indicators
-#   "intraday_only": True — indicator requires intraday data (not daily)
-INDICATOR_REGISTRY: dict[str, dict[str, Any]] = {
-    "SMA": {
-        "fn": ta.sma,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "EMA": {
-        "fn": ta.ema,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "WMA": {
-        "fn": ta.wma,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "DEMA": {
-        "fn": ta.dema,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "TEMA": {
-        "fn": ta.tema,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "RSI": {
-        "fn": ta.rsi,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "0-100",
-    },
-    "MOM": {
-        "fn": ta.mom,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price_delta",
-    },
-    "ROC": {
-        "fn": ta.roc,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "percent",
-    },
-    "WILLR": {
-        "fn": ta.willr,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "-100-0",
-    },
-    "CCI": {
-        "fn": ta.cci,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "unbounded",
-    },
-    "ATR": {
-        "fn": ta.atr,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "ADX": {
-        "fn": ta.adx,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "0-100",
-    },
-    "MFI": {
-        "fn": ta.mfi,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "0-100",
-    },
-    "OBV": {"fn": ta.obv, "params": {}, "outputs": None, "output_scale": "volume"},
-    "SAR": {
-        "fn": ta.sar,
-        "params": {"acceleration": "acceleration", "maximum": "maximum"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "MACD": {
-        "fn": ta.macd,
-        "params": {
-            "fast_length": "fastperiod",
-            "slow_length": "slowperiod",
-            "signal_length": "signalperiod",
-        },
-        "outputs": ["macd", "signal", "hist"],
-        "output_scale": "price_delta",
-    },
-    "BBANDS": {
-        "fn": ta.bbands,
-        # `std_dev` is fanned out to both nbdevup/nbdevdn in
-        # ``_build_talib_kwargs`` so the upper and lower bands stay
-        # symmetric for non-default band widths.
-        "params": {"length": "timeperiod", "std_dev": "nbdevup"},
-        "outputs": ["upper", "middle", "lower"],
-        "output_scale": "price",
-    },
-    "STOCH": {
-        "fn": ta.stoch,
-        "params": {
-            "fastk_period": "fastk_period",
-            "slowk_period": "slowk_period",
-            "slowd_period": "slowd_period",
-        },
-        "outputs": ["slowk", "slowd"],
-        "output_scale": "0-100",
-    },
-    "STOCHRSI": {
-        "fn": ta.stochrsi,
-        "params": {"length": "timeperiod"},
-        "outputs": ["fastk", "fastd"],
-        "output_scale": "0-100",
-    },
-    "AROON": {
-        "fn": ta.aroon,
-        "params": {"length": "timeperiod"},
-        "outputs": ["down", "up"],
-        "output_scale": "0-100",
-    },
-    # --- Statistical indicators ---
-    "LINEARREG": {
-        "fn": ta.linearreg,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    "LINEARREG_SLOPE": {
-        "fn": ta.linearreg_slope,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "unbounded",
-    },
-    "LINEARREG_ANGLE": {
-        "fn": ta.linearreg_angle,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "unbounded",
-    },
-    "STDDEV": {
-        "fn": ta.stddev,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "price",
-    },
-    # --- Dual-input statistical indicators ---
-    "BETA": {
-        "fn": ta.beta,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "unbounded",
-        "input_type": "dual",
-        "second_source": "high",
-    },
-    "CORREL": {
-        "fn": ta.correl,
-        "params": {"length": "timeperiod"},
-        "outputs": None,
-        "output_scale": "unbounded",
-        "input_type": "dual",
-        "second_source": "high",
-    },
-    # --- VWAP (custom, intraday-only) ---
-    "VWAP": {
-        "fn": None,
-        "params": {},
-        "outputs": None,
-        "output_scale": "price",
-        "input_type": "custom",
-        "intraday_only": True,
-    },
-}
-
-# --- Candlestick pattern batch registration ---
+# --- Candlestick pattern functions ---
 # All cdl* functions from polars-talib take OHLC and return integer signals.
+# Their catalog entries are generated from the same names in
+# ``models/indicator_catalog.CDL_PATTERN_NAMES``.
 _CDL_FUNCTIONS: list[tuple[str, Callable[..., Any]]] = [
     ("CDL_2CROWS", ta.cdl2crows),
     ("CDL_3BLACKCROWS", ta.cdl3blackcrows),
@@ -264,22 +91,70 @@ _CDL_FUNCTIONS: list[tuple[str, Callable[..., Any]]] = [
     ("CDL_XSIDEGAP3METHODS", ta.cdlxsidegap3methods),
 ]
 
-for _cdl_name, _cdl_fn in _CDL_FUNCTIONS:
-    INDICATOR_REGISTRY[_cdl_name] = {
-        "fn": _cdl_fn,
-        "params": {},
-        "outputs": None,
-        "output_scale": "signal",
-        "input_type": "ohlc",
-    }
+# The native function behind every catalogued indicator that TA-Lib provides.
+# `tests/test_indicators.py::TestCatalogEngineParity` pins this against the
+# catalog: an entry with no binding validates but cannot compute.
+TALIB_FUNCTIONS: dict[str, Callable[..., Any]] = {
+    "SMA": ta.sma,
+    "EMA": ta.ema,
+    "WMA": ta.wma,
+    "DEMA": ta.dema,
+    "TEMA": ta.tema,
+    "KAMA": ta.kama,
+    "RSI": ta.rsi,
+    "MOM": ta.mom,
+    "ROC": ta.roc,
+    "WILLR": ta.willr,
+    "CCI": ta.cci,
+    "ATR": ta.atr,
+    "NATR": ta.natr,
+    "ADX": ta.adx,
+    "PLUS_DI": ta.plus_di,
+    "MINUS_DI": ta.minus_di,
+    "MFI": ta.mfi,
+    "OBV": ta.obv,
+    "SAR": ta.sar,
+    "MACD": ta.macd,
+    "BBANDS": ta.bbands,
+    "STOCH": ta.stoch,
+    "STOCHRSI": ta.stochrsi,
+    "AROON": ta.aroon,
+    "LINEARREG": ta.linearreg,
+    "LINEARREG_SLOPE": ta.linearreg_slope,
+    "LINEARREG_ANGLE": ta.linearreg_angle,
+    "STDDEV": ta.stddev,
+    "MAX": ta.max,
+    "MIN": ta.min,
+    "BETA": ta.beta,
+    "CORREL": ta.correl,
+    **dict(_CDL_FUNCTIONS),
+}
 
-# Indicators that need high, low, close (not just source column)
-HLC_INDICATORS: set[str] = {"ATR", "ADX", "CCI", "WILLR", "STOCH", "SAR", "MFI", "VWAP"}
-VOLUME_INDICATORS: set[str] = {"OBV", "MFI", "VWAP"}
-# Indicators that need open, high, low, close
-OHLC_INDICATORS: set[str] = {name for name, _ in _CDL_FUNCTIONS}
-# Dual-input indicators that take two column expressions
-DUAL_INPUT_INDICATORS: set[str] = {"BETA", "CORREL"}
+# Which price columns each input class feeds the native function, in order.
+_INPUT_COLUMNS: dict[str, tuple[str, ...]] = {
+    "ohlc": ("open", "high", "low", "close"),
+    "hlc": ("high", "low", "close"),
+    "hlcv": ("high", "low", "close", "volume"),
+    "hl": ("high", "low"),
+    "volume": ("volume",),
+}
+
+# Views the discovery output and the expression builder read, derived so that
+# an indicator declares its inputs once, in the catalog.
+HLC_INDICATORS: set[str] = {
+    name for name, spec in INDICATOR_CATALOG.items() if spec.inputs in {"hl", "hlc", "hlcv"}
+}
+VOLUME_INDICATORS: set[str] = {
+    name
+    for name, spec in INDICATOR_CATALOG.items()
+    if spec.inputs in {"source_volume", "volume", "hlcv"}
+}
+OHLC_INDICATORS: set[str] = {
+    name for name, spec in INDICATOR_CATALOG.items() if spec.inputs == "ohlc"
+}
+DUAL_INPUT_INDICATORS: set[str] = {
+    name for name, spec in INDICATOR_CATALOG.items() if spec.inputs == "dual"
+}
 
 
 def compute_indicators(
@@ -298,32 +173,175 @@ def compute_indicators(
         Tuple of (DataFrame with indicator columns added, list of warnings).
 
     Raises:
-        ValueError: If VWAP is requested with daily timeframe.
+        ValueError: If the frame's timestamps are not strictly increasing, or
+            if VWAP is requested with daily timeframe.
 
     """
+    _require_strictly_increasing_dates(df)
     warnings: list[str] = []
     result_df = df.clone()
 
     for config in indicators:
         indicator_type = config.type.upper()
-        if indicator_type not in INDICATOR_REGISTRY:
+        spec = INDICATOR_CATALOG.get(indicator_type)
+        if spec is None:
             warnings.append(f"Skipping unsupported indicator: {config.type}")
             continue
 
-        registry_entry = INDICATOR_REGISTRY[indicator_type]
-
         # Timeframe guard for intraday-only indicators
-        if registry_entry.get("intraday_only") and timeframe == "daily":
-            msg = "VWAP requires intraday data. Use timeframe '5min', '15min', or '1hour'."
+        if spec.intraday_only and timeframe == "daily":
+            msg = (
+                f"{indicator_type} requires intraday data. "
+                "Use timeframe '5min', '15min', or '1hour'."
+            )
             raise ValueError(msg)
 
         try:
-            result_df = _apply_indicator(result_df, config, registry_entry, warnings)
+            result_df = _apply_indicator(result_df, config, spec, warnings)
         except Exception as exc:
             warnings.append(f"Failed to compute {config.id}: {exc}")
             logger.warning("indicator_failed", indicator=config.id, error=str(exc))
 
     return _mark_warmup_bars_undefined(df, result_df), warnings
+
+
+# Ordering is only meaningful once a frame holds more than one bar.
+_MIN_ORDERED_BARS = 2
+
+
+def _require_strictly_increasing_dates(df: pl.DataFrame) -> None:
+    """Reject an OHLCV frame whose bars are out of order or repeated.
+
+    Every rolling window, crossover shift and session boundary downstream reads
+    bar order as time order. An unsorted or duplicated frame does not fail
+    there — it produces plausible numbers from a corrupted history — so the one
+    entry point every production frame passes through rejects it up front.
+
+    Empty frames and frames without a date column pass: callers construct those
+    to exercise indicator math alone.
+
+    Args:
+        df: OHLCV frame about to be enriched.
+
+    Raises:
+        ValueError: If the date column is unsorted or holds duplicates.
+
+    """
+    if "date" not in df.columns or df.height < _MIN_ORDERED_BARS:
+        return
+    dates = df["date"]
+    if dates.is_sorted() and dates.n_unique() == dates.len():
+        return
+    msg = "OHLCV frame must have strictly increasing timestamps (sorted, no duplicates)"
+    raise ValueError(msg)
+
+
+# Scratch column carrying the benchmark bar's own date through the as-of join,
+# so a carried (stale) value can be counted before it is dropped.
+_BENCHMARK_DATE_COLUMN = "_benchmark_date"
+
+
+def attach_benchmark_close(
+    df: pl.DataFrame,
+    benchmark_df: pl.DataFrame,
+    symbol: str,
+) -> tuple[pl.DataFrame, list[str]]:
+    """Attach the benchmark's close to a symbol frame, aligned as of each bar.
+
+    The benchmark keeps its own calendar, so its close is matched backward: bar
+    t carries the last benchmark close dated at or before t and never a later
+    one. A symbol bar earlier than the benchmark's first bar has no value at
+    all rather than the earliest one, which would be a future observation.
+
+    Every symbol row survives the join: dropping the bars the benchmark is
+    missing would silently shorten the equity curve.
+
+    Args:
+        df: Symbol OHLCV frame, sorted by date.
+        benchmark_df: Benchmark frame on the same timeframe, sorted by date.
+        symbol: Symbol the frame belongs to, named in the warning.
+
+    Returns:
+        Tuple of (frame with the benchmark close column added, warnings).
+
+    Raises:
+        ValueError: If either frame lacks a date or close column, or the
+            benchmark frame is empty.
+
+    """
+    _require_benchmark_inputs(df, benchmark_df, symbol)
+    bench = benchmark_df.select(
+        pl.col("date"),
+        pl.col("close").alias(BENCHMARK_CLOSE_COLUMN),
+        pl.col("date").alias(_BENCHMARK_DATE_COLUMN),
+    )
+    joined = df.join_asof(bench, on="date", strategy="backward")
+    carried = joined.filter(
+        pl.col(_BENCHMARK_DATE_COLUMN).is_not_null()
+        & (pl.col(_BENCHMARK_DATE_COLUMN) != pl.col("date"))
+    ).height
+    undefined = joined[BENCHMARK_CLOSE_COLUMN].null_count()
+    attached = joined.drop(_BENCHMARK_DATE_COLUMN)
+    if not carried and not undefined:
+        return attached, []
+    return attached, [
+        f"{BENCHMARK_CLOSE_COLUMN} for {symbol}: {carried} bar(s) carried from an "
+        f"earlier benchmark date, {undefined} bar(s) undefined before the first "
+        "benchmark bar"
+    ]
+
+
+def _require_benchmark_inputs(
+    df: pl.DataFrame,
+    benchmark_df: pl.DataFrame,
+    symbol: str,
+) -> None:
+    """Reject frames the as-of join cannot align.
+
+    Args:
+        df: Symbol OHLCV frame.
+        benchmark_df: Benchmark frame.
+        symbol: Symbol the frame belongs to, named in the message.
+
+    Raises:
+        ValueError: If a frame is missing the join columns, or the benchmark
+            frame holds no bars to align against.
+
+    """
+    required = {"date", "close"}
+    missing = [
+        label
+        for label, frame in (("symbol", df), ("benchmark", benchmark_df))
+        if not required <= set(frame.columns)
+    ]
+    if missing:
+        msg = (
+            f"{BENCHMARK_CLOSE_COLUMN} for {symbol}: the "
+            f"{' and '.join(missing)} frame needs date and close columns"
+        )
+        raise ValueError(msg)
+    if benchmark_df.is_empty():
+        msg = f"{BENCHMARK_CLOSE_COLUMN} for {symbol}: the benchmark frame has no bars"
+        raise ValueError(msg)
+
+
+def indicator_stack_versions() -> dict[str, str]:
+    """Report the versions of the stack that computes indicator values.
+
+    An upgrade to the wrapper or the native library can move a value under an
+    unchanged strategy, so results record what produced them and the cache key
+    includes it. ``polars_talib`` exposes no ``__version__``, so the wrapper
+    version comes from installed distribution metadata.
+
+    Returns:
+        Mapping of "polars", "polars_talib" and "talib" to version strings.
+
+    """
+    return {
+        "polars": pl.__version__,
+        "polars_talib": importlib.metadata.version("polars-talib"),
+        "talib": str(ta.__talib_version__),
+    }
 
 
 def _mark_warmup_bars_undefined(source: pl.DataFrame, computed: pl.DataFrame) -> pl.DataFrame:
@@ -354,25 +372,14 @@ def _mark_warmup_bars_undefined(source: pl.DataFrame, computed: pl.DataFrame) ->
 
 
 def get_supported_indicators() -> dict[str, Any]:
-    """Return registry of supported indicators with parameter info.
+    """Return the catalog of supported indicators with parameter info.
 
     Returns:
-        Dict with 'indicators' (registry) and 'raw_columns' (always-valid operands).
+        Dict with 'indicators' (one entry per catalogued type) and
+        'raw_columns' (always-valid operands).
 
     """
-    indicators: dict[str, dict[str, Any]] = {}
-    for name, entry in INDICATOR_REGISTRY.items():
-        indicators[name] = {
-            "params": list(entry["params"].keys()),
-            "output_scale": entry["output_scale"],
-            "multi_output": entry["outputs"] is not None,
-            "output_columns": entry["outputs"],
-            "needs_hlc": name in HLC_INDICATORS,
-            "needs_volume": name in VOLUME_INDICATORS,
-            "needs_ohlc": name in OHLC_INDICATORS,
-            "dual_input": name in DUAL_INPUT_INDICATORS,
-            "intraday_only": bool(entry.get("intraday_only")),
-        }
+    indicators = {name: _describe_indicator(spec) for name, spec in INDICATOR_CATALOG.items()}
     return {
         "indicators": indicators,
         "raw_columns": sorted(RAW_PRICE_COLUMNS),
@@ -381,20 +388,67 @@ def get_supported_indicators() -> dict[str, Any]:
             'in conditions (e.g., {"indicator": "close"} to compare price '
             "against a computed indicator like VWAP)."
         ),
+        "benchmark_column": BENCHMARK_CLOSE_COLUMN,
+        "benchmark_column_note": (
+            "When `universe.benchmark` is set, this reserved column holds the "
+            "benchmark's close aligned as of each bar. It can be an indicator's "
+            "`source` or `second_source`, or a rule operand, so a measure of the "
+            "benchmark can be compared against the same measure of the symbol."
+        ),
         "source_note": (
             "An indicator's `source` accepts a raw column or the `id` of any "
             "indicator declared before it, so indicators can be built on one "
             "another. Indicators are computed in list order in a single pass: "
-            "a source naming an indicator declared later has no column to read "
-            "and is reported as a warning."
+            "a source naming an indicator declared later, or a name that is "
+            "neither, is rejected at validation."
         ),
+    }
+
+
+def _describe_indicator(spec: IndicatorSpec) -> dict[str, Any]:
+    """Render one catalog entry as discovery output.
+
+    Args:
+        spec: Catalog entry to describe.
+
+    Returns:
+        The metadata an agent needs to declare the indicator: accepted params
+        with their ranges, what it emits, which columns it needs, how many bars
+        it warms up for at its defaults, and what it measures.
+
+    """
+    return {
+        "params": list(spec.params),
+        "param_specs": {name: _describe_param(param) for name, param in spec.params.items()},
+        "output_scale": spec.output_scale,
+        "multi_output": spec.outputs is not None,
+        "output_columns": list(spec.outputs) if spec.outputs else None,
+        "needs_hlc": spec.name in HLC_INDICATORS,
+        "needs_volume": spec.name in VOLUME_INDICATORS,
+        "needs_ohlc": spec.name in OHLC_INDICATORS,
+        "dual_input": spec.name in DUAL_INPUT_INDICATORS,
+        "intraday_only": spec.intraday_only,
+        "lookback_bars_at_defaults": spec.lookback(spec.resolve_params({})),
+        "recursive": spec.recursive,
+        "description": spec.description,
+    }
+
+
+def _describe_param(param: ParamSpec) -> dict[str, Any]:
+    """Render one accepted param as discovery output."""
+    return {
+        "kind": param.kind,
+        "default": param.default,
+        "min": param.min,
+        "max": param.max,
+        "required": param.default is None,
     }
 
 
 def _apply_indicator(
     df: pl.DataFrame,
     config: IndicatorConfig,
-    registry_entry: dict[str, Any],
+    spec: IndicatorSpec,
     warnings: list[str],
 ) -> pl.DataFrame:
     """Apply a single indicator to the DataFrame.
@@ -402,26 +456,25 @@ def _apply_indicator(
     Args:
         df: Input DataFrame.
         config: Indicator configuration.
-        registry_entry: Registry entry with function and param mapping.
+        spec: Catalog entry for the indicator's type.
         warnings: Warning list to append to.
 
     Returns:
         DataFrame with indicator column(s) added.
 
     """
-    input_type = registry_entry.get("input_type")
-
-    # Custom indicators (VWAP) bypass the normal talib path
-    if input_type == "custom":
-        return _apply_custom_indicator(df, config)
-
-    return _apply_talib_indicator(df, config, registry_entry, warnings)
+    resolved = spec.resolve_params(config.params)
+    builder = _CUSTOM_BUILDERS.get(spec.name)
+    if builder is not None:
+        return builder(df, config, resolved)
+    return _apply_talib_indicator(df, config, spec, resolved, warnings)
 
 
 def _apply_talib_indicator(
     df: pl.DataFrame,
     config: IndicatorConfig,
-    registry_entry: dict[str, Any],
+    spec: IndicatorSpec,
+    resolved: dict[str, Any],
     warnings: list[str],
 ) -> pl.DataFrame:
     """Apply a polars-talib indicator to the DataFrame.
@@ -429,117 +482,90 @@ def _apply_talib_indicator(
     Args:
         df: Input DataFrame.
         config: Indicator configuration.
-        registry_entry: Registry entry with function and param mapping.
+        spec: Catalog entry for the indicator's type.
+        resolved: Params with the catalog's defaults filled in.
         warnings: Warning list to append to.
 
     Returns:
         DataFrame with indicator column(s) added.
 
     """
-    indicator_type = config.type.upper()
-    fn = registry_entry["fn"]
-    param_map: dict[str, str] = registry_entry["params"]
-    outputs: list[str] | None = registry_entry["outputs"]
-    input_type = registry_entry.get("input_type")
+    lookback = spec.lookback(resolved)
+    if lookback and len(df) <= lookback:
+        warnings.append(
+            f"Insufficient data for {config.id}: need {lookback + 1} rows, have {len(df)}"
+        )
 
-    talib_kwargs = _build_talib_kwargs(indicator_type, param_map, config.params)
+    expr = _build_indicator_expr(spec, config, resolved, _build_talib_kwargs(spec, resolved))
 
-    # Check minimum data length for period-based indicators
-    period = config.params.get("length", config.params.get("slow_length", 0))
-    if period and len(df) < period:
-        warnings.append(f"Insufficient data for {config.id}: need {period} rows, have {len(df)}")
+    if spec.outputs is None:
+        return df.with_columns(expr.alias(config.id))
 
-    # Build the expression based on indicator input type
-    expr = _build_indicator_expr(
-        fn,
-        indicator_type,
-        input_type,
-        config,
-        talib_kwargs,
-        registry_entry=registry_entry,
-    )
-
-    # Handle multi-output vs single-output
-    if outputs is not None:
-        return _apply_multi_output(df, config.id, expr, outputs)
-
-    return df.with_columns(expr.alias(config.id))
+    computed = _apply_multi_output(df, config.id, expr, spec.outputs)
+    if spec.name != "BBANDS":
+        return computed
+    return _add_bbands_derived(computed, config)
 
 
-def _build_talib_kwargs(
-    indicator_type: str,
-    param_map: dict[str, str],
-    user_params: dict[str, Any],
-) -> dict[str, Any]:
-    """Translate user-facing param names into talib kwargs.
+def _build_talib_kwargs(spec: IndicatorSpec, resolved: dict[str, Any]) -> dict[str, Any]:
+    """Translate resolved params into the keywords the native function takes.
 
-    Most indicators have a 1:1 mapping. Bollinger Bands is special: the user
-    provides one `std_dev`, which must be applied to both the upper and
-    lower band parameters so the bands stay symmetric.
+    Most params map one to one. Bollinger Bands is special: the caller gives
+    one `std_dev`, which must reach both the upper and lower band parameters so
+    the bands stay symmetric.
+
+    Args:
+        spec: Catalog entry for the indicator's type.
+        resolved: Params with the catalog's defaults filled in.
+
+    Returns:
+        Keyword arguments for the bound polars-talib function.
+
     """
     talib_kwargs: dict[str, Any] = {}
-    for config_key, talib_key in param_map.items():
-        if config_key in user_params:
-            talib_kwargs[talib_key] = user_params[config_key]
-    if indicator_type == "BBANDS" and "std_dev" in user_params:
-        talib_kwargs["nbdevdn"] = user_params["std_dev"]
+    for name, param in spec.params.items():
+        if param.talib_name is None or name not in resolved:
+            continue
+        talib_kwargs[param.talib_name] = resolved[name]
+    if spec.name == "BBANDS" and "std_dev" in resolved:
+        talib_kwargs["nbdevdn"] = resolved["std_dev"]
     return talib_kwargs
 
 
-def _build_indicator_expr(  # noqa: PLR0913
-    fn: Callable[..., Any],
-    indicator_type: str,
-    input_type: str | None,
+def _build_indicator_expr(
+    spec: IndicatorSpec,
     config: IndicatorConfig,
+    resolved: dict[str, Any],
     talib_kwargs: dict[str, Any],
-    registry_entry: dict[str, Any] | None = None,
 ) -> pl.Expr:
     """Build the Polars expression for a talib indicator call.
 
     Args:
-        fn: The polars-talib function to call.
-        indicator_type: Uppercase indicator type name.
-        input_type: Registry input_type ("ohlc", "dual", or None).
-        config: Indicator configuration.
+        spec: Catalog entry, whose `inputs` decides which columns are passed.
+        config: Indicator configuration, which carries `source`.
+        resolved: Params with the catalog's defaults filled in.
         talib_kwargs: Mapped talib keyword arguments.
-        registry_entry: Registry metadata for the indicator (defaults, etc.).
 
     Returns:
         Polars expression for the indicator computation.
 
     """
-    if input_type == "ohlc":
-        return fn(  # type: ignore[no-any-return]
-            pl.col("open"),
-            pl.col("high"),
-            pl.col("low"),
-            pl.col("close"),
-            **talib_kwargs,
-        )
+    fn = TALIB_FUNCTIONS[spec.name]
+    fixed = _INPUT_COLUMNS.get(spec.inputs)
+    if fixed is not None:
+        return fn(*(pl.col(name) for name in fixed), **talib_kwargs)  # type: ignore[no-any-return]
 
-    if input_type == "dual":
-        # Precedence: explicit user param > registry default > config.source.
-        # The registry's `second_source` carries each dual-input indicator's
-        # natural counterpart (e.g. BETA against `high`); falling all the way
-        # through to `config.source` would compare a column to itself and
-        # produce a tautology (beta=1, correl=1).
-        registry_default = registry_entry.get("second_source") if registry_entry else None
-        second_col = config.params.get("second_source") or registry_default or config.source
+    if spec.inputs == "dual":
+        # The second series is a named column: the catalog's default carries
+        # each dual-input indicator's natural counterpart, and comparing a
+        # column with itself would produce a tautology (beta=1, correl=1).
         return fn(  # type: ignore[no-any-return]
             pl.col(config.source),
-            pl.col(second_col),
+            pl.col(resolved["second_source"]),
             **talib_kwargs,
         )
 
-    if indicator_type in HLC_INDICATORS:
-        return fn(  # type: ignore[no-any-return]
-            pl.col("high"),
-            pl.col("low"),
-            pl.col("close"),
-            **talib_kwargs,
-        )
-
-    if indicator_type in VOLUME_INDICATORS and indicator_type != "MFI":
+    if spec.inputs == "source_volume":
         return fn(pl.col(config.source), pl.col("volume"), **talib_kwargs)  # type: ignore[no-any-return]
 
     return fn(pl.col(config.source), **talib_kwargs)  # type: ignore[no-any-return]
@@ -549,7 +575,7 @@ def _apply_multi_output(
     df: pl.DataFrame,
     indicator_id: str,
     expr: pl.Expr,
-    outputs: list[str],
+    outputs: tuple[str, ...],
 ) -> pl.DataFrame:
     """Apply a multi-output indicator expression and name the columns.
 
@@ -557,7 +583,7 @@ def _apply_multi_output(
         df: Input DataFrame.
         indicator_id: Base indicator id for column naming.
         expr: The multi-output Polars expression.
-        outputs: List of output suffix names.
+        outputs: Output suffix names, in the order the plugin emits them.
 
     Returns:
         DataFrame with named output columns added.
@@ -574,41 +600,53 @@ def _apply_multi_output(
     return df
 
 
-def _apply_custom_indicator(
-    df: pl.DataFrame,
-    config: IndicatorConfig,
-) -> pl.DataFrame:
-    """Apply a custom (non-talib) indicator.
+def _add_bbands_derived(df: pl.DataFrame, config: IndicatorConfig) -> pl.DataFrame:
+    """Add the two band-derived outputs to a frame that already holds the bands.
 
-    Currently supports: VWAP (session-resetting intraday VWAP).
+    Both read the bands the native call just produced rather than recomputing
+    them, so one BBANDS declaration answers "where in the band is price" and
+    "how wide is the band" at the parameters the caller chose. A collapsed band
+    or a zero centre line leaves its own output undefined: an infinite %B
+    compares True against every threshold and would fire the rule it feeds.
 
     Args:
-        df: Input OHLCV DataFrame with datetime column.
-        config: Indicator configuration.
+        df: Frame carrying the indicator's upper, middle and lower columns.
+        config: Indicator configuration, which names the source and the outputs.
 
     Returns:
-        DataFrame with the custom indicator column added.
+        DataFrame with the percent_b and bandwidth columns added.
 
     """
-    indicator_type = config.type.upper()
-    if indicator_type == "VWAP":
-        return _compute_vwap(df, config.id)
-    msg = f"Unknown custom indicator: {indicator_type}"
-    raise ValueError(msg)
+    upper, middle = pl.col(f"{config.id}_upper"), pl.col(f"{config.id}_middle")
+    lower = pl.col(f"{config.id}_lower")
+    width = upper - lower
+    source = pl.col(config.source).cast(pl.Float64)
+    return df.with_columns(
+        pl.when(width != 0)
+        .then((source - lower) / width)
+        .otherwise(None)
+        .alias(f"{config.id}_percent_b"),
+        pl.when(middle != 0).then(width / middle).otherwise(None).alias(f"{config.id}_bandwidth"),
+    )
 
 
-def _compute_vwap(df: pl.DataFrame, col_name: str) -> pl.DataFrame:
+def _build_vwap(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    _resolved: dict[str, Any],
+) -> pl.DataFrame:
     """Compute session-resetting VWAP.
 
-    VWAP = cumsum(typical_price * volume) / cumsum(volume),
-    resetting at each new trading session (date boundary).
+    VWAP = cumsum(typical_price * volume) / cumsum(volume), resetting at each
+    new trading session (date boundary).
 
     Args:
         df: OHLCV DataFrame with a datetime 'date' column.
-        col_name: Name for the output VWAP column.
+        config: Indicator configuration, which names the output column.
+        _resolved: Resolved params; VWAP takes none.
 
     Returns:
-        DataFrame with VWAP column added.
+        DataFrame with the VWAP column added.
 
     """
     typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
@@ -620,5 +658,414 @@ def _compute_vwap(df: pl.DataFrame, col_name: str) -> pl.DataFrame:
     return df.with_columns(
         (
             tp_volume.cum_sum().over(session_date) / pl.col("volume").cum_sum().over(session_date)
-        ).alias(col_name)
+        ).alias(config.id)
     )
+
+
+def _build_avwap(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Accumulate a volume-weighted average price from a fixed anchor date.
+
+    Where session VWAP restarts every day, this one restarts once, on a date
+    the caller fixed in advance — the only kind of anchor a bar can be scored
+    against causally. Bars before the anchor contribute nothing and hold no
+    value, and neither does a bar the anchor has not yet been followed by any
+    traded volume, which would otherwise divide by zero.
+
+    Args:
+        df: OHLCV frame with a date column (daily or intraday).
+        config: Indicator configuration, which names the output column.
+        resolved: Resolved params, carrying ``anchor_date``.
+
+    Returns:
+        DataFrame with the anchored VWAP column added.
+
+    Raises:
+        ValueError: If the anchor is not an ISO date. Validation rejects that
+            first; a caller reaching the engine directly gets a named error.
+
+    """
+    anchor = parse_iso_date(resolved.get("anchor_date"))
+    if anchor is None:
+        msg = f"AVWAP requires anchor_date as YYYY-MM-DD; got {resolved.get('anchor_date')}"
+        raise ValueError(msg)
+    anchored = pl.col("date").cast(pl.Date) >= anchor
+    typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    traded = pl.when(anchored).then(typical_price * pl.col("volume")).otherwise(0.0).cum_sum()
+    volume = pl.when(anchored).then(pl.col("volume")).otherwise(0).cum_sum()
+    return df.with_columns(
+        pl.when(anchored & (volume > 0)).then(traded / volume).otherwise(None).alias(config.id)
+    )
+
+
+def _build_opening_range(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Publish each session's opening high and low once the interval has closed.
+
+    The window is a clock interval measured from the session open, not a bar
+    count, so a missing bar narrows the sample the levels are taken from but
+    never moves the window. Both levels stay undefined on every bar that starts
+    inside the interval: the last of those bars only knows the range including
+    itself, and a close-confirmed breakout could not fire there anyway.
+
+    ``source`` is ignored: the range reads the high and low columns.
+
+    Args:
+        df: Intraday OHLCV frame whose date column holds bar-start timestamps.
+        config: Indicator configuration, which names the output columns.
+        resolved: Resolved params, carrying ``minutes``.
+
+    Returns:
+        DataFrame with the range high and low columns added.
+
+    """
+    minutes = int(resolved["minutes"])
+    opened = datetime.combine(date(2000, 1, 1), MARKET_OPEN)
+    range_end = (opened + timedelta(minutes=minutes)).time()
+    session = pl.col("date").cast(pl.Date)
+    bar_time = pl.col("date").dt.time()
+    inside = (bar_time >= MARKET_OPEN) & (bar_time < range_end)
+    published = bar_time >= range_end
+    highest = pl.when(inside).then(pl.col("high")).otherwise(None).max().over(session)
+    lowest = pl.when(inside).then(pl.col("low")).otherwise(None).min().over(session)
+    return df.with_columns(
+        pl.when(published).then(highest).otherwise(None).alias(f"{config.id}_high"),
+        pl.when(published).then(lowest).otherwise(None).alias(f"{config.id}_low"),
+    )
+
+
+def _build_lag(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Carry the value a column held ``periods`` bars ago onto the current bar.
+
+    The shift is backward only, so bar t reads bar t-periods and the first
+    ``periods`` bars are undefined. The column keeps the source's dtype: an
+    integer candle signal stays an integer, with nulls for the warm-up.
+
+    Args:
+        df: Frame holding the source column.
+        config: Indicator configuration, which names the source and the output.
+        resolved: Resolved params, carrying ``periods``.
+
+    Returns:
+        DataFrame with the lagged column added.
+
+    """
+    periods = int(resolved["periods"])
+    return df.with_columns(pl.col(config.source).shift(periods).alias(config.id))
+
+
+def _second_source_expr(config: IndicatorConfig, resolved: dict[str, Any]) -> pl.Expr:
+    """Read the second series a two-input composite combines with its source.
+
+    Args:
+        config: Indicator configuration, which names the type for the message.
+        resolved: Resolved params, which must carry ``second_source``.
+
+    Returns:
+        Expression reading that column as a float.
+
+    Raises:
+        ValueError: If no column name was supplied. Validation rejects that
+            first; a caller reaching the engine directly gets a named error
+            instead of a missing-key failure.
+
+    """
+    name = resolved.get("second_source")
+    if not isinstance(name, str) or not name:
+        msg = f"{config.type.upper()} requires a 'second_source' column name"
+        raise ValueError(msg)
+    return pl.col(name).cast(pl.Float64)
+
+
+def _build_ratio(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Divide the source series by a second named series, bar by bar.
+
+    A zero divisor yields null rather than an infinity: an infinite ratio
+    compares True against every threshold and would fire the rule it feeds.
+
+    Args:
+        df: Frame holding both columns.
+        config: Indicator configuration, which names the source and the output.
+        resolved: Resolved params, carrying ``second_source``.
+
+    Returns:
+        DataFrame with the ratio column added.
+
+    """
+    numerator = pl.col(config.source).cast(pl.Float64)
+    denominator = _second_source_expr(config, resolved)
+    return df.with_columns(
+        pl.when(denominator != 0).then(numerator / denominator).otherwise(None).alias(config.id)
+    )
+
+
+def _build_diff(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Subtract a second named series from the source series, bar by bar.
+
+    Args:
+        df: Frame holding both columns.
+        config: Indicator configuration, which names the source and the output.
+        resolved: Resolved params, carrying ``second_source``.
+
+    Returns:
+        DataFrame with the difference column added.
+
+    """
+    left = pl.col(config.source).cast(pl.Float64)
+    return df.with_columns((left - _second_source_expr(config, resolved)).alias(config.id))
+
+
+def _build_donchian(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Compute the price channel of the bars before the current one.
+
+    The window is shifted one bar back, so the channel a rule compares the
+    close against never contains that close's own bar: an inclusive channel
+    puts the current high in the upper band, which no close can exceed. A bar
+    whose window is short or holds a missing high or low stays undefined.
+
+    ``source`` is ignored: the channel reads the high and low columns.
+
+    Args:
+        df: OHLCV frame.
+        config: Indicator configuration, which names the output columns.
+        resolved: Resolved params, carrying ``length``.
+
+    Returns:
+        DataFrame with the upper, middle and lower channel columns added.
+
+    """
+    length = int(resolved["length"])
+    upper = pl.col("high").cast(pl.Float64).shift(1).rolling_max(length)
+    lower = pl.col("low").cast(pl.Float64).shift(1).rolling_min(length)
+    return df.with_columns(
+        upper.alias(f"{config.id}_upper"),
+        ((upper + lower) / 2.0).alias(f"{config.id}_middle"),
+        lower.alias(f"{config.id}_lower"),
+    )
+
+
+def _build_zscore(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Standardize a series against its own trailing window.
+
+    The divisor is the population deviation (ddof 0), which is the convention
+    TA-Lib's STDDEV uses; Polars defaults to the sample one, and mixing the two
+    moves every threshold a strategy sets. A flat window has no dispersion to
+    divide by, so the bar is undefined rather than infinite.
+
+    Args:
+        df: Frame holding the source column.
+        config: Indicator configuration, which names the source and the output.
+        resolved: Resolved params, carrying ``length``.
+
+    Returns:
+        DataFrame with the z-score column added.
+
+    """
+    length = int(resolved["length"])
+    values = pl.col(config.source).cast(pl.Float64)
+    deviation = values.rolling_std(length, ddof=0)
+    displacement = values - values.rolling_mean(length)
+    return df.with_columns(
+        pl.when(deviation > 0).then(displacement / deviation).otherwise(None).alias(config.id)
+    )
+
+
+def _build_rvol(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Compare this bar's volume against the volume of the bars before it.
+
+    The reference window is shifted one bar back, so the bar being judged is
+    never part of its own reference: an inclusive mean pulls itself toward the
+    spike it is supposed to measure. A dead reference window divides by zero,
+    so the bar is undefined rather than infinite.
+
+    ``source`` is ignored: the ratio reads the volume column.
+
+    Args:
+        df: OHLCV frame.
+        config: Indicator configuration, which names the output column.
+        resolved: Resolved params, carrying ``length``.
+
+    Returns:
+        DataFrame with the relative-volume column added.
+
+    """
+    length = int(resolved["length"])
+    volume = pl.col("volume").cast(pl.Float64)
+    reference = volume.shift(1).rolling_mean(length)
+    return df.with_columns(
+        pl.when(reference > 0).then(volume / reference).otherwise(None).alias(config.id)
+    )
+
+
+def _build_percentile_rank(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Rank a series against its own trailing window, on a 0-100 scale.
+
+    Args:
+        df: Frame holding the source column.
+        config: Indicator configuration, which names the source and the output.
+        resolved: Resolved params, carrying ``length``.
+
+    Returns:
+        DataFrame with the percentile column added.
+
+    """
+    length = int(resolved["length"])
+    values = df[config.source].cast(pl.Float64).fill_null(float("nan")).to_numpy()
+    ranks = _trailing_percentiles(values, length)
+    return df.with_columns(pl.Series(config.id, ranks).fill_nan(None))
+
+
+# Rows compared per pass. Each pass holds one bool block of this many rows by
+# ``length`` values, so the widest accepted window stays inside ~10 MB.
+_PERCENTILE_CHUNK_ROWS = 2048
+
+
+def _trailing_percentiles(
+    values: np.ndarray[Any, np.dtype[np.float64]],
+    length: int,
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Rank every value against the ``length`` values before it.
+
+    The comparison is vectorized over a strided view of the series, which is
+    why it is written in numpy: Polars has no rolling rank, and ``rolling_map``
+    runs a Python callable per bar. The view is walked in fixed-size chunks so
+    memory stays bounded no matter how long the history is.
+
+    Args:
+        values: The series, with missing bars carried as NaN.
+        length: Window size, the number of prior values each bar is ranked in.
+
+    Returns:
+        An array of the same length holding percentiles in [0, 100], NaN for
+        every bar without a complete window behind it.
+
+    """
+    ranks = np.full(len(values), np.nan)
+    if len(values) <= length:
+        return ranks
+    windows = sliding_window_view(values[:-1], length)
+    currents = values[length:]
+    for start in range(0, len(currents), _PERCENTILE_CHUNK_ROWS):
+        stop = min(start + _PERCENTILE_CHUNK_ROWS, len(currents))
+        ranks[length + start : length + stop] = _percentile_chunk(
+            windows[start:stop], currents[start:stop]
+        )
+    return ranks
+
+
+def _percentile_chunk(
+    windows: np.ndarray[Any, np.dtype[np.float64]],
+    currents: np.ndarray[Any, np.dtype[np.float64]],
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Rank one block of bars against their windows.
+
+    Ties count a half each, so a value equal to its whole window ranks at the
+    middle rather than at either extreme. A window with one missing value has
+    no defined rank at all: filling it would rank against a shorter history and
+    silently change the scale.
+
+    Args:
+        windows: One prior window per row, shaped (rows, length).
+        currents: The value being ranked in each of those rows.
+
+    Returns:
+        One percentile per row, NaN where the window or the value is missing.
+
+    """
+    column = currents[:, None]
+    below = (windows < column).sum(axis=1)
+    equal = (windows == column).sum(axis=1)
+    defined = ~np.isnan(windows).any(axis=1) & ~np.isnan(currents)
+    scaled = 100.0 * (below + 0.5 * equal) / windows.shape[1]
+    return np.where(defined, scaled, np.nan)
+
+
+def _build_keltner(
+    df: pl.DataFrame,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> pl.DataFrame:
+    """Compute an ATR-width channel around an EMA of the close.
+
+    "Keltner" names several variants, so this one is fixed: the centre is the
+    EMA of close over ``length`` and the half-width is ``multiplier`` Wilder
+    average true ranges over ``atr_length``, symmetric about the centre. Both
+    legs come from the native library, so their seeding matches every other EMA
+    and ATR the engine computes.
+
+    ``source`` is ignored: the channel reads the high, low and close columns.
+
+    Args:
+        df: OHLCV frame.
+        config: Indicator configuration, which names the output columns.
+        resolved: Resolved params, carrying ``length``, ``atr_length`` and
+            ``multiplier``.
+
+    Returns:
+        DataFrame with the upper, middle and lower channel columns added.
+
+    """
+    middle = ta.ema(pl.col("close"), timeperiod=int(resolved["length"]))
+    width = float(resolved["multiplier"]) * ta.atr(
+        pl.col("high"),
+        pl.col("low"),
+        pl.col("close"),
+        timeperiod=int(resolved["atr_length"]),
+    )
+    return df.with_columns(
+        (middle + width).alias(f"{config.id}_upper"),
+        middle.alias(f"{config.id}_middle"),
+        (middle - width).alias(f"{config.id}_lower"),
+    )
+
+
+# Indicators the engine computes itself, keyed the same way as the native ones.
+_CUSTOM_BUILDERS: dict[
+    str, Callable[[pl.DataFrame, IndicatorConfig, dict[str, Any]], pl.DataFrame]
+] = {
+    "VWAP": _build_vwap,
+    "AVWAP": _build_avwap,
+    "OPENING_RANGE": _build_opening_range,
+    "LAG": _build_lag,
+    "RATIO": _build_ratio,
+    "DIFF": _build_diff,
+    "DONCHIAN": _build_donchian,
+    "ZSCORE": _build_zscore,
+    "RVOL": _build_rvol,
+    "PERCENTILE_RANK": _build_percentile_rank,
+    "KELTNER": _build_keltner,
+}

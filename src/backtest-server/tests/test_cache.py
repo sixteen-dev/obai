@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
+
+from src import __version__, server
+from src.engine import cache as cache_module
 from src.engine.cache import BacktestCache, build_data_fingerprint, make_cache_key
 from src.models.backtest_result import BacktestResult
+from src.models.strategy import StrategyDefinition
 
 
 def _make_result(name: str = "Test Strategy") -> BacktestResult:
@@ -101,7 +108,9 @@ class TestBacktestCache:
         assert cache.clear("nope") == 0
 
     def test_clear_unlinks_trades_and_extras_sidecars(self, tmp_path: object) -> None:
-        """Regression: clear("k") used to leave {k}.trades.json and
+        """Clearing an entry must unlink its sidecars too.
+
+        Regression: clear("k") used to leave {k}.trades.json and
         {k}.extras.json on disk, so get_trades / get_extras kept returning
         stale data after the main BacktestResult was evicted. All three
         files must be unlinked together.
@@ -182,6 +191,34 @@ class TestBuildDataFingerprint:
         fp2 = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 2000.0})
         assert fp1 != fp2
 
+    def test_engine_version_is_part_of_the_fingerprint(self) -> None:
+        """The running engine version must be visible in the fingerprint."""
+        fp = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        assert f"engine={__version__}" in fp
+
+    def test_different_engine_version_different_fp(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An engine bump must invalidate cached results for identical inputs."""
+        fp1 = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        monkeypatch.setattr(cache_module, "ENGINE_VERSION", "0.0.0-test")
+        fp2 = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        assert fp1 != fp2
+
+    def test_dependency_versions_are_part_of_the_fingerprint(self) -> None:
+        """The indicator stack that produced the numbers must key the cache."""
+        fp = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        assert f"polars_talib={importlib.metadata.version('polars-talib')}" in fp
+
+    def test_different_dependency_versions_different_fp(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A wrapper upgrade must invalidate entries computed before it."""
+        fp1 = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        monkeypatch.setattr(
+            cache_module, "INDICATOR_STACK_VERSIONS", {"polars_talib": "0.0.0-test"}
+        )
+        fp2 = build_data_fingerprint(["AAPL"], "2020-01-01", "2024-12-31", {"AAPL": 1000.0})
+        assert fp1 != fp2
+
 
 class TestMakeCacheKey:
     """Test cache key generation."""
@@ -204,3 +241,42 @@ class TestMakeCacheKey:
         assert len(key) == 16
         # Should be valid hex
         int(key, 16)
+
+
+def test_benchmark_data_mtime_is_part_of_the_cache_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A refreshed benchmark file changes the numbers, so it must change the key.
+
+    Alpha, beta and the benchmark return all come from the benchmark's bars,
+    and a strategy can read its close directly, yet only the traded symbols'
+    modification times keyed the cache: a corrected benchmark kept serving the
+    old result until the TTL expired.
+    """
+    strategy = StrategyDefinition.from_dict(
+        {
+            "name": "Benchmarked",
+            "universe": {"symbols": ["AAPL"], "benchmark": "SPY"},
+            "data_config": {"start_date": "2024-01-01", "end_date": "2024-06-30"},
+            "indicators": [{"id": "sma", "type": "SMA", "params": {"length": 20}}],
+            "entry_rules": {
+                "logic": "AND",
+                "conditions": [
+                    {
+                        "left": {"indicator": "close"},
+                        "operator": "greater_than",
+                        "right": {"indicator": "sma"},
+                    }
+                ],
+            },
+            "exit_rules": {"logic": "OR", "conditions": []},
+        }
+    )
+    mtimes = {"AAPL": 1000.0, "SPY": 2000.0}
+    store = MagicMock()
+    store.get_last_modified.side_effect = lambda symbol, timeframe: mtimes.get(symbol)
+    monkeypatch.setattr(server._state, "data_store", store)
+
+    before = server._build_cache_key(strategy)
+    mtimes["SPY"] = 3000.0
+    after = server._build_cache_key(strategy)
+
+    assert before != after

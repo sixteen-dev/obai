@@ -11,6 +11,7 @@ import polars as pl
 import pytest
 
 from src import server
+from src.engine.indicators import indicator_stack_versions
 from src.engine.walk_forward import (
     _compute_aggregates,
     _extract_metrics,
@@ -245,6 +246,7 @@ _METRICS_RESULT: dict[str, Any] = {
     },
     "risk": {"max_drawdown_pct": -5.0},
     "trading": {"win_rate_pct": 55.0, "total_trades": 20, "profit_factor": 1.5},
+    "warnings": [],
 }
 
 
@@ -429,6 +431,30 @@ class TestWalkForwardValidate:
         assert window["train_metrics"]["warmup_bars"] == 312
         assert window["test_metrics"]["warmup_bars"] == 312
 
+    async def test_window_metrics_carry_the_execution_warnings(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """Each window reports the data-quality warnings its backtest raised.
+
+        The synchronous path surfaces them, so a fold that ran on 40% coverage
+        looked exactly like a clean one in a walk-forward payload and could
+        contribute to an apparently consistent result unchallenged.
+        """
+        warnings = ["CRITICAL DATA GAP: only 40% coverage", "Indicator has no value in window"]
+        mock_fn = AsyncMock(return_value={**_METRICS_RESULT, "warnings": warnings})
+
+        result = await walk_forward_validate(
+            strategy_json=sample_strategy_json,
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        window = result.to_dict()["windows"][0]
+
+        assert window["train_metrics"]["warnings"] == warnings
+        assert window["test_metrics"]["warnings"] == warnings
+
     async def test_absent_warmup_count_is_reported_as_unknown_not_zero(
         self,
         sample_strategy_json: str,
@@ -490,6 +516,35 @@ class TestWalkForwardValidate:
         # First call should be the train period of window 1
         first_train = called_strategies[0]
         assert first_train["data_config"]["start_date"] == "2018-01-01"
+
+    async def test_an_anchor_outside_a_fold_window_stops_the_run(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """An anchored average names one event, not a reference every fold re-uses.
+
+        Each fold is validated against its own dates, so a fold that starts
+        after the anchor has no bars to accumulate from. The run stops with the
+        validation error rather than quietly scoring folds on an anchor their
+        window never contained.
+        """
+        strategy = json.loads(sample_strategy_json)
+        strategy["indicators"] = [
+            {"id": "avwap", "type": "AVWAP", "params": {"anchor_date": "2018-03-01"}}
+        ]
+        strategy["entry_rules"]["conditions"][0]["left"] = {"indicator": "avwap"}
+        strategy["exit_rules"]["conditions"][0]["left"] = {"indicator": "avwap"}
+
+        async def parsing_fn(strategy_json: str) -> dict[str, Any]:
+            StrategyDefinition.from_dict(json.loads(strategy_json))
+            return {"performance": {"sharpe_ratio": 0.5}}
+
+        with pytest.raises(ValueError, match="anchor_date"):
+            await walk_forward_validate(
+                strategy_json=json.dumps(strategy),
+                n_windows=3,
+                run_backtest_fn=parsing_fn,
+            )
 
     async def test_result_to_dict_serializable(
         self,
@@ -651,6 +706,20 @@ class TestExtractMetrics:
         )
         assert "_failed" not in result
         assert result["sharpe_ratio"] == 1.0
+        assert result["warnings"] == []
+
+    def test_data_quality_warnings_are_carried_into_the_fold(self) -> None:
+        """A fold's data-quality evidence must survive metric extraction."""
+        result = _extract_metrics(
+            {
+                "performance": {"sharpe_ratio": 1.0},
+                "risk": {},
+                "trading": {},
+                "warnings": ["CRITICAL DATA GAP: only 40% coverage"],
+            }
+        )
+
+        assert result["warnings"] == ["CRITICAL DATA GAP: only 40% coverage"]
 
 
 class TestFailedWindowHandling:
@@ -962,3 +1031,84 @@ class TestTestWindowWarmup:
         # bars ahead of the requested start rather than a share of the window.
         assert exec_result.warmup_bars["TEST"] >= self._SMA_LENGTH
         assert exec_result.symbol_dfs["TEST"].height == self._WINDOW_DAYS
+
+
+_CALLBACK_STRATEGY: dict[str, Any] = {
+    "name": "Fold Callback",
+    "universe": {"symbols": ["AAPL"], "benchmark": None},
+    "data_config": {"start_date": "2024-01-01", "end_date": "2024-12-31"},
+    "indicators": [],
+    "entry_rules": {
+        "conditions": [
+            {
+                "left": {"indicator": "close"},
+                "operator": "greater_than",
+                "right": {"constant": 0},
+            }
+        ]
+    },
+    "exit_rules": {
+        "conditions": [
+            {"left": {"indicator": "close"}, "operator": "less_than", "right": {"constant": 0}}
+        ]
+    },
+}
+
+
+class TestWalkForwardCallbackWarnings:
+    """The fold callback must surface the same evidence the sync path does."""
+
+    async def test_single_backtest_returns_the_execution_warnings(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Warnings raised while executing a fold belong in that fold's result.
+
+        ``_run_sync_backtest`` copies them onto the result; the walk-forward
+        callback did not, so a fold that ran on a critical data gap reported a
+        clean metric set and the gap was unrecoverable from a stored job.
+        """
+        exec_result = server._ExecutionResult(
+            equity_df=pl.DataFrame(
+                {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
+            ),
+            trades=[],
+            warnings=["CRITICAL DATA GAP: review fixture", "Indicator has no value in window"],
+            warmup_bars={"AAPL": 0},
+        )
+        fmp_client = AsyncMock()
+        fmp_client.get_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+        monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+        monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+
+        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
+
+        assert response["warnings"] == exec_result.warnings
+
+    async def test_single_backtest_records_dependency_versions_and_price_basis(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A fold must disclose the stack and price basis that produced it.
+
+        Folds serialize ``BacktestResult.to_dict()`` directly, so provenance
+        stamped only in the sync response would be missing from every stored
+        walk-forward job.
+        """
+        exec_result = server._ExecutionResult(
+            equity_df=pl.DataFrame(
+                {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
+            ),
+            trades=[],
+            warnings=[],
+            warmup_bars={"AAPL": 0},
+        )
+        fmp_client = AsyncMock()
+        fmp_client.get_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+        monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+        monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+
+        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
+
+        assert response["dependency_versions"] == indicator_stack_versions()
+        assert response["price_basis"] == "dividend_adjusted"

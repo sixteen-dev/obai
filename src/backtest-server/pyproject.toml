@@ -1,6 +1,6 @@
 [project]
 name = "backtest-server"
-version = "0.1.2"
+version = "0.1.3"
 description = "MCP server for trading strategy backtesting - indicator computation, signal generation, and performance metrics"
 requires-python = ">=3.12"
 dependencies = [

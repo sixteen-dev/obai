@@ -11,7 +11,7 @@ from src.engine.backtester import (
     run_backtest,
 )
 from src.engine.portfolio_backtester import run_portfolio_backtest
-from src.models.strategy import PositionSizing, RiskManagement
+from src.models.strategy import FILL_MODEL, PositionSizing, RiskManagement
 from tests.conformance_fixtures import signal_df
 
 
@@ -83,6 +83,54 @@ class TestExecutionSemantics:
         assert len(trades) == 1
         assert trades[0].exit_reason == "stop_loss"
         assert trades[0].exit_price == 95.0
+
+    def test_scheduled_signal_exit_fills_before_a_later_intraday_target(self) -> None:
+        """A previous-bar exit signal fills at the open, ahead of the bar's high."""
+        df = signal_df(
+            opens=[100.0, 100.0, 100.0],
+            closes=[100.0, 100.0, 100.0],
+            entries=[True, False, False],
+            exits=[False, True, False],
+            highs=[100.0, 100.0, 120.0],
+            lows=[100.0, 100.0, 100.0],
+        )
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(take_profit_pct=10.0),
+            BacktestConfig(symbol="SIG", slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "signal"
+        assert trades[0].exit_price == pytest.approx(100.0)
+
+    def test_fixed_notional_round_trip_leaves_equity_unchanged(self) -> None:
+        """A held position is marked as fixed shares, not re-levered every bar."""
+        df = signal_df(
+            opens=[100.0, 100.0, 200.0, 100.0, 100.0],
+            closes=[100.0, 100.0, 200.0, 100.0, 100.0],
+            entries=[True, False, False, False, False],
+            exits=[False, False, False, True, False],
+        )
+
+        equity, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=50.0),
+            RiskManagement(),
+            BacktestConfig(
+                symbol="MARK",
+                slippage_pct=0.0,
+                commission_pct=0.0,
+                initial_capital=1000.0,
+            ),
+        )
+
+        # 5 shares bought with $500 of $1,000: equity = 1000 + 5 * (price - 100).
+        assert equity["equity"].to_list() == pytest.approx([1000.0, 1000.0, 1500.0, 1000.0, 1000.0])
+        assert len(trades) == 1
+        assert trades[0].return_pct == pytest.approx(0.0)
 
 
 class TestCostsAndFills:
@@ -192,3 +240,63 @@ class TestPortfolioExecutionSemantics:
         )
 
         assert {trade.symbol for trade in result.trades} == {"AAA", "BBB"}
+
+    def test_one_symbol_strategy_reconciles_across_allocation_modes(self) -> None:
+        """A one-symbol strategy must produce the same ledger in both engines.
+
+        The fixture is chosen so 50 percent of 10,000 at a price of 100 is a
+        whole 50 shares. Any fixture where notional divided by price is not
+        integral will NOT reconcile: the portfolio engine floors shares and
+        leaves the remainder in cash, while the single-symbol engine sizes by
+        notional alone.
+        """
+        df = signal_df(
+            opens=[100.0, 100.0, 110.0, 110.0],
+            closes=[100.0, 100.0, 110.0, 110.0],
+            entries=[True, False, False, False],
+            exits=[False, False, True, False],
+        )
+
+        equity, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=50.0),
+            RiskManagement(),
+            BacktestConfig(
+                symbol="R",
+                slippage_pct=0.0,
+                commission_pct=0.0,
+                initial_capital=10_000.0,
+            ),
+        )
+        portfolio = run_portfolio_backtest(
+            signal_dfs={"R": df},
+            initial_capital=10_000.0,
+            position_sizing=PositionSizing(
+                method="fixed_pct",
+                max_position_pct=50.0,
+                max_positions=2,
+                allocation_mode="portfolio",
+            ),
+            slippage_pct=0.0,
+            commission_pct=0.0,
+        )
+
+        expected_equity = [10_000.0, 10_000.0, 10_500.0, 10_500.0]
+        assert equity["equity"].to_list() == expected_equity
+        assert portfolio.equity_curve == expected_equity
+        assert equity["equity"].to_list() == portfolio.equity_curve
+
+        assert len(trades) == 1
+        assert len(portfolio.trades) == 1
+        assert trades[0].pnl == pytest.approx(500.0)
+        assert trades[0].return_pct == pytest.approx(10.0)
+        assert portfolio.trades[0].shares == 50
+        assert portfolio.trades[0].pnl == pytest.approx(500.0)
+        assert portfolio.trades[0].return_pct == pytest.approx(10.0)
+        assert trades[0].pnl == portfolio.trades[0].pnl
+
+
+def test_fill_model_names_trailing_and_time_stops() -> None:
+    """The published fill model must name every exit whose fill it governs."""
+    assert "trailing" in FILL_MODEL
+    assert "time stop" in FILL_MODEL

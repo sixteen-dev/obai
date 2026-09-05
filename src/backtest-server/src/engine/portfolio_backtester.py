@@ -7,20 +7,24 @@ immediately available for new positions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import polars as pl
 
-from ..models.strategy import PositionSizing
+from ..models.strategy import PositionSizing, RiskManagement
 from .accounting import PortfolioState, PositionLot, allocate_capital
 from .backtester import (
-    check_intrabar_stop,
+    atr_column,
+    atr_value,
+    check_atr_risk_inputs,
     check_intrabar_tp,
     compute_entry_fill,
     compute_exit_fill,
+    needs_entry_atr,
 )
 from .utils import date_to_str
 
@@ -38,7 +42,9 @@ class PortfolioTradeRecord:
         shares: Number of shares traded.
         return_pct: Percentage return on the trade.
         pnl: Dollar profit/loss.
-        exit_reason: Why the trade was closed.
+        exit_reason: Why the trade was closed — ``signal``, ``stop_loss``,
+            ``trailing_stop``, ``take_profit``, ``time_stop`` or
+            ``end_of_backtest``.
         holding_days: Number of days held.
 
     """
@@ -79,6 +85,7 @@ class PortfolioBacktestResult:
         trades: Completed trade records.
         signals_skipped: Entries that fired but couldn't be filled.
         daily_position_counts: Number of held positions each day.
+        entries_skipped_by_reason: Count of unfilled entry signals per reason.
 
     """
 
@@ -86,6 +93,7 @@ class PortfolioBacktestResult:
     trades: list[PortfolioTradeRecord]
     signals_skipped: list[dict[str, Any]]
     daily_position_counts: list[int]
+    entries_skipped_by_reason: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -101,6 +109,8 @@ class _SymbolArrays:
     entries: np.ndarray[Any, np.dtype[Any]]
     exits: np.ndarray[Any, np.dtype[Any]]
     date_to_idx: dict[date, int]
+    # ATR in price units, present only when a risk rule reads it.
+    atr: np.ndarray[Any, np.dtype[np.float64]] | None = None
 
 
 def run_portfolio_backtest(  # noqa: PLR0913
@@ -115,6 +125,7 @@ def run_portfolio_backtest(  # noqa: PLR0913
     timeframe: str = "daily",
     volume_scaled_slippage: bool = False,
     spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
+    risk_management: RiskManagement | None = None,
 ) -> PortfolioBacktestResult:
     """Run a portfolio backtest with shared capital across multiple symbols.
 
@@ -133,12 +144,17 @@ def run_portfolio_backtest(  # noqa: PLR0913
         timeframe: Bar timeframe (for holding period computation).
         volume_scaled_slippage: Scale slippage by participation rate.
         spread_estimates: Per-symbol spread estimate arrays (fraction of price).
+        risk_management: Risk rules the lots are opened under. Defaults to no
+            rules; ``stop_loss_pct`` and ``take_profit_pct`` override its
+            percent stop and target only when given.
 
     Returns:
         PortfolioBacktestResult with equity curve, trades, and diagnostics.
 
     """
-    symbol_arrays = _prepare_symbol_arrays(signal_dfs)
+    risk = _resolve_risk(risk_management, stop_loss_pct, take_profit_pct)
+    check_atr_risk_inputs(position_sizing, risk)
+    symbol_arrays = _prepare_symbol_arrays(signal_dfs, risk.atr_indicator)
     all_dates = _build_date_union(symbol_arrays)
 
     if not all_dates:
@@ -149,6 +165,7 @@ def run_portfolio_backtest(  # noqa: PLR0913
     signals_skipped: list[dict[str, Any]] = []
     daily_counts: list[int] = []
     signal_fired_at: dict[str, int] = {}
+    skipped: Counter[str] = Counter()
 
     for day_idx, current_date in enumerate(all_dates):
         _process_day(
@@ -160,17 +177,17 @@ def run_portfolio_backtest(  # noqa: PLR0913
             trades=trades,
             signals_skipped=signals_skipped,
             signal_fired_at=signal_fired_at,
+            skipped=skipped,
+            risk=risk,
             position_sizing=position_sizing,
             slippage_pct=slippage_pct,
             commission_pct=commission_pct,
-            stop_loss_pct=stop_loss_pct,
-            take_profit_pct=take_profit_pct,
+            stop_loss_pct=risk.stop_loss_pct,
+            take_profit_pct=risk.take_profit_pct,
             volume_scaled_slippage=volume_scaled_slippage,
             spread_estimates=spread_estimates,
         )
-        equity = _compute_equity_from_state(state, current_date, symbol_arrays)
-        state.equity_history.append(float(equity))
-        daily_counts.append(state.position_count)
+        _mark_day_close(state, current_date, symbol_arrays, risk, daily_counts)
 
     # Close remaining positions at final bar's close
     if all_dates:
@@ -193,7 +210,55 @@ def run_portfolio_backtest(  # noqa: PLR0913
         trades=trades,
         signals_skipped=signals_skipped,
         daily_position_counts=daily_counts,
+        entries_skipped_by_reason=dict(skipped),
     )
+
+
+def _resolve_risk(
+    risk_management: RiskManagement | None,
+    stop_loss_pct: float | None,
+    take_profit_pct: float | None,
+) -> RiskManagement:
+    """Merge the positional percent stop/target into one set of risk rules.
+
+    Args:
+        risk_management: Caller's risk rules, or None for no rules.
+        stop_loss_pct: Positional percent stop; overrides the rules' value when given.
+        take_profit_pct: Positional percent target; overrides likewise.
+
+    Returns:
+        Risk rules with the percent stop and target resolved.
+
+    """
+    risk = risk_management or RiskManagement()
+    return replace(
+        risk,
+        stop_loss_pct=stop_loss_pct if stop_loss_pct is not None else risk.stop_loss_pct,
+        take_profit_pct=take_profit_pct if take_profit_pct is not None else risk.take_profit_pct,
+    )
+
+
+def _mark_day_close(
+    state: PortfolioState,
+    current_date: date,
+    symbol_arrays: dict[str, _SymbolArrays],
+    risk: RiskManagement,
+    daily_counts: list[int],
+) -> None:
+    """Ratchet trails, mark held lots at the close, and record the day's equity.
+
+    Args:
+        state: Portfolio state; equity history and lots are mutated in place.
+        current_date: The day being closed.
+        symbol_arrays: Symbol data for the price lookup.
+        risk: Risk rules (trailing-stop settings).
+        daily_counts: Per-day open-position counts, appended in place.
+
+    """
+    _update_trails(state, current_date, symbol_arrays, risk)
+    _refresh_marks(state, current_date, symbol_arrays, mark="close")
+    state.equity_history.append(float(_compute_equity_from_state(state)))
+    daily_counts.append(state.position_count)
 
 
 def _process_day(  # noqa: PLR0913
@@ -205,6 +270,8 @@ def _process_day(  # noqa: PLR0913
     trades: list[PortfolioTradeRecord],
     signals_skipped: list[dict[str, Any]],
     signal_fired_at: dict[str, int],
+    skipped: Counter[str],
+    risk: RiskManagement,
     position_sizing: PositionSizing,
     slippage_pct: float,
     commission_pct: float,
@@ -224,6 +291,8 @@ def _process_day(  # noqa: PLR0913
         trades: Trade record accumulator.
         signals_skipped: Skipped signal accumulator.
         signal_fired_at: Tracks when each symbol's signal first fired.
+        skipped: Counter of unfilled entry signals by reason.
+        risk: Risk rules the lots are opened under.
         position_sizing: Position sizing config.
         slippage_pct: Slippage percentage.
         commission_pct: Commission as percentage of trade value.
@@ -233,7 +302,8 @@ def _process_day(  # noqa: PLR0913
         spread_estimates: Per-symbol spread estimate arrays.
 
     """
-    # Step 1: Check exits for all held positions
+    # Step 1: opening phase. An exit signal scheduled by the previous close
+    # fills at this open, before anything the bar prints later.
     _check_all_exits(
         current_date=current_date,
         symbol_arrays=symbol_arrays,
@@ -241,8 +311,9 @@ def _process_day(  # noqa: PLR0913
         trades=trades,
         slippage_pct=slippage_pct,
         commission_pct=commission_pct,
-        stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
+        risk=risk,
+        phase="open",
         volume_scaled_slippage=volume_scaled_slippage,
         spread_estimates=spread_estimates,
     )
@@ -256,6 +327,8 @@ def _process_day(  # noqa: PLR0913
         state=state,
         signals_skipped=signals_skipped,
         signal_fired_at=signal_fired_at,
+        skipped=skipped,
+        risk=risk,
         position_sizing=position_sizing,
         slippage_pct=slippage_pct,
         commission_pct=commission_pct,
@@ -265,23 +338,27 @@ def _process_day(  # noqa: PLR0913
         spread_estimates=spread_estimates,
     )
 
-    # Step 3: Re-check exits so a stop/TP pierced on the entry bar binds that
-    # same bar. Freshly-opened lots were not exit-checked in Step 1 (they did
-    # not exist yet). Only newly-opened lots can close here, and for those
-    # _check_position_exit considers price levels alone — the prior bar's exit
-    # signal is what Step 1 already acted on.
-    _check_all_exits(
-        current_date=current_date,
-        symbol_arrays=symbol_arrays,
-        state=state,
-        trades=trades,
-        slippage_pct=slippage_pct,
-        commission_pct=commission_pct,
-        stop_loss_pct=stop_loss_pct,
-        take_profit_pct=take_profit_pct,
-        volume_scaled_slippage=volume_scaled_slippage,
-        spread_estimates=spread_estimates,
-    )
+    # Steps 3 and 4: the rest of the bar, in the order it prints. Stops and
+    # targets bind intrabar for every held lot, including the ones just
+    # opened, and their proceeds land after this bar's opening orders — money
+    # released inside the bar cannot fund a fill at its open. Whatever is
+    # still held at the close is then closed by the holding cap. Signals are
+    # not re-read here; Step 1 already spent them.
+    late_phases: tuple[Literal["intrabar", "close"], ...] = ("intrabar", "close")
+    for phase in late_phases:
+        _check_all_exits(
+            current_date=current_date,
+            symbol_arrays=symbol_arrays,
+            state=state,
+            trades=trades,
+            slippage_pct=slippage_pct,
+            commission_pct=commission_pct,
+            take_profit_pct=take_profit_pct,
+            risk=risk,
+            phase=phase,
+            volume_scaled_slippage=volume_scaled_slippage,
+            spread_estimates=spread_estimates,
+        )
 
 
 def _check_all_exits(  # noqa: PLR0913
@@ -291,12 +368,13 @@ def _check_all_exits(  # noqa: PLR0913
     trades: list[PortfolioTradeRecord],
     slippage_pct: float,
     commission_pct: float,
-    stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    risk: RiskManagement,
+    phase: Literal["open", "intrabar", "close"],
     volume_scaled_slippage: bool = False,
     spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
 ) -> None:
-    """Check exit conditions for all held positions.
+    """Check exit conditions for all held positions in one execution phase.
 
     Args:
         current_date: The current date.
@@ -305,8 +383,11 @@ def _check_all_exits(  # noqa: PLR0913
         trades: Trade record accumulator.
         slippage_pct: Slippage percentage.
         commission_pct: Commission as percentage of trade value.
-        stop_loss_pct: Stop-loss percentage.
         take_profit_pct: Take-profit percentage.
+        risk: Risk rules the lots are held under.
+        phase: "open" for signal exits scheduled by the previous close,
+            "intrabar" for stop and take-profit levels pierced inside the bar,
+            "close" for the holding cap spent at the bar's close.
         volume_scaled_slippage: Scale slippage by participation rate.
         spread_estimates: Per-symbol spread estimate arrays.
 
@@ -325,8 +406,9 @@ def _check_all_exits(  # noqa: PLR0913
             lot=lot,
             arrays=arrays,
             bar_idx=bar_idx,
-            stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
+            risk=risk,
+            phase=phase,
         )
         if exit_reason:
             _close_position(
@@ -348,47 +430,119 @@ def _check_all_exits(  # noqa: PLR0913
         del state.positions[symbol]
 
 
-def _check_position_exit(
+def _check_position_exit(  # noqa: PLR0913
     lot: PositionLot,
     arrays: _SymbolArrays,
     bar_idx: int,
-    stop_loss_pct: float | None,
     take_profit_pct: float | None,
+    risk: RiskManagement,
+    phase: Literal["open", "intrabar", "close"],
 ) -> str:
-    """Check if a position should exit on this bar.
+    """Check if a position should exit on this bar, in the given phase.
 
     Args:
-        lot: The open position.
+        lot: The open position, carrying the stop level frozen at its fill.
         arrays: Symbol's market data arrays.
         bar_idx: Index into the arrays for current bar.
-        stop_loss_pct: Stop-loss percentage.
         take_profit_pct: Take-profit percentage.
+        risk: Risk rules the lot is held under.
+        phase: "open" checks the signal scheduled by the previous close;
+            "intrabar" checks the stop and take-profit levels; "close" checks
+            the holding cap against the symbol's own bar count.
 
     Returns:
         Exit reason string, or empty string if no exit.
 
     """
-    sl_pct = stop_loss_pct or lot.stop_loss_pct
-    tp_pct = take_profit_pct or lot.take_profit_pct
+    if phase == "open":
+        return _open_phase_exit(lot, arrays, bar_idx)
+    if phase == "close":
+        return _close_phase_exit(lot, arrays, bar_idx, risk)
+    return _intrabar_phase_exit(lot, arrays, bar_idx, take_profit_pct)
 
-    if sl_pct:
-        hit, _ = check_intrabar_stop(lot.entry_price, float(arrays.lows[bar_idx]), sl_pct)
-        if hit:
-            return "stop_loss"
 
-    if tp_pct:
-        hit, _ = check_intrabar_tp(lot.entry_price, float(arrays.highs[bar_idx]), tp_pct)
-        if hit:
-            return "take_profit"
+def _open_phase_exit(lot: PositionLot, arrays: _SymbolArrays, bar_idx: int) -> str:
+    """Return the signal exit the previous close scheduled for this open.
 
-    # Signal-based exit: check previous bar's exit signal. A lot opened on this
-    # bar was opened BY that same prior bar, so its exit flag has already been
-    # spent and reading it again would close the position on the bar it opened.
-    # Price levels above still bind, which is what the entry-bar recheck is for.
+    A lot opened on this bar was opened BY that same prior bar, so its exit
+    flag has already been spent and reading it again would close the position
+    on the bar it opened. Step 1 runs before entries, so this only bites if
+    the phases are ever reordered.
+
+    Args:
+        lot: The open position.
+        arrays: Symbol's market data arrays.
+        bar_idx: Index into the arrays for current bar.
+
+    Returns:
+        ``signal``, or an empty string when no exit was scheduled.
+
+    """
     if arrays.date_to_idx.get(lot.entry_date) == bar_idx:
         return ""
     if bar_idx > 0 and arrays.exits[bar_idx - 1]:
         return "signal"
+    return ""
+
+
+def _close_phase_exit(
+    lot: PositionLot,
+    arrays: _SymbolArrays,
+    bar_idx: int,
+    risk: RiskManagement,
+) -> str:
+    """Return the holding-cap exit spent at this bar's close.
+
+    Bars are counted in the symbol's own series, so a portfolio date it never
+    printed does not spend the cap, and the entry bar is the first bar held.
+
+    Args:
+        lot: The open position.
+        arrays: Symbol's market data arrays.
+        bar_idx: Index into the arrays for current bar.
+        risk: Risk rules the lot is held under.
+
+    Returns:
+        ``time_stop``, or an empty string when the cap has bars left.
+
+    """
+    bars_held = bar_idx - arrays.date_to_idx[lot.entry_date] + 1
+    if risk.max_holding_bars and bars_held >= risk.max_holding_bars:
+        return "time_stop"
+    return ""
+
+
+def _intrabar_phase_exit(
+    lot: PositionLot,
+    arrays: _SymbolArrays,
+    bar_idx: int,
+    take_profit_pct: float | None,
+) -> str:
+    """Return the stop or target level this bar pierced, stop winning ties.
+
+    The frozen stop and the trail are one level: whichever sits higher is the
+    one that binds, and the trail moved only at earlier closes.
+
+    Args:
+        lot: The open position, carrying the levels it was opened with.
+        arrays: Symbol's market data arrays.
+        bar_idx: Index into the arrays for current bar.
+        take_profit_pct: Take-profit percentage.
+
+    Returns:
+        ``stop_loss``, ``trailing_stop`` or ``take_profit``, or an empty
+        string when neither level was reached.
+
+    """
+    effective_stop = _effective_lot_stop(lot)
+    if effective_stop is not None and float(arrays.lows[bar_idx]) <= effective_stop:
+        return _lot_stop_reason(lot)
+
+    tp_pct = take_profit_pct or lot.take_profit_pct
+    if tp_pct:
+        hit, _ = check_intrabar_tp(lot.entry_price, float(arrays.highs[bar_idx]), tp_pct)
+        if hit:
+            return "take_profit"
 
     return ""
 
@@ -422,9 +576,8 @@ def _close_position(  # noqa: PLR0913
         spread_estimates: Per-symbol spread estimate arrays.
 
     """
-    sl_pct = lot.stop_loss_pct
     tp_pct = lot.take_profit_pct
-    stop_level = lot.entry_price * (1 - sl_pct / 100) if sl_pct else None
+    stop_level = _effective_lot_stop(lot)
     tp_level = lot.entry_price * (1 + tp_pct / 100) if tp_pct else None
 
     order_shares: float | None = None
@@ -452,6 +605,7 @@ def _close_position(  # noqa: PLR0913
 
     proceeds = lot.shares * exit_price * (1 - commission_pct / 100)
     state.cash += proceeds
+    state.last_exit_bar_idx[symbol] = bar_idx
 
     pnl = proceeds - lot.cost_basis
     return_pct = (exit_price - lot.entry_price) / lot.entry_price * 100 - commission_pct * 2
@@ -474,6 +628,245 @@ def _close_position(  # noqa: PLR0913
     )
 
 
+def _lot_stop_level(
+    fill_price: float,
+    stop_loss_pct: float | None,
+    stop_distance: float | None,
+) -> float | None:
+    """Return the stop level frozen at this fill.
+
+    Args:
+        fill_price: Entry fill price per share.
+        stop_loss_pct: Percent stop, when one is configured.
+        stop_distance: ATR stop distance in price units, when one was priced
+            from the signal bar.
+
+    Returns:
+        The frozen level, or None when the lot carries no stop.
+
+    """
+    if stop_loss_pct:
+        return fill_price * (1 - stop_loss_pct / 100)
+    if stop_distance is not None:
+        return fill_price - stop_distance
+    return None
+
+
+def _trail_distance(
+    risk: RiskManagement,
+    high_water_mark: float,
+    atr_at: float | None,
+) -> float | None:
+    """Return how far below the high water mark a trailing stop sits.
+
+    Args:
+        risk: Risk rules the lot is held under.
+        high_water_mark: Highest high the lot has printed, or its fill price
+            when the trail is being placed.
+        atr_at: ATR on the bar the distance is measured from, or None.
+
+    Returns:
+        The distance, or None when no trail is configured or the ATR variant
+        has no value to read on that bar.
+
+    """
+    if risk.trailing_stop_pct is not None:
+        return risk.trailing_stop_pct / 100 * high_water_mark
+    if risk.trailing_stop_atr_multiple is not None and atr_at is not None:
+        return risk.trailing_stop_atr_multiple * atr_at
+    return None
+
+
+def _effective_lot_stop(lot: PositionLot) -> float | None:
+    """Return the highest stop level protecting a lot.
+
+    Args:
+        lot: The open position.
+
+    Returns:
+        The tighter of the frozen stop and the trail, or None when the lot
+        carries neither.
+
+    """
+    levels = [level for level in (lot.stop_level, lot.trail_level) if level is not None]
+    return max(levels) if levels else None
+
+
+def _lot_stop_reason(lot: PositionLot) -> str:
+    """Name which stop a lot's effective level belongs to.
+
+    Args:
+        lot: The open position.
+
+    Returns:
+        ``trailing_stop`` only when the trail sits strictly above the frozen
+        stop; a tie belongs to the fixed stop, which the trail did not improve.
+
+    """
+    if lot.trail_level is not None and (lot.stop_level is None or lot.trail_level > lot.stop_level):
+        return "trailing_stop"
+    return "stop_loss"
+
+
+def _update_trails(
+    state: PortfolioState,
+    current_date: date,
+    symbol_arrays: dict[str, _SymbolArrays],
+    risk: RiskManagement,
+) -> None:
+    """Ratchet every held lot's trail with the bar that just completed.
+
+    Runs after the day's exits, so a high printed inside a bar can only
+    tighten the level checked on the next one. The level never falls, a lot
+    whose symbol has no bar that date is untouched, and an undefined ATR
+    leaves the level where it was.
+
+    Args:
+        state: Portfolio state; held lots are mutated in place.
+        current_date: Date of the bar that just completed.
+        symbol_arrays: Pre-extracted per-symbol arrays.
+        risk: Risk rules the lots are held under.
+
+    """
+    if risk.trailing_stop_pct is None and risk.trailing_stop_atr_multiple is None:
+        return
+    for symbol, lot in state.positions.items():
+        arrays = symbol_arrays.get(symbol)
+        bar_idx = arrays.date_to_idx.get(current_date) if arrays is not None else None
+        if arrays is None or bar_idx is None:
+            continue
+        lot.high_water_mark = max(lot.high_water_mark, float(arrays.highs[bar_idx]))
+        distance = _trail_distance(risk, lot.high_water_mark, atr_value(arrays.atr, bar_idx))
+        if distance is None:
+            continue
+        candidate = lot.high_water_mark - distance
+        if lot.trail_level is None or candidate > lot.trail_level:
+            lot.trail_level = candidate
+
+
+def _in_reentry_cooldown(
+    risk: RiskManagement,
+    last_exit_bar_idx: dict[str, int],
+    symbol: str,
+    bar_idx: int,
+) -> bool:
+    """Report whether this symbol's last exit is still too recent to re-enter.
+
+    The distance is counted in the symbol's own bars, so a portfolio date it
+    never printed does not shorten the wait. An exit at the open and a
+    re-entry at that same open are zero bars apart, which any cooldown blocks.
+
+    Args:
+        risk: Risk rules the run is under.
+        last_exit_bar_idx: Bar index of each symbol's most recent exit.
+        symbol: Symbol the entry would fill in.
+        bar_idx: Bar the entry would fill on.
+
+    Returns:
+        True when a cooldown is configured and has not elapsed.
+
+    """
+    if not risk.reentry_cooldown_bars:
+        return False
+    last_exit = last_exit_bar_idx.get(symbol)
+    if last_exit is None:
+        return False
+    return bar_idx - last_exit <= risk.reentry_cooldown_bars
+
+
+def _collect_pending_signals(  # noqa: PLR0913
+    day_idx: int,
+    current_date: date,
+    symbol_arrays: dict[str, _SymbolArrays],
+    state: PortfolioState,
+    signals_skipped: list[dict[str, Any]],
+    signal_fired_at: dict[str, int],
+    skipped: Counter[str],
+    risk: RiskManagement,
+    sizing_method: str,
+    slippage_pct: float,
+) -> tuple[list[tuple[str, float, int]], dict[str, float], dict[str, float]]:
+    """Collect the entries eligible to compete for capital on this bar's open.
+
+    Signals on the previous bar's close are read here; the guards run in the
+    order an unfilled signal should be attributed: already held, then still
+    inside the re-entry cooldown, then an ATR that neither a stop nor a share
+    count can be priced from.
+
+    Args:
+        day_idx: Index of current day in the date union.
+        current_date: The current date.
+        symbol_arrays: Pre-extracted per-symbol arrays.
+        state: Portfolio state, read for the symbols already held.
+        signals_skipped: Skipped signal accumulator.
+        signal_fired_at: Tracks when each symbol's signal first fired.
+        skipped: Counter of unfilled entry signals by reason.
+        risk: Risk rules the lots would be opened under.
+        sizing_method: Configured position sizing method.
+        slippage_pct: Slippage percentage.
+
+    Returns:
+        Tuple of (pending ``(symbol, fill_price, first_fired_day)`` signals,
+        per-symbol ATR stop distance in price units, per-symbol ATR printed on
+        the signal bar).
+
+    """
+    pending_signals: list[tuple[str, float, int]] = []
+    stop_distances: dict[str, float] = {}
+    entry_atr: dict[str, float] = {}
+
+    for symbol, arrays in symbol_arrays.items():
+        bar_idx = arrays.date_to_idx.get(current_date)
+        if bar_idx is None or bar_idx == 0:
+            continue
+        # Entry signal from previous bar
+        if not arrays.entries[bar_idx - 1]:
+            continue
+        # A signal on a symbol already held is a decision this run made, so it
+        # is counted rather than dropped: "fires but cannot be acted on" is a
+        # different diagnosis from "never fires".
+        if symbol in state.positions:
+            skipped["in_position"] += 1
+            continue
+        # A blocked signal never competes for capital, so it also never
+        # registers the earlier fired-at index that would jump the queue once
+        # the cooldown elapses.
+        if _in_reentry_cooldown(risk, state.last_exit_bar_idx, symbol, bar_idx):
+            signals_skipped.append(
+                {
+                    "symbol": symbol,
+                    "date": date_to_str(current_date),
+                    "reason": "cooldown",
+                }
+            )
+            skipped["cooldown"] += 1
+            continue
+        atr_prev = atr_value(arrays.atr, bar_idx - 1)
+        needs_atr = needs_entry_atr(
+            risk.stop_atr_multiple, risk.trailing_stop_atr_multiple, sizing_method
+        )
+        if needs_atr and atr_prev is None:
+            signals_skipped.append(
+                {
+                    "symbol": symbol,
+                    "date": date_to_str(current_date),
+                    "reason": "atr_undefined",
+                }
+            )
+            skipped["atr_undefined"] += 1
+            continue
+        if atr_prev is not None:
+            entry_atr[symbol] = atr_prev
+        if risk.stop_atr_multiple is not None and atr_prev is not None:
+            stop_distances[symbol] = risk.stop_atr_multiple * atr_prev
+        if symbol not in signal_fired_at:
+            signal_fired_at[symbol] = day_idx
+        fill_price = compute_entry_fill(float(arrays.opens[bar_idx]), slippage_pct)
+        pending_signals.append((symbol, fill_price, signal_fired_at[symbol]))
+
+    return pending_signals, stop_distances, entry_atr
+
+
 def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
     day_idx: int,
     current_date: date,
@@ -482,6 +875,8 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
     state: PortfolioState,
     signals_skipped: list[dict[str, Any]],
     signal_fired_at: dict[str, int],
+    skipped: Counter[str],
+    risk: RiskManagement,
     position_sizing: PositionSizing,
     slippage_pct: float,
     commission_pct: float,
@@ -502,6 +897,8 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
         state: Mutable portfolio state.
         signals_skipped: Skipped signal accumulator.
         signal_fired_at: Tracks when each symbol's signal first fired.
+        skipped: Counter of unfilled entry signals by reason.
+        risk: Risk rules the lots are opened under.
         position_sizing: Position sizing config.
         slippage_pct: Slippage percentage.
         commission_pct: Commission as percentage of trade value.
@@ -511,25 +908,27 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
         spread_estimates: Per-symbol spread estimate arrays.
 
     """
-    pending_signals: list[tuple[str, float, int]] = []
-
-    for symbol, arrays in symbol_arrays.items():
-        if symbol in state.positions:
-            continue
-        bar_idx = arrays.date_to_idx.get(current_date)
-        if bar_idx is None or bar_idx == 0:
-            continue
-        # Entry signal from previous bar
-        if arrays.entries[bar_idx - 1]:
-            if symbol not in signal_fired_at:
-                signal_fired_at[symbol] = day_idx
-            fill_price = compute_entry_fill(float(arrays.opens[bar_idx]), slippage_pct)
-            pending_signals.append((symbol, fill_price, signal_fired_at[symbol]))
+    pending_signals, stop_distances, entry_atr = _collect_pending_signals(
+        day_idx=day_idx,
+        current_date=current_date,
+        symbol_arrays=symbol_arrays,
+        state=state,
+        signals_skipped=signals_skipped,
+        signal_fired_at=signal_fired_at,
+        skipped=skipped,
+        risk=risk,
+        sizing_method=position_sizing.method,
+        slippage_pct=slippage_pct,
+    )
 
     if not pending_signals:
         return
 
-    total_equity = _compute_equity_from_state(state, current_date, symbol_arrays)
+    # Size against equity marked at this open: a close printed later in the bar
+    # is not known when these orders are placed.
+    _refresh_marks(state, current_date, symbol_arrays, mark="open")
+    total_equity = _compute_equity_from_state(state)
+    risk_budget = _risk_budget(position_sizing, total_equity)
     allocations = allocate_capital(
         cash=state.cash,
         total_equity=total_equity,
@@ -539,11 +938,90 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
         max_positions=position_sizing.max_positions,
         current_position_count=state.position_count,
         commission_pct=commission_pct,
+        risk_budget=risk_budget,
+        stop_distances=stop_distances,
     )
 
-    allocated_symbols = {a[0] for a in allocations}
+    _execute_allocations(
+        allocations=allocations,
+        current_date=current_date,
+        symbol_arrays=symbol_arrays,
+        state=state,
+        signal_fired_at=signal_fired_at,
+        stop_distances=stop_distances,
+        entry_atr=entry_atr,
+        risk=risk,
+        slippage_pct=slippage_pct,
+        commission_pct=commission_pct,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        volume_scaled_slippage=volume_scaled_slippage,
+        spread_estimates=spread_estimates,
+    )
 
-    # Execute allocations
+    _record_unallocated(
+        pending_signals=pending_signals,
+        allocated_symbols={a[0] for a in allocations},
+        current_date=current_date,
+        signals_skipped=signals_skipped,
+        skipped=skipped,
+        method=position_sizing.method,
+        risk_budget=risk_budget,
+        stop_distances=stop_distances,
+    )
+
+
+def _risk_budget(position_sizing: PositionSizing, total_equity: float) -> float | None:
+    """Return the dollars of loss one ``atr_risk`` position may budget.
+
+    Args:
+        position_sizing: Sizing configuration for the run.
+        total_equity: Equity marked at the open the orders are placed on.
+
+    Returns:
+        The budget, or None for a method that does not size to a stop.
+
+    """
+    if position_sizing.method != "atr_risk" or position_sizing.risk_pct is None:
+        return None
+    return total_equity * position_sizing.risk_pct / 100
+
+
+def _execute_allocations(  # noqa: PLR0913
+    allocations: list[tuple[str, int, float]],
+    current_date: date,
+    symbol_arrays: dict[str, _SymbolArrays],
+    state: PortfolioState,
+    signal_fired_at: dict[str, int],
+    stop_distances: dict[str, float],
+    entry_atr: dict[str, float],
+    risk: RiskManagement,
+    slippage_pct: float,
+    commission_pct: float,
+    stop_loss_pct: float | None,
+    take_profit_pct: float | None,
+    volume_scaled_slippage: bool = False,
+    spread_estimates: dict[str, np.ndarray[Any, np.dtype[np.float64]]] | None = None,
+) -> None:
+    """Fill each allocation at this bar's open and open the lot it buys.
+
+    Args:
+        allocations: ``(symbol, shares, total_cost)`` triples to fill.
+        current_date: The current date.
+        symbol_arrays: Pre-extracted per-symbol arrays.
+        state: Mutable portfolio state; cash and positions are mutated.
+        signal_fired_at: Tracks when each symbol's signal first fired.
+        stop_distances: Per-symbol ATR stop distance in price units.
+        entry_atr: Per-symbol ATR printed on the signal bar.
+        risk: Risk rules the lots are opened under.
+        slippage_pct: Slippage percentage.
+        commission_pct: Commission as percentage of trade value.
+        stop_loss_pct: Stop-loss percentage.
+        take_profit_pct: Take-profit percentage.
+        volume_scaled_slippage: Scale slippage by participation rate.
+        spread_estimates: Per-symbol spread estimate arrays.
+
+    """
     for symbol, shares, _total_cost in allocations:
         arrays = symbol_arrays[symbol]
         bar_idx = arrays.date_to_idx[current_date]
@@ -578,6 +1056,7 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
                 continue
             actual_cost = shares * fill_price * commission_mult
 
+        trail_distance = _trail_distance(risk, fill_price, entry_atr.get(symbol))
         state.cash -= actual_cost
         state.positions[symbol] = PositionLot(
             symbol=symbol,
@@ -585,23 +1064,76 @@ def _collect_and_execute_entries(  # noqa: PLR0913, PLR0912
             entry_price=fill_price,
             entry_date=current_date,
             cost_basis=actual_cost,
-            stop_loss_pct=stop_loss_pct,
+            last_mark=fill_price,
+            stop_level=_lot_stop_level(fill_price, stop_loss_pct, stop_distances.get(symbol)),
             take_profit_pct=take_profit_pct,
+            trail_level=None if trail_distance is None else fill_price - trail_distance,
+            high_water_mark=fill_price,
         )
         # Clear signal tracking once entered
         signal_fired_at.pop(symbol, None)
 
-    # Record skipped signals
+
+def _record_unallocated(  # noqa: PLR0913
+    pending_signals: list[tuple[str, float, int]],
+    allocated_symbols: set[str],
+    current_date: date,
+    signals_skipped: list[dict[str, Any]],
+    skipped: Counter[str],
+    method: str,
+    risk_budget: float | None,
+    stop_distances: dict[str, float],
+) -> None:
+    """Name why each fired signal that won no capital never filled.
+
+    Args:
+        pending_signals: The signals that competed for capital.
+        allocated_symbols: Symbols that won an allocation.
+        current_date: The current date.
+        signals_skipped: Skipped signal accumulator.
+        skipped: Counter of unfilled entry signals by reason.
+        method: Configured position sizing method.
+        risk_budget: Dollars of loss budgeted per ``atr_risk`` position.
+        stop_distances: Per-symbol ATR stop distance in price units.
+
+    """
     for symbol, _price, _ in pending_signals:
-        if symbol not in allocated_symbols:
-            signals_skipped.append(
-                {
-                    "symbol": symbol,
-                    "date": date_to_str(current_date),
-                    "reason": "insufficient_capital",
-                }
-            )
-            # Keep signal_fired_at for priority on next day
+        if symbol in allocated_symbols:
+            continue
+        reason = _unallocated_reason(method, risk_budget, stop_distances.get(symbol))
+        signals_skipped.append(
+            {
+                "symbol": symbol,
+                "date": date_to_str(current_date),
+                "reason": reason,
+            }
+        )
+        skipped[reason] += 1
+        # Keep signal_fired_at for priority on next day
+
+
+def _unallocated_reason(
+    method: str,
+    risk_budget: float | None,
+    stop_distance: float | None,
+) -> str:
+    """Separate a budget too small to carry a share from a cash shortage.
+
+    Args:
+        method: Configured position sizing method.
+        risk_budget: Dollars of loss budgeted per ``atr_risk`` position.
+        stop_distance: This symbol's ATR stop distance in price units.
+
+    Returns:
+        ``zero_shares`` when the risk budget alone buys nothing, otherwise
+        ``insufficient_capital``.
+
+    """
+    if method != "atr_risk" or risk_budget is None or stop_distance is None:
+        return "insufficient_capital"
+    if int(risk_budget // stop_distance) == 0:
+        return "zero_shares"
+    return "insufficient_capital"
 
 
 def _close_remaining_positions(  # noqa: PLR0913
@@ -662,14 +1194,20 @@ def _close_remaining_positions(  # noqa: PLR0913
 
 def _prepare_symbol_arrays(
     signal_dfs: dict[str, pl.DataFrame],
+    atr_indicator: str | None = None,
 ) -> dict[str, _SymbolArrays]:
     """Convert Polars DataFrames to numpy arrays for fast iteration.
 
     Args:
         signal_dfs: Dict of symbol to signal DataFrames.
+        atr_indicator: Id of the declared ATR indicator a risk rule reads,
+            or None when none does.
 
     Returns:
         Dict of symbol to pre-extracted arrays.
+
+    Raises:
+        ValueError: If the named ATR indicator produced no column.
 
     """
     result: dict[str, _SymbolArrays] = {}
@@ -688,6 +1226,7 @@ def _prepare_symbol_arrays(
             entries=df["entry_signal"].to_numpy(),
             exits=df["exit_signal"].to_numpy(),
             date_to_idx=date_to_idx,
+            atr=atr_column(df, atr_indicator),
         )
     return result
 
@@ -710,33 +1249,47 @@ def _build_date_union(
     return sorted(all_dates)
 
 
-def _compute_equity_from_state(
+def _refresh_marks(
     state: PortfolioState,
     current_date: date,
     symbol_arrays: dict[str, _SymbolArrays],
-) -> float:
-    """Compute total equity from state.
+    mark: Literal["open", "close"],
+) -> None:
+    """Update each held lot's ``last_mark`` from the bar printed on ``current_date``.
+
+    A symbol with no bar on that date keeps its carried mark: falling back to
+    the entry price would invent a loss on the gap date and an equal recovery
+    once the symbol prints again.
 
     Args:
-        state: Portfolio state.
-        current_date: Date for close price lookup.
-        symbol_arrays: Symbol data for close price lookup.
+        state: Portfolio state; held lots are mutated in place.
+        current_date: Date for the price lookup.
+        symbol_arrays: Symbol data for the price lookup.
+        mark: Which price of the current bar to mark held positions at.
+
+    """
+    for symbol, lot in state.positions.items():
+        arrays = symbol_arrays.get(symbol)
+        bar_idx = arrays.date_to_idx.get(current_date) if arrays is not None else None
+        if arrays is None or bar_idx is None:
+            continue
+        prices = arrays.opens if mark == "open" else arrays.closes
+        lot.last_mark = float(prices[bar_idx])
+
+
+def _compute_equity_from_state(state: PortfolioState) -> float:
+    """Compute total equity as cash plus every held lot at its ``last_mark``.
+
+    Args:
+        state: Portfolio state, marked beforehand via ``_refresh_marks``.
 
     Returns:
         Total portfolio equity.
 
     """
     equity = float(state.cash)
-    for symbol, lot in state.positions.items():
-        arrays = symbol_arrays.get(symbol)
-        if arrays is None:
-            equity += lot.shares * lot.entry_price
-            continue
-        bar_idx = arrays.date_to_idx.get(current_date)
-        if bar_idx is not None:
-            equity += lot.shares * float(arrays.closes[bar_idx])
-        else:
-            equity += lot.shares * lot.entry_price
+    for lot in state.positions.values():
+        equity += lot.shares * lot.last_mark
     return equity
 
 

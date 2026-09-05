@@ -132,7 +132,9 @@ def _build_result(  # noqa: PLR0913
     )
     sharpe = _compute_sharpe(returns, bars_per_year, risk_free_rate)
     sortino = _compute_sortino(returns, bars_per_year, risk_free_rate)
-    calmar = abs(cagr / dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
+    # Signed: a losing strategy has a negative Calmar. Only the drawdown loses
+    # its sign, so the ratio keeps the CAGR's.
+    calmar = cagr / abs(dd.max_drawdown_pct) if dd.max_drawdown_pct != 0 else 0.0
     volatility = _annualized_volatility(returns, bars_per_year)
     var_95 = float(np.percentile(returns, 5)) * 100 if len(returns) > 0 else 0.0
     downside = _compute_downside_deviation(returns, bars_per_year, risk_free_rate)
@@ -245,9 +247,7 @@ def _compute_trading_stats(
     losses = [t for t in trades if t.return_pct <= 0]
 
     win_rate = len(wins) / len(trades) * 100
-    gross_profit = sum(t.return_pct for t in wins)
-    gross_loss = abs(sum(t.return_pct for t in losses))
-    pf = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+    pf = _profit_factor(wins, losses)
 
     avg_ret = sum(t.return_pct for t in trades) / len(trades)
     avg_hold = sum(t.holding_days for t in trades) / len(trades)
@@ -266,6 +266,31 @@ def _compute_trading_stats(
         max_consecutive_losses=_max_consecutive_losses(trades),
         avg_holding_minutes=round(avg_hold_min, 1),
     )
+
+
+def _profit_factor(wins: list[Trade], losses: list[Trade]) -> float:
+    """Compute gross profit over gross loss for a closed-trade ledger.
+
+    Dollars are used when every trade reports realized PnL: percentage returns
+    weight a small position the same as a large one, which understates a
+    portfolio whose winners were sized larger than its losers. A ledger where
+    any trade lacks ``pnl`` falls back to percentages rather than mixing bases.
+
+    Args:
+        wins: Trades with a positive return.
+        losses: Trades with a zero or negative return.
+
+    Returns:
+        Profit factor, or infinity when there is no gross loss.
+
+    """
+    if all(t.pnl is not None for t in wins + losses):
+        gross_profit = sum(t.pnl for t in wins if t.pnl is not None)
+        gross_loss = abs(sum(t.pnl for t in losses if t.pnl is not None))
+    else:
+        gross_profit = sum(t.return_pct for t in wins)
+        gross_loss = abs(sum(t.return_pct for t in losses))
+    return gross_profit / gross_loss if gross_loss > 0 else float("inf")
 
 
 def _compute_bench_metrics(
@@ -360,7 +385,13 @@ def _align_returns_by_date(
 def _compute_yearly_returns(
     equity_df: pl.DataFrame,
 ) -> dict[str, float]:
-    """Compute year-by-year returns."""
+    """Compute year-by-year returns.
+
+    Each year is measured against the prior year's closing equity, so the move
+    into its first bar is counted somewhere. Measuring against the year's own
+    first bar instead would drop that return from every year but the first.
+    The opening year has no predecessor and keeps the curve's own start.
+    """
     if equity_df.is_empty():
         return {}
 
@@ -369,16 +400,17 @@ def _compute_yearly_returns(
     )
     years = sorted(df["year"].unique().to_list())
     yearly: dict[str, float] = {}
+    start_eq = df["equity"][0]
 
     for year in years:
         year_data = df.filter(pl.col("year") == year)
         if year_data.is_empty():
             continue
-        start_eq = year_data["equity"][0]
         end_eq = year_data["equity"][-1]
         if start_eq and start_eq > 0:
             ret = (end_eq / start_eq - 1) * 100
             yearly[str(year)] = round(ret, 2)
+        start_eq = end_eq
 
     return yearly
 
@@ -736,6 +768,7 @@ def _convert_portfolio_trades(
             return_pct=r.return_pct,
             holding_days=r.holding_days,
             exit_reason=r.exit_reason,
+            pnl=r.pnl,
         )
         for r in records
     ]

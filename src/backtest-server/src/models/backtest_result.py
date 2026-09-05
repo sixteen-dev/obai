@@ -68,6 +68,14 @@ class BacktestResult:
     # Data quality (zero-cost observability — computed from in-memory data)
     data_quality: dict[str, Any] = field(default_factory=dict)
 
+    # Provenance (release gate 7): the indicator stack that produced these
+    # numbers, and the adjustment basis the prices sat on ("dividend_adjusted"
+    # for daily, "raw" for intraday). Carried on the result rather than stamped
+    # into one response so cache hits, compared runs and walk-forward folds all
+    # disclose it.
+    dependency_versions: dict[str, str] = field(default_factory=dict)
+    price_basis: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSON output."""
         return {
@@ -115,6 +123,8 @@ class BacktestResult:
             "data_points_processed": self.data_points_processed,
             "warnings": self.warnings,
             "data_quality": self.data_quality,
+            "dependency_versions": self.dependency_versions,
+            "price_basis": self.price_basis,
         }
 
     @classmethod
@@ -162,4 +172,6 @@ class BacktestResult:
             data_points_processed=data.get("data_points_processed", 0),
             warnings=data.get("warnings", []),
             data_quality=data.get("data_quality", {}),
+            dependency_versions=data.get("dependency_versions", {}),
+            price_basis=data.get("price_basis", ""),
         )

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
+
+from .indicator_catalog import INDICATOR_CATALOG, IndicatorSpec, parse_iso_date
 
 
 @dataclass
@@ -74,110 +78,37 @@ class WalkForwardResult:
 # payload is what lets a later turn rule out look-ahead from a stored result.
 FILL_TIMING = "signal_at_bar_close_fill_at_next_bar_open"
 
+# Which fills carry the configured execution costs. Slippage and spread move
+# signal exits against the position; level-based and forced exits do not, so a
+# stop-heavy result reads better than it would with the same costs applied.
+FILL_MODEL = (
+    "slippage/spread on signal exits; stop/trailing/target at level or worse open; "
+    "eod, time stop and end-of-backtest at close"
+)
 
-SUPPORTED_INDICATORS: set[str] = {
-    "SMA",
-    "EMA",
-    "WMA",
-    "DEMA",
-    "TEMA",
-    "RSI",
-    "MACD",
-    "BBANDS",
-    "ATR",
-    "ADX",
-    "STOCH",
-    "STOCHRSI",
-    "CCI",
-    "WILLR",
-    "MOM",
-    "ROC",
-    "OBV",
-    "MFI",
-    "AROON",
-    "SAR",
-    # Statistical indicators
-    "LINEARREG",
-    "LINEARREG_SLOPE",
-    "LINEARREG_ANGLE",
-    "STDDEV",
-    "BETA",
-    "CORREL",
-    # VWAP (intraday-only)
-    "VWAP",
-    # Candlestick patterns — dynamically added below
+
+# Derived views over the one catalog every layer reads. Registering an
+# indicator there is what makes it validate, compute and appear in discovery.
+SUPPORTED_INDICATORS: frozenset[str] = frozenset(INDICATOR_CATALOG)
+
+# Accepted `params` keys per indicator type. Any other key is dropped before
+# the engine builds its call, so a typo would silently run library defaults.
+INDICATOR_PARAM_NAMES: dict[str, frozenset[str]] = {
+    name: frozenset(spec.params) for name, spec in INDICATOR_CATALOG.items()
 }
 
-# Batch-add all candlestick pattern names
-_CDL_PATTERN_NAMES: list[str] = [
-    "CDL_2CROWS",
-    "CDL_3BLACKCROWS",
-    "CDL_3INSIDE",
-    "CDL_3LINESTRIKE",
-    "CDL_3OUTSIDE",
-    "CDL_3STARSINSOUTH",
-    "CDL_3WHITESOLDIERS",
-    "CDL_ABANDONEDBABY",
-    "CDL_ADVANCEBLOCK",
-    "CDL_BELTHOLD",
-    "CDL_BREAKAWAY",
-    "CDL_CLOSINGMARUBOZU",
-    "CDL_CONCEALBABYSWALL",
-    "CDL_COUNTERATTACK",
-    "CDL_DARKCLOUDCOVER",
-    "CDL_DOJI",
-    "CDL_DOJISTAR",
-    "CDL_DRAGONFLYDOJI",
-    "CDL_ENGULFING",
-    "CDL_EVENINGDOJISTAR",
-    "CDL_EVENINGSTAR",
-    "CDL_GAPSIDESIDEWHITE",
-    "CDL_GRAVESTONEDOJI",
-    "CDL_HAMMER",
-    "CDL_HANGINGMAN",
-    "CDL_HARAMI",
-    "CDL_HARAMICROSS",
-    "CDL_HIGHWAVE",
-    "CDL_HIKKAKE",
-    "CDL_HIKKAKEMOD",
-    "CDL_HOMINGPIGEON",
-    "CDL_IDENTICAL3CROWS",
-    "CDL_INNECK",
-    "CDL_INVERTEDHAMMER",
-    "CDL_KICKING",
-    "CDL_KICKINGBYLENGTH",
-    "CDL_LADDERBOTTOM",
-    "CDL_LONGLEGGEDDOJI",
-    "CDL_LONGLINE",
-    "CDL_MARUBOZU",
-    "CDL_MATCHINGLOW",
-    "CDL_MATHOLD",
-    "CDL_MORNINGDOJISTAR",
-    "CDL_MORNINGSTAR",
-    "CDL_ONNECK",
-    "CDL_PIERCING",
-    "CDL_RICKSHAWMAN",
-    "CDL_RISEFALL3METHODS",
-    "CDL_SEPARATINGLINES",
-    "CDL_SHOOTINGSTAR",
-    "CDL_SHORTLINE",
-    "CDL_SPINNINGTOP",
-    "CDL_STALLEDPATTERN",
-    "CDL_STICKSANDWICH",
-    "CDL_TAKURI",
-    "CDL_TASUKIGAP",
-    "CDL_THRUSTING",
-    "CDL_TRISTAR",
-    "CDL_UNIQUE3RIVER",
-    "CDL_UPSIDEGAP2CROWS",
-    "CDL_XSIDEGAP3METHODS",
-]
-SUPPORTED_INDICATORS.update(_CDL_PATTERN_NAMES)
-
-INTRADAY_ONLY_INDICATORS: set[str] = {"VWAP"}
+INTRADAY_ONLY_INDICATORS: frozenset[str] = frozenset(
+    name for name, spec in INDICATOR_CATALOG.items() if spec.intraday_only
+)
 
 # Raw OHLCV columns always present in DataFrames — valid as operand references
 RAW_PRICE_COLUMNS: set[str] = {"open", "high", "low", "close", "volume"}
+
+# Reserved source column holding the benchmark's close, aligned as of each bar.
+# It is not a raw column: it exists only when `universe.benchmark` is set, and
+# the engine attaches it before indicators are computed so an indicator can read
+# it and a rule can compare it against the symbol's own series.
+BENCHMARK_CLOSE_COLUMN = "benchmark_close"
 
 SUPPORTED_OPERATORS: set[str] = {
     "greater_than",
@@ -190,7 +121,7 @@ SUPPORTED_OPERATORS: set[str] = {
     "before_time",
 }
 
-SUPPORTED_SIZING_METHODS: set[str] = {"equal_weight", "fixed_pct"}
+SUPPORTED_SIZING_METHODS: set[str] = {"equal_weight", "fixed_pct", "atr_risk"}
 
 SUPPORTED_ALLOCATION_MODES: set[str] = {"independent", "portfolio"}
 
@@ -212,14 +143,19 @@ BARS_PER_DAY: dict[str, int] = {
     "5min": 78,
 }
 
+# Minutes one bar covers, for the intraday timeframes only. Read by the session
+# helpers and by any indicator whose parameter is a clock interval rather than
+# a bar count, so the two cannot drift apart.
+MINUTES_PER_BAR: dict[str, int] = {
+    "1hour": 60,
+    "15min": 15,
+    "5min": 5,
+}
+
 # Multi-output indicators produce columns named {id}_{suffix}.
 # Rules can reference either the bare id or the suffixed name.
 MULTI_OUTPUT_SUFFIXES: dict[str, list[str]] = {
-    "MACD": ["macd", "signal", "hist"],
-    "BBANDS": ["upper", "middle", "lower"],
-    "STOCH": ["slowk", "slowd"],
-    "STOCHRSI": ["fastk", "fastd"],
-    "AROON": ["down", "up"],
+    name: list(spec.outputs) for name, spec in INDICATOR_CATALOG.items() if spec.outputs
 }
 
 SUPPORTED_LOGIC: set[str] = {"AND", "OR"}
@@ -237,13 +173,92 @@ class IndicatorConfig:
     def validate(self) -> list[str]:
         """Validate indicator config, return list of errors."""
         errors: list[str] = []
-        if self.type.upper() not in SUPPORTED_INDICATORS:
+        indicator_type = self.type.upper()
+        spec = INDICATOR_CATALOG.get(indicator_type)
+        if spec is None:
             errors.append(
                 f"Unsupported indicator '{self.type}'. Supported: {sorted(SUPPORTED_INDICATORS)}"
             )
         if not self.id:
             errors.append("Indicator id cannot be empty")
+        if spec is None:
+            return errors
+        errors.extend(self._unknown_param_errors(indicator_type))
+        errors.extend(self._param_value_errors(spec, indicator_type))
+        errors.extend(self._cross_param_errors(spec, indicator_type))
         return errors
+
+    def _param_value_errors(self, spec: IndicatorSpec, indicator_type: str) -> list[str]:
+        """Check each supplied param against its kind and range.
+
+        A period the native library rejects surfaces as a compute warning that
+        drops the indicator, so the strategy runs without the filter it was
+        built around. Catching it here keeps that from reaching the engine.
+
+        Args:
+            spec: Catalog entry for this indicator type.
+            indicator_type: Uppercased indicator type, already known supported.
+
+        Returns:
+            One error per offending or missing param.
+
+        """
+        errors: list[str] = []
+        for name, param in spec.params.items():
+            if name in self.params:
+                errors.extend(param.errors(self.id, indicator_type, name, self.params[name]))
+            elif param.default is None:
+                errors.append(f"Indicator '{self.id}' ({indicator_type}) requires param '{name}'")
+        return errors
+
+    def _cross_param_errors(self, spec: IndicatorSpec, indicator_type: str) -> list[str]:
+        """Reject param combinations the native library silently reinterprets.
+
+        TA-Lib swaps MACD's periods when the fast one is not the shorter, so a
+        reversed pair computes a working indicator that means the opposite of
+        what was asked for.
+
+        Args:
+            spec: Catalog entry for this indicator type.
+            indicator_type: Uppercased indicator type.
+
+        Returns:
+            One error naming the rule, or an empty list.
+
+        """
+        if indicator_type != "MACD":
+            return []
+        resolved = spec.resolve_params(self.params)
+        fast, slow = resolved.get("fast_length"), resolved.get("slow_length")
+        if not isinstance(fast, int) or not isinstance(slow, int) or fast < slow:
+            return []
+        return [
+            f"Indicator '{self.id}' (MACD) requires fast_length < slow_length; "
+            f"got fast_length={fast}, slow_length={slow}."
+        ]
+
+    def _unknown_param_errors(self, indicator_type: str) -> list[str]:
+        """Reject params the engine would drop instead of honouring.
+
+        Args:
+            indicator_type: Uppercased indicator type, already checked above.
+
+        Returns:
+            One error naming the offending keys and the accepted names, or
+            an empty list. Unsupported types yield nothing — the type error
+            above already tells the caller what to fix.
+
+        """
+        accepted = INDICATOR_PARAM_NAMES.get(indicator_type)
+        if accepted is None:
+            return []
+        unknown = sorted(set(self.params) - accepted)
+        if not unknown:
+            return []
+        return [
+            f"Indicator '{self.id}' ({indicator_type}) has unsupported param(s): "
+            f"{', '.join(unknown)}. Accepted params: {', '.join(sorted(accepted)) or 'none'}."
+        ]
 
 
 @dataclass
@@ -317,6 +332,9 @@ class PositionSizing:
     max_position_pct: float = 20.0
     max_positions: int = 5
     allocation_mode: str = "independent"
+    # Share of equity the ``atr_risk`` method budgets to the loss its ATR stop
+    # would realize. Read by no other method.
+    risk_pct: float | None = None
 
     def validate(self) -> list[str]:
         """Validate position sizing."""
@@ -335,7 +353,43 @@ class PositionSizing:
             errors.append(f"max_position_pct must be in (0, 100]; got {self.max_position_pct}")
         if self.max_positions < 1:
             errors.append(f"max_positions must be >= 1; got {self.max_positions}")
+        errors.extend(self._risk_pct_errors())
         return errors
+
+    def _risk_pct_errors(self) -> list[str]:
+        """Check the risk budget is present, usable, and read by this method.
+
+        Returns:
+            One error when ``atr_risk`` has no budget or an out-of-range one,
+            and one when another method carries a budget nothing would read.
+
+        """
+        if self.method != "atr_risk":
+            return [] if self.risk_pct is None else ["risk_pct applies only to method atr_risk"]
+        if self.risk_pct is None:
+            return ["method atr_risk requires risk_pct"]
+        if not 0 < self.risk_pct <= _MAX_PCT:
+            return [f"risk_pct must be in (0, 100]; got {self.risk_pct}"]
+        return []
+
+
+def _is_invalid_bar_count(value: int | None) -> bool:
+    """Report whether a bar-count limit is not a whole number of bars.
+
+    ``from_dict`` reads these limits straight out of JSON, so a float or a
+    bool arrives typed as an int and would compare its way through the
+    engine's bar arithmetic unnoticed.
+
+    Args:
+        value: The configured limit, or None when the rule is off.
+
+    Returns:
+        True when the value is present but is not an integer of at least 1.
+
+    """
+    if value is None:
+        return False
+    return isinstance(value, bool) or not isinstance(value, int) or value < 1
 
 
 @dataclass
@@ -346,6 +400,20 @@ class RiskManagement:
     take_profit_pct: float | None = None
     close_eod: bool = False  # Phase 3.4: force close at session end
     no_entry_after: str | None = None  # Phase 3.4: "15:30" — no new entries after
+    # Id of a declared ATR indicator, read in price units by the ATR stop.
+    atr_indicator: str | None = None
+    # Multiples of that ATR the initial stop sits below the fill.
+    stop_atr_multiple: float | None = None
+    # Percent of the highest high since entry the trailing stop sits below.
+    trailing_stop_pct: float | None = None
+    # Multiples of the completed bar's ATR the trailing stop sits below that
+    # same highest high. Exclusive with the percent form.
+    trailing_stop_atr_multiple: float | None = None
+    # Bars a position may be held before it is closed at that bar's close.
+    # The entry bar is the first one counted.
+    max_holding_bars: int | None = None
+    # Bars after a symbol's last exit during which a new entry cannot fill.
+    reentry_cooldown_bars: int | None = None
 
     def validate(self) -> list[str]:
         """Reject negative or absurd stop/take-profit values."""
@@ -354,6 +422,86 @@ class RiskManagement:
             errors.append(f"stop_loss_pct must be in (0, 100]; got {self.stop_loss_pct}")
         if self.take_profit_pct is not None and self.take_profit_pct <= 0:
             errors.append(f"take_profit_pct must be positive; got {self.take_profit_pct}")
+        errors.extend(self._atr_stop_errors())
+        errors.extend(self._trailing_stop_errors())
+        errors.extend(self._bar_limit_errors())
+        return errors
+
+    def reads_atr(self) -> bool:
+        """Report whether any risk rule consumes the named ATR.
+
+        Returns:
+            True when a rule reads ``atr_indicator``, which is what makes
+            naming one meaningful.
+
+        """
+        return self.stop_atr_multiple is not None or self.trailing_stop_atr_multiple is not None
+
+    def _bar_limit_errors(self) -> list[str]:
+        """Check every limit counted in bars is a whole number of them.
+
+        Returns:
+            One error per limit that is present but is not an integer of at
+            least 1; empty when no such limit is set.
+
+        """
+        errors: list[str] = []
+        if _is_invalid_bar_count(self.max_holding_bars):
+            errors.append(f"max_holding_bars must be an integer >= 1; got {self.max_holding_bars}")
+        if _is_invalid_bar_count(self.reentry_cooldown_bars):
+            errors.append(
+                f"reentry_cooldown_bars must be an integer >= 1; got {self.reentry_cooldown_bars}"
+            )
+        return errors
+
+    def _trailing_stop_errors(self) -> list[str]:
+        """Check the trail has exactly one distance and can be walked.
+
+        A trail may sit under a fixed stop — they combine into one effective
+        level — but the two ways of measuring the trail itself are exclusive:
+        a percent of the high water mark and a multiple of the ATR would place
+        two different levels with no rule for which one wins.
+
+        Returns:
+            One error per unusable distance, and one when both forms are set
+            or the ATR form has no ATR to read; empty when no trail is set.
+
+        """
+        errors: list[str] = []
+        pct, multiple = self.trailing_stop_pct, self.trailing_stop_atr_multiple
+        if pct is not None and not 0 < pct < _MAX_PCT:
+            errors.append(f"trailing_stop_pct must be in (0, 100); got {pct}")
+        if multiple is not None and (not math.isfinite(multiple) or multiple <= 0):
+            errors.append(
+                f"trailing_stop_atr_multiple must be a positive, finite number; got {multiple}"
+            )
+        if pct is not None and multiple is not None:
+            errors.append(
+                "trailing_stop_pct and trailing_stop_atr_multiple are mutually exclusive; set one"
+            )
+        if multiple is not None and self.atr_indicator is None:
+            errors.append("trailing_stop_atr_multiple requires atr_indicator")
+        return errors
+
+    def _atr_stop_errors(self) -> list[str]:
+        """Check the ATR stop is a usable distance and has exactly one stop rule.
+
+        Returns:
+            One error per unusable multiple, per competing percent stop, and
+            per missing ATR reference; empty when no ATR stop is configured.
+
+        """
+        if self.stop_atr_multiple is None:
+            return []
+        errors: list[str] = []
+        if not math.isfinite(self.stop_atr_multiple) or self.stop_atr_multiple <= 0:
+            errors.append(
+                f"stop_atr_multiple must be a positive, finite number; got {self.stop_atr_multiple}"
+            )
+        if self.stop_loss_pct is not None:
+            errors.append("stop_loss_pct and stop_atr_multiple are mutually exclusive; set one")
+        if self.atr_indicator is None:
+            errors.append("stop_atr_multiple requires atr_indicator")
         return errors
 
 
@@ -504,6 +652,14 @@ class StrategyDefinition:
         errors.extend(self.data_config.validate())
         for ind in self.indicators:
             errors.extend(ind.validate())
+        duplicate_ids = sorted(
+            ind_id for ind_id, count in Counter(i.id for i in self.indicators).items() if count > 1
+        )
+        if duplicate_ids:
+            errors.append(
+                f"Duplicate indicator id(s): {', '.join(duplicate_ids)}. "
+                "Each indicator id must be unique; a repeat overwrites the earlier column."
+            )
         errors.extend(self.entry_rules.validate())
         errors.extend(self.exit_rules.validate())
         errors.extend(self.position_sizing.validate())
@@ -530,17 +686,151 @@ class StrategyDefinition:
                     f"Use timeframe '5min', '15min', or '1hour' instead of 'daily'."
                 )
 
-        # Validate indicator references in rules.
-        # Raw OHLCV columns + computed indicators + multi-output suffixes are valid.
-        defined_ids = set(RAW_PRICE_COLUMNS)
-        defined_ids.update(ind.id for ind in self.indicators)
-        for ind in self.indicators:
-            suffixes = MULTI_OUTPUT_SUFFIXES.get(ind.type.upper())
-            if suffixes:
-                for suffix in suffixes:
-                    defined_ids.add(f"{ind.id}_{suffix}")
+        errors.extend(self._session_anchor_errors())
+        errors.extend(self._source_reference_errors())
+        errors.extend(self._atr_indicator_errors())
+        errors.extend(self._atr_risk_sizing_errors())
+        if self.references_benchmark_close() and not self.universe.benchmark:
+            errors.append(
+                f"{BENCHMARK_CLOSE_COLUMN} is referenced but universe.benchmark is not set"
+            )
+
+        defined_ids = self._rule_reference_ids()
         errors.extend(_validate_rule_refs(self.entry_rules, defined_ids, "entry"))
         errors.extend(_validate_rule_refs(self.exit_rules, defined_ids, "exit"))
+        return errors
+
+    def _rule_reference_ids(self) -> set[str]:
+        """Return every column name an entry or exit rule may name.
+
+        Returns:
+            Raw OHLCV columns, the reserved benchmark column when a benchmark
+            is configured, every indicator id, and the suffixed column of every
+            multi-output indicator.
+
+        """
+        defined_ids = set(RAW_PRICE_COLUMNS) | self._benchmark_columns()
+        defined_ids.update(ind.id for ind in self.indicators)
+        for ind in self.indicators:
+            suffixes = MULTI_OUTPUT_SUFFIXES.get(ind.type.upper(), [])
+            defined_ids.update(f"{ind.id}_{suffix}" for suffix in suffixes)
+        return defined_ids
+
+    def _atr_indicator_errors(self) -> list[str]:
+        """Check the ATR reference names a declared ATR and that something reads it.
+
+        Only this scope can settle it: the id has to resolve against the
+        strategy's own indicator list, and NATR is excluded because it is a
+        percent of close, not the price distance a stop needs.
+
+        Returns:
+            One error when the id names no declared ATR, and one when the id
+            is set but no rule consumes it; empty when no ATR is referenced.
+
+        """
+        atr_id = self.risk_management.atr_indicator
+        if atr_id is None:
+            return []
+        declared_atrs = {ind.id for ind in self.indicators if ind.type.upper() == "ATR"}
+        errors: list[str] = []
+        if atr_id not in declared_atrs:
+            errors.append(f"atr_indicator '{atr_id}' must name a declared ATR indicator")
+        if not self.risk_management.reads_atr():
+            errors.append("atr_indicator is set but nothing uses it")
+        return errors
+
+    def _atr_risk_sizing_errors(self) -> list[str]:
+        """Check ``atr_risk`` sizes to a stop this run would actually place.
+
+        Only this scope can settle it: the budget lives on the sizing object
+        and the stop distance on the risk object, and a budget measured
+        against an unplaced stop is a number no trade would honour.
+
+        Returns:
+            One error when ``atr_risk`` has no ATR stop to size against;
+            empty otherwise.
+
+        """
+        if self.position_sizing.method != "atr_risk":
+            return []
+        if self.risk_management.stop_atr_multiple is not None:
+            return []
+        return ["atr_risk sizes to the ATR stop; set risk_management.stop_atr_multiple"]
+
+    def _session_anchor_errors(self) -> list[str]:
+        """Check the params only this run's own window and timeframe can settle.
+
+        An anchor date and an opening interval are valid or not against the
+        data the run will fetch, which an indicator on its own cannot see.
+
+        Returns:
+            One error per anchor outside the data window and per opening
+            interval that is not a whole number of bars.
+
+        """
+        errors: list[str] = []
+        for ind in self.indicators:
+            indicator_type = ind.type.upper()
+            if indicator_type == "AVWAP":
+                errors.extend(_avwap_anchor_errors(ind, self.data_config))
+            elif indicator_type == "OPENING_RANGE":
+                errors.extend(_opening_range_errors(ind, self.data_config.timeframe))
+        return errors
+
+    def references_benchmark_close(self) -> bool:
+        """Report whether anything in this strategy reads the benchmark column.
+
+        Aligning the benchmark onto every symbol frame costs a download and a
+        join, so only a strategy that names the column pays for it.
+
+        Returns:
+            True if an indicator sources it, a dual-input indicator names it as
+            its second series, or an entry or exit rule compares against it.
+
+        """
+        for ind in self.indicators:
+            if BENCHMARK_CLOSE_COLUMN in (ind.source, ind.params.get("second_source")):
+                return True
+        operands = [
+            operand
+            for ruleset in (self.entry_rules, self.exit_rules)
+            for condition in ruleset.conditions
+            for operand in (condition.left, condition.right)
+        ]
+        return any(operand.indicator == BENCHMARK_CLOSE_COLUMN for operand in operands)
+
+    def _benchmark_columns(self) -> set[str]:
+        """Return the reserved benchmark column, when a benchmark is configured.
+
+        Returns:
+            The one-element set naming the column, or an empty set when the run
+            has no benchmark and so nothing to align.
+
+        """
+        return {BENCHMARK_CLOSE_COLUMN} if self.universe.benchmark else set()
+
+    def _source_reference_errors(self) -> list[str]:
+        """Reject an indicator that reads a column not yet available to it.
+
+        Indicators are computed in declaration order in a single pass, so a
+        `source` naming an indicator declared later, itself, or nothing at all
+        has no column to read. The engine warns and carries on; rejecting it
+        here stops a strategy that is missing a rule from being backtested.
+
+        Returns:
+            One error per unresolvable source reference.
+
+        """
+        available = set(RAW_PRICE_COLUMNS) | self._benchmark_columns()
+        errors: list[str] = []
+        for ind in self.indicators:
+            spec = INDICATOR_CATALOG.get(ind.type.upper())
+            if spec is None:
+                continue
+            refs = spec.source_refs(ind.source, spec.resolve_params(ind.params))
+            errors.extend(_undeclared_source_errors(ind.id, refs, available))
+            available.add(ind.id)
+            available.update(f"{ind.id}_{suffix}" for suffix in spec.outputs or ())
         return errors
 
     def cache_key(self) -> str:
@@ -577,12 +867,19 @@ class StrategyDefinition:
                 "max_position_pct": self.position_sizing.max_position_pct,
                 "max_positions": self.position_sizing.max_positions,
                 "allocation_mode": self.position_sizing.allocation_mode,
+                "risk_pct": self.position_sizing.risk_pct,
             },
             "risk_management": {
                 "stop_loss_pct": self.risk_management.stop_loss_pct,
                 "take_profit_pct": self.risk_management.take_profit_pct,
                 "close_eod": self.risk_management.close_eod,
                 "no_entry_after": self.risk_management.no_entry_after,
+                "atr_indicator": self.risk_management.atr_indicator,
+                "stop_atr_multiple": self.risk_management.stop_atr_multiple,
+                "trailing_stop_pct": self.risk_management.trailing_stop_pct,
+                "trailing_stop_atr_multiple": self.risk_management.trailing_stop_atr_multiple,
+                "max_holding_bars": self.risk_management.max_holding_bars,
+                "reentry_cooldown_bars": self.risk_management.reentry_cooldown_bars,
             },
             "execution_config": {
                 "slippage_pct": self.execution_config.slippage_pct,
@@ -636,12 +933,19 @@ class StrategyDefinition:
                 max_position_pct=sizing_data.get("max_position_pct", 20.0),
                 max_positions=sizing_data.get("max_positions", 5),
                 allocation_mode=sizing_data.get("allocation_mode", "independent"),
+                risk_pct=sizing_data.get("risk_pct"),
             ),
             risk_management=RiskManagement(
                 stop_loss_pct=risk_data.get("stop_loss_pct"),
                 take_profit_pct=risk_data.get("take_profit_pct"),
                 close_eod=risk_data.get("close_eod", False),
                 no_entry_after=risk_data.get("no_entry_after"),
+                atr_indicator=risk_data.get("atr_indicator"),
+                stop_atr_multiple=risk_data.get("stop_atr_multiple"),
+                trailing_stop_pct=risk_data.get("trailing_stop_pct"),
+                trailing_stop_atr_multiple=risk_data.get("trailing_stop_atr_multiple"),
+                max_holding_bars=risk_data.get("max_holding_bars"),
+                reentry_cooldown_bars=risk_data.get("reentry_cooldown_bars"),
             ),
             execution_config=ExecutionConfig(
                 slippage_pct=exec_data.get("slippage_pct", 0.1),
@@ -707,6 +1011,86 @@ def _operand_from_dict(data: dict[str, Any]) -> Operand:
         time_of_day=data.get("time_of_day"),
         time=data.get("time"),
     )
+
+
+def _avwap_anchor_errors(ind: IndicatorConfig, data_config: DataConfig) -> list[str]:
+    """Reject an anchor the run's own window does not contain.
+
+    No history is fetched before start_date beyond the indicator pre-roll, and
+    the pre-roll is not planned from an anchor, so an earlier anchor would
+    accumulate from whatever bar happened to arrive first. A walk-forward fold
+    whose window excludes the anchor fails for the same reason: an anchor names
+    one event, not a rolling reference.
+
+    Args:
+        ind: The AVWAP indicator config.
+        data_config: The run's date range.
+
+    Returns:
+        One error when the anchor sits outside the window, else an empty list.
+        A malformed anchor is left to the param check, which names it already.
+
+    """
+    anchor = parse_iso_date(ind.params.get("anchor_date"))
+    start = parse_iso_date(data_config.start_date)
+    end = parse_iso_date(data_config.end_date)
+    if anchor is None or start is None or end is None or start <= anchor <= end:
+        return []
+    return [
+        f"Indicator '{ind.id}' (AVWAP) anchor_date {anchor.isoformat()} must fall inside "
+        f"the data window [{data_config.start_date}, {data_config.end_date}]; history "
+        "before start_date is not fetched."
+    ]
+
+
+def _opening_range_errors(ind: IndicatorConfig, timeframe: str) -> list[str]:
+    """Reject an opening interval that is not a whole number of bars.
+
+    A 20-minute range on 15-minute bars can only ever be measured over one bar
+    or two, so it silently becomes a 15- or 30-minute range instead.
+
+    Args:
+        ind: The OPENING_RANGE indicator config.
+        timeframe: The run's bar timeframe.
+
+    Returns:
+        One error when the interval does not divide into bars, else an empty
+        list. A non-integer interval, or a daily timeframe, is rejected by the
+        param check and the intraday-only check respectively.
+
+    """
+    minutes = ind.params.get("minutes")
+    bar_minutes = MINUTES_PER_BAR.get(timeframe)
+    if type(minutes) is not int or bar_minutes is None or minutes % bar_minutes == 0:
+        return []
+    return [
+        f"Indicator '{ind.id}' (OPENING_RANGE) minutes must be a multiple of the bar size "
+        f"for timeframe '{timeframe}' ({bar_minutes} minutes); got {minutes}."
+    ]
+
+
+def _undeclared_source_errors(
+    indicator_id: str,
+    refs: tuple[str, ...],
+    available: set[str],
+) -> list[str]:
+    """Name every source reference that is not available yet.
+
+    Args:
+        indicator_id: Id of the indicator doing the reading.
+        refs: Column names the indicator reads.
+        available: Raw columns plus the ids and suffixed columns declared above it.
+
+    Returns:
+        One error per reference missing from ``available``.
+
+    """
+    return [
+        f"Indicator '{indicator_id}' sources '{ref}', which is not a raw column "
+        "or an indicator declared before it."
+        for ref in refs
+        if ref not in available
+    ]
 
 
 def _validate_rule_refs(
