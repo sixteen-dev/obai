@@ -6,6 +6,138 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+Two backtest-server batches from the 2026-09-04 audits: quantitative-engine
+corrections (`docs/audits/2026-09-04-sdk-model-and-quantitative-engine-review.md`)
+and the indicator-capability and strategy roadmap
+(`docs/audits/2026-09-04-indicator-capabilities-and-strategy-roadmap.md`).
+The corrections change reported numbers; the backtest engine version and the
+installed indicator-stack versions are part of the result-cache key from now
+on, so previously cached backtest results are recomputed rather than served
+with the old semantics.
+
+### Added
+
+- **Indicator capability catalog.** One typed definition per indicator
+  (`src/backtest-server/src/models/indicator_catalog.py`) now drives
+  validation, engine dispatch, the warm-up planner and the discovery tool,
+  replacing the allowlists that were spread across the model and engine
+  modules. The discovery tool reports each parameter's kind, default and
+  accepted range, each indicator's lookback in bars and a description.
+  Parameters are type- and range-checked, MACD requires a fast length below
+  its slow length, and an indicator `source` naming an unknown column or a
+  later-declared indicator is rejected at validation instead of computing a
+  warning.
+- **Native indicators** exposed from the installed TA-Lib wrapper: `NATR`
+  (percent units), `KAMA`, `MAX`, `MIN`, `PLUS_DI`, `MINUS_DI`.
+- **Composite indicators** built from existing primitives, all emitting null
+  for warm-up rows and zero denominators: `DONCHIAN` (prior-window channel
+  that excludes the signal bar), `ZSCORE` (population standard deviation),
+  `RVOL` (volume over the mean of the preceding bars), `PERCENTILE_RANK`
+  (trailing rank against prior values with midpoint ties), `KELTNER`
+  (EMA plus or minus an ATR multiple), `LAG`, `RATIO`, `DIFF`. `BBANDS` also
+  emits `percent_b` and `bandwidth` as fractions.
+- **`benchmark_close`** is available as a source and operand on every symbol
+  frame when the universe names a benchmark, aligned by date with nulls where
+  the benchmark has no bar.
+- **Session anchors:** `AVWAP` (anchored at a user-supplied date inside the
+  data window, valid on daily and intraday bars) and `OPENING_RANGE`
+  (intraday-only high and low of the first minutes of each session, undefined
+  until the interval completes).
+- **Trade management:** `atr_risk` position sizing (`risk_pct` of equity at
+  decision time divided by an ATR stop distance), ATR-distance initial stops
+  (`atr_indicator`, `stop_atr_multiple`), percent or ATR trailing stops
+  ratcheted from information through the prior bar, `max_holding_bars` time
+  stops, and `reentry_cooldown_bars`. Each is ordered inside the phased bar
+  in both allocation modes and documented in `docs/conformance.md`.
+- **Signal diagnostics** on every result: bars, per-condition and combined
+  signal counts, and entries skipped by reason, so a zero-trade run can be
+  read as data, indicator, rule or execution limited.
+- **Provenance:** results carry `dependency_versions` and `price_basis`; a
+  frame with unsorted or duplicate timestamps is rejected before indicators
+  run; a generic causality suite proves that later bars cannot change earlier
+  decisions for every engine path.
+- Strategy prompt and skill gain a small hypothesis-template catalogue that
+  names the server capabilities each template requires, reporting rules for
+  regime dependence, exposure, turnover, drawdown duration, cost sensitivity
+  and parameter stability, and permission to answer that no robust candidate
+  was found.
+
+### Changed
+
+- **Backtest single-symbol mode marks a fixed share count to market.** Each
+  held bar previously applied the asset return to a constant fraction of the
+  prior bar's equity, an uncosted daily rebalance that let a trade with a 0%
+  recorded return leave the equity curve up 12.5%. Equity and trade records now
+  describe the same position; the `conformance.md` statement that single-symbol
+  mode "tracks proportional equity exposure" is rewritten accordingly.
+- **Backtest execution is chronological within a bar.** A signal exit scheduled
+  by the previous bar fills at the open ahead of that bar's stop or target; in
+  portfolio mode intrabar stop/target proceeds no longer fund the same day's
+  opening entries, and opening entries are sized against equity marked at the
+  open rather than the close printed later that day.
+- **Backtest year and train/test slices carry the prior close as their
+  baseline**, so the return into a slice's first bar is no longer dropped. The
+  test-split period now starts on the boundary bar.
+- **Calmar keeps the sign of CAGR** (a losing strategy reports a negative
+  ratio). **Profit factor uses dollar profit and loss** whenever every closed
+  trade carries a realized PnL, which both engines now record.
+- **Both backtest engines close a position still open at the end of the run**
+  (`end_of_backtest` at the last close); a zero-trade result no longer hides an
+  entry. Sync responses now carry `fill_timing` and `fill_model`.
+- **Explicit `allocation_mode: portfolio` is honoured for a one-symbol
+  universe** instead of silently running the independent engine.
+- **Empirical Kelly can return zero.** The grid search compared every candidate
+  against negative-infinity growth and so always picked a positive fraction,
+  even for all-loss or zero-edge samples; zero allocation is now the baseline
+  and the tool flags `no_positive_edge`.
+- **Prediction rule backtests select the earliest observation satisfying the
+  whole entry predicate**, including time-to-resolution bounds, instead of
+  rejecting a market because its first in-band print was too early.
+- **Resolution trades report settlement, not the last quote**: `exit_price` is
+  the 0/1 payout, `exit_ts` the scheduled end date, and holding time runs to
+  that date.
+- **Calibration bucket `low_n` counts distinct markets**, not observations, so
+  one market sampled twenty times is thin evidence.
+- **Holdout blocks report `overlap_market_count`**, and the prediction prompt
+  describes the split as a chronological forward test rather than independent
+  validation when markets overlap.
+- Strategy prompt now reads the price basis and indicator stack off the
+  result (`price_basis`, `dependency_versions`) and states that
+  `turnover_rate` is traded notional, matching the engine; the prediction
+  prompt says the negated YES edge is the NO edge at the reference price only
+  and that executable NO edge must be re-derived from the NO ask.
+- Warm-up pre-roll is planned from each indicator's true lookback along its
+  source chain, with a stabilization allowance for recursive indicators,
+  instead of the largest declared period; the result warns when the cap
+  truncates it.
+
+### Fixed
+
+- **Async backtest job-status polls were cached by the hub for five minutes.**
+  `backtest_get_job_status_tool` and `crypto_backtest_get_job_status` advertised
+  `idempotentHint: true`, so a second poll returned the cached `running` state
+  even after the job completed. Both now opt out of the result cache.
+- **Unknown or misspelled indicator parameters are rejected at parse time**
+  with the accepted names listed (`{"lenght": 200}` previously ran TA-Lib's
+  30-bar default with no warning). Duplicate indicator ids are rejected too.
+- `close_eod` now applies to a position opened on the session's last bar; it
+  previously survived overnight and closed at the next session's end.
+- Walk-forward folds carry the execution warnings the sync path already
+  reported (critical coverage gaps, indicators with no values).
+- A held symbol with no bar on a portfolio date keeps its last observed mark
+  instead of reverting to its entry price, which invented a drawdown and
+  recovery around the gap.
+- Monte Carlo and Kelly tools forward the `limitations` carried by a
+  `monte_carlo_input` payload and reject non-finite returns or returns below
+  -1.0 instead of sizing from them.
+- `SAR` never computed: the engine passed the close as its acceleration
+  argument, so every request dropped it with a warning. It now computes from
+  high and low through the catalog binding.
+
+### Package versions
+
+- `backtest-server`: `0.1.2 → 0.1.3` (engine version now keys the result cache).
+
 ## [1.6.0] - 2026-08-21
 
 Minor: user-settable hub model and reasoning effort, with `gpt-5.6-terra` at
