@@ -11,6 +11,7 @@ import pytest
 from src.models.strategy import (
     Condition,
     DataConfig,
+    ExecutionConfig,
     IndicatorConfig,
     Operand,
     PositionSizing,
@@ -1326,3 +1327,132 @@ def test_opening_range_is_rejected_on_daily_bars(
 
     with pytest.raises(ValueError, match="requires intraday data"):
         StrategyDefinition.from_dict(daily)
+
+
+# NaN, the infinities, a bool, and a numeric-looking string: the four shapes a
+# JSON number can arrive in that no inequality rejects on its own.
+_MALFORMED_NUMBERS: list[Any] = [float("nan"), float("inf"), float("-inf"), True, "5"]
+
+
+class TestFiniteNumericInputs:
+    """Every user-supplied number must be a finite, non-boolean number."""
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("field", ["slippage_pct", "commission_pct", "initial_capital"])
+    def test_execution_config_rejects_malformed_numbers(self, field: str, bad: Any) -> None:
+        """A cost that is not a real number would price every fill silently."""
+        errors = ExecutionConfig(**{field: bad}).validate()
+
+        assert errors == [f"{field} must be a finite number; got {bad}"]
+
+    def test_execution_config_accepts_finite_numbers(self) -> None:
+        """The ordinary values keep validating clean."""
+        config = ExecutionConfig(slippage_pct=0.0, commission_pct=0.05, initial_capital=1_000.0)
+
+        assert config.validate() == []
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("field", ["max_position_pct", "max_positions"])
+    def test_position_sizing_rejects_malformed_numbers(self, field: str, bad: Any) -> None:
+        """A malformed cap sizes every position without ever tripping a bound."""
+        errors = PositionSizing(**{field: bad}).validate()
+
+        assert errors == [f"{field} must be a finite number; got {bad}"]
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    def test_risk_pct_rejects_malformed_numbers(self, bad: Any) -> None:
+        """The ATR risk budget is the whole method, so it must be a real number."""
+        errors = PositionSizing(method="atr_risk", risk_pct=bad).validate()
+
+        assert errors == [f"risk_pct must be a finite number; got {bad}"]
+
+    def test_position_sizing_accepts_finite_numbers(self) -> None:
+        """The ordinary values keep validating clean."""
+        assert PositionSizing(max_position_pct=20.0, max_positions=5).validate() == []
+        assert PositionSizing(method="atr_risk", risk_pct=1.0).validate() == []
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("field", ["stop_loss_pct", "take_profit_pct", "trailing_stop_pct"])
+    def test_risk_management_rejects_malformed_numbers(self, field: str, bad: Any) -> None:
+        """A malformed stop distance never triggers, so the position runs uncapped."""
+        errors = RiskManagement(**{field: bad}).validate()
+
+        assert errors == [f"{field} must be a finite number; got {bad}"]
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("field", ["stop_atr_multiple", "trailing_stop_atr_multiple"])
+    def test_atr_multiples_reject_malformed_numbers(self, field: str, bad: Any) -> None:
+        """A malformed ATR multiple places the stop nowhere."""
+        errors = RiskManagement(atr_indicator="atr_a", **{field: bad}).validate()
+
+        assert errors == [f"{field} must be a finite number; got {bad}"]
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("field", ["max_holding_bars", "reentry_cooldown_bars"])
+    def test_bar_limits_reject_malformed_numbers(self, field: str, bad: Any) -> None:
+        """A bar count is a whole number of bars; nothing else counts bars."""
+        errors = RiskManagement(**{field: bad}).validate()
+
+        assert errors == [f"{field} must be an integer >= 1; got {bad}"]
+
+    def test_risk_management_accepts_finite_numbers(self) -> None:
+        """The ordinary values keep validating clean."""
+        risk = RiskManagement(
+            stop_loss_pct=5.0,
+            take_profit_pct=15.0,
+            trailing_stop_pct=3.0,
+            max_holding_bars=10,
+            reentry_cooldown_bars=2,
+        )
+
+        assert risk.validate() == []
+        assert RiskManagement(atr_indicator="atr_a", stop_atr_multiple=2.0).validate() == []
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    def test_operand_constant_rejects_malformed_numbers(self, bad: Any) -> None:
+        """A NaN constant makes every comparison false and the strategy trades nothing."""
+        errors = Operand(constant=bad).validate()
+
+        assert errors == [f"constant must be a finite number; got {bad}"]
+
+    def test_operand_constant_accepts_finite_numbers(self) -> None:
+        """The ordinary values keep validating clean."""
+        assert Operand(constant=0.0).validate() == []
+        assert Operand(constant=70).validate() == []
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    def test_indicator_lookback_params_reject_malformed_numbers(self, bad: Any) -> None:
+        """A malformed period drops the indicator to a compute warning."""
+        errors = IndicatorConfig(id="sma", type="SMA", params={"length": bad}).validate()
+
+        assert len(errors) == 1
+        assert "param 'length'" in errors[0]
+        assert f"got {bad}" in errors[0]
+
+    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    def test_indicator_factor_params_reject_malformed_numbers(self, bad: Any) -> None:
+        """A malformed multiplier widens the bands to nothing."""
+        config = IndicatorConfig(id="bb", type="BBANDS", params={"length": 20, "std_dev": bad})
+
+        errors = config.validate()
+
+        assert len(errors) == 1
+        assert "param 'std_dev'" in errors[0]
+        assert f"got {bad}" in errors[0]
+
+    def test_from_dict_reports_overflowing_and_nan_execution_inputs(
+        self, sample_strategy_dict: dict[str, Any]
+    ) -> None:
+        """JSON admits 1e400 and NaN; both must surface as validation errors.
+
+        ``from_dict`` runs ``validate()`` itself and raises on any error, so
+        the two errors arrive joined in the exception message.
+        """
+        payload = copy.deepcopy(sample_strategy_dict)
+        payload["execution_config"] = {"initial_capital": 1e400, "slippage_pct": float("nan")}
+
+        with pytest.raises(ValueError) as caught:
+            StrategyDefinition.from_dict(payload)
+
+        assert "initial_capital must be a finite number; got inf" in str(caught.value)
+        assert "slippage_pct must be a finite number; got nan" in str(caught.value)

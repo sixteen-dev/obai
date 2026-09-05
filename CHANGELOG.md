@@ -141,6 +141,16 @@ with the old semantics.
 - `SAR` never computed: the engine passed the close as its acceleration
   argument, so every request dropped it with a warning. It now computes from
   high and low through the catalog binding.
+- **Non-finite and non-numeric strategy inputs are rejected instead of
+  silently running.** Validation compared user-supplied numbers with
+  inequalities, and JSON admits `NaN`, `Infinity` and `1e400` while Python
+  reads a boolean as a number, so nothing tripped: a `NaN` slippage,
+  commission or initial capital, an infinite take-profit, a `NaN` position
+  cap or ATR risk budget, and a `NaN` rule constant — which makes every
+  comparison false, so the strategy trades nothing — all validated clean and
+  reached the engine. Execution costs, position sizing, every stop and
+  take-profit distance, and rule constants must now be finite, non-boolean
+  numbers, reported as `<field> must be a finite number; got <value>`.
 
 ### Package versions
 

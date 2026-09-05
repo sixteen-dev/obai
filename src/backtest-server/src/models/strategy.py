@@ -161,6 +161,46 @@ MULTI_OUTPUT_SUFFIXES: dict[str, list[str]] = {
 SUPPORTED_LOGIC: set[str] = {"AND", "OR"}
 
 
+def _finite_number_error(name: str, value: object) -> str | None:
+    """Check one supplied number is a real, finite quantity before it is compared.
+
+    JSON admits ``NaN`` and ``Infinity`` and overflows ``1e400`` to infinity,
+    and Python types a bool as an int. Every one of those slips through the
+    range inequalities below — NaN makes each comparison false, infinity
+    satisfies every lower bound, and ``True`` reads as 1 — so a malformed cost
+    or stop would reach the engine and price fills with no error at all.
+
+    Args:
+        name: Field name, for the message.
+        value: Supplied value, of whatever type the caller sent.
+
+    Returns:
+        The error naming the field, or None when the value is a finite,
+        non-boolean int or float.
+
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return f"{name} must be a finite number; got {value}"
+    if not math.isfinite(value):
+        return f"{name} must be a finite number; got {value}"
+    return None
+
+
+def _optional_finite_number_error(name: str, value: object) -> str | None:
+    """Check a number that is only present when its rule is switched on.
+
+    Args:
+        name: Field name, for the message.
+        value: Supplied value, or None when the rule is off.
+
+    Returns:
+        The error naming the field, or None when the rule is off or the value
+        is a finite, non-boolean int or float.
+
+    """
+    return None if value is None else _finite_number_error(name, value)
+
+
 @dataclass
 class IndicatorConfig:
     """Configuration for a single technical indicator."""
@@ -282,6 +322,9 @@ class Operand:
             return ["Operand must have one of: indicator, constant, time_of_day, time"]
         if set_count > 1:
             return ["Operand must have exactly one field set"]
+        if self.constant is not None:
+            error = _finite_number_error("constant", self.constant)
+            return [] if error is None else [error]
         if self.time is not None:
             parts = self.time.split(":")
             if len(parts) != 2:  # noqa: PLR2004
@@ -349,9 +392,12 @@ class PositionSizing:
                 f"Unsupported allocation_mode '{self.allocation_mode}'. "
                 f"Supported: {sorted(SUPPORTED_ALLOCATION_MODES)}"
             )
-        if not 0 < self.max_position_pct <= _MAX_PCT:
+        pct_error = _finite_number_error("max_position_pct", self.max_position_pct)
+        count_error = _finite_number_error("max_positions", self.max_positions)
+        errors.extend(e for e in (pct_error, count_error) if e is not None)
+        if pct_error is None and not 0 < self.max_position_pct <= _MAX_PCT:
             errors.append(f"max_position_pct must be in (0, 100]; got {self.max_position_pct}")
-        if self.max_positions < 1:
+        if count_error is None and self.max_positions < 1:
             errors.append(f"max_positions must be >= 1; got {self.max_positions}")
         errors.extend(self._risk_pct_errors())
         return errors
@@ -368,6 +414,9 @@ class PositionSizing:
             return [] if self.risk_pct is None else ["risk_pct applies only to method atr_risk"]
         if self.risk_pct is None:
             return ["method atr_risk requires risk_pct"]
+        error = _finite_number_error("risk_pct", self.risk_pct)
+        if error is not None:
+            return [error]
         if not 0 < self.risk_pct <= _MAX_PCT:
             return [f"risk_pct must be in (0, 100]; got {self.risk_pct}"]
         return []
@@ -416,12 +465,17 @@ class RiskManagement:
     reentry_cooldown_bars: int | None = None
 
     def validate(self) -> list[str]:
-        """Reject negative or absurd stop/take-profit values."""
+        """Reject stop/take-profit values that are not finite numbers, or out of range."""
         errors: list[str] = []
-        if self.stop_loss_pct is not None and not 0 < self.stop_loss_pct <= _MAX_PCT:
-            errors.append(f"stop_loss_pct must be in (0, 100]; got {self.stop_loss_pct}")
-        if self.take_profit_pct is not None and self.take_profit_pct <= 0:
-            errors.append(f"take_profit_pct must be positive; got {self.take_profit_pct}")
+        stop = self.stop_loss_pct
+        take = self.take_profit_pct
+        stop_error = _optional_finite_number_error("stop_loss_pct", stop)
+        take_error = _optional_finite_number_error("take_profit_pct", take)
+        errors.extend(e for e in (stop_error, take_error) if e is not None)
+        if stop is not None and stop_error is None and not 0 < stop <= _MAX_PCT:
+            errors.append(f"stop_loss_pct must be in (0, 100]; got {stop}")
+        if take is not None and take_error is None and take <= 0:
+            errors.append(f"take_profit_pct must be positive; got {take}")
         errors.extend(self._atr_stop_errors())
         errors.extend(self._trailing_stop_errors())
         errors.extend(self._bar_limit_errors())
@@ -469,9 +523,12 @@ class RiskManagement:
         """
         errors: list[str] = []
         pct, multiple = self.trailing_stop_pct, self.trailing_stop_atr_multiple
-        if pct is not None and not 0 < pct < _MAX_PCT:
+        pct_error = _optional_finite_number_error("trailing_stop_pct", pct)
+        multiple_error = _optional_finite_number_error("trailing_stop_atr_multiple", multiple)
+        errors.extend(e for e in (pct_error, multiple_error) if e is not None)
+        if pct is not None and pct_error is None and not 0 < pct < _MAX_PCT:
             errors.append(f"trailing_stop_pct must be in (0, 100); got {pct}")
-        if multiple is not None and (not math.isfinite(multiple) or multiple <= 0):
+        if multiple is not None and multiple_error is None and multiple <= 0:
             errors.append(
                 f"trailing_stop_atr_multiple must be a positive, finite number; got {multiple}"
             )
@@ -491,13 +548,15 @@ class RiskManagement:
             per missing ATR reference; empty when no ATR stop is configured.
 
         """
-        if self.stop_atr_multiple is None:
+        multiple = self.stop_atr_multiple
+        if multiple is None:
             return []
         errors: list[str] = []
-        if not math.isfinite(self.stop_atr_multiple) or self.stop_atr_multiple <= 0:
-            errors.append(
-                f"stop_atr_multiple must be a positive, finite number; got {self.stop_atr_multiple}"
-            )
+        multiple_error = _finite_number_error("stop_atr_multiple", multiple)
+        if multiple_error is not None:
+            errors.append(multiple_error)
+        elif multiple <= 0:
+            errors.append(f"stop_atr_multiple must be a positive, finite number; got {multiple}")
         if self.stop_loss_pct is not None:
             errors.append("stop_loss_pct and stop_atr_multiple are mutually exclusive; set one")
         if self.atr_indicator is None:
@@ -520,13 +579,17 @@ class ExecutionConfig:
     estimate_spread: bool = False
 
     def validate(self) -> list[str]:
-        """Reject negative fees and non-positive starting capital."""
+        """Reject fees and capital that are not finite numbers, or out of range."""
         errors: list[str] = []
-        if self.slippage_pct < 0:
+        slippage_error = _finite_number_error("slippage_pct", self.slippage_pct)
+        commission_error = _finite_number_error("commission_pct", self.commission_pct)
+        capital_error = _finite_number_error("initial_capital", self.initial_capital)
+        errors.extend(e for e in (slippage_error, commission_error, capital_error) if e is not None)
+        if slippage_error is None and self.slippage_pct < 0:
             errors.append(f"slippage_pct must be >= 0; got {self.slippage_pct}")
-        if self.commission_pct < 0:
+        if commission_error is None and self.commission_pct < 0:
             errors.append(f"commission_pct must be >= 0; got {self.commission_pct}")
-        if self.initial_capital <= 0:
+        if capital_error is None and self.initial_capital <= 0:
             errors.append(f"initial_capital must be > 0; got {self.initial_capital}")
         return errors
 
