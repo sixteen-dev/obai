@@ -110,6 +110,14 @@ with the old semantics.
   source chain, with a stabilization allowance for recursive indicators,
   instead of the largest declared period; the result warns when the cap
   truncates it.
+- **`polars-talib` 0.1.6.** An indicator whose usable history is shorter than
+  its lookback now returns full-length undefined output instead of a truncated
+  column. On 0.1.5 a MACD over a 30-bar daily window produced no
+  `macd`/`signal`/`hist` columns at all and a `Failed to compute` warning, so
+  the rules referencing it silently went missing; the run now reports only the
+  existing insufficient-data warning and the undefined bars stay non-tradable.
+  Every other indicator value is unchanged, and the native TA-Lib core is still
+  0.4.0.
 
 ### Fixed
 

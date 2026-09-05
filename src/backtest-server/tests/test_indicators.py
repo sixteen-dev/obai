@@ -1954,3 +1954,127 @@ class TestOpeningRange:
 
         with pytest.raises(ValueError, match="OPENING_RANGE requires intraday data"):
             compute_indicators(self._intraday_df(), configs, timeframe="daily")
+
+
+class TestShortHistoryOutputs:
+    """History shorter than a lookback must be undefined, never a missing column.
+
+    polars-talib 0.1.5 returned a truncated column for an ungrouped MACD whose
+    valid history was shorter than its lookback: zero rows for a 30-bar daily
+    frame, so ``compute_indicators`` could not attach it and reported
+    ``Failed to compute m``. The strategy then ran with no MACD column at all.
+    0.1.6 returns full-length undefined output instead, which the warm-up rules
+    already treat as non-tradable.
+    """
+
+    _MACD_PARAMS = {"fast_length": 12, "slow_length": 26, "signal_length": 9}
+    _MACD_OUTPUTS = ("m_macd", "m_signal", "m_hist")
+
+    @staticmethod
+    def _frame(n: int, leading_nulls: int = 0) -> pl.DataFrame:
+        """Return an ``n``-bar OHLCV frame whose first bars may be undefined."""
+        rng = np.random.default_rng(20260905)
+        closes = 100.0 + rng.normal(0.0, 1.0, n).cumsum()
+        df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 1) + timedelta(days=i) for i in range(n)],
+                "open": closes,
+                "high": closes + 1.0,
+                "low": closes - 1.0,
+                "close": closes,
+                "volume": np.full(n, 1_000_000.0),
+            }
+        )
+        if leading_nulls == 0:
+            return df
+        blanked = [None] * leading_nulls
+        return df.with_columns(
+            [
+                pl.Series(col, blanked + df[col].to_list()[leading_nulls:])
+                for col in ("open", "high", "low", "close")
+            ]
+        )
+
+    def _macd(self, df: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
+        """Compute the default MACD on ``df`` under the id ``m``."""
+        config = IndicatorConfig(id="m", type="MACD", params=dict(self._MACD_PARAMS))
+        return compute_indicators(df, [config])
+
+    def _assert_all_undefined(self, result: pl.DataFrame, height: int) -> None:
+        """Every MACD output exists at full height and holds no usable value."""
+        for column in self._MACD_OUTPUTS:
+            assert column in result.columns, column
+            series = result[column]
+            assert len(series) == height, column
+            defined = series.is_not_null() & ~series.is_nan().fill_null(value=False)
+            assert defined.sum() == 0, column
+
+    def test_macd_shorter_than_its_lookback_is_undefined_not_missing(self) -> None:
+        """A 30-bar daily frame is four bars short of MACD's 34-bar requirement."""
+        df = self._frame(30)
+
+        result, warnings = self._macd(df)
+
+        self._assert_all_undefined(result, df.height)
+        assert any("Insufficient data for m" in warning for warning in warnings), warnings
+        assert not [w for w in warnings if "Failed to compute" in w], warnings
+
+    def test_macd_with_a_short_valid_tail_is_undefined_not_missing(self) -> None:
+        """Leading nulls, not frame height, can starve the lookback.
+
+        The frame is 40 bars, above MACD's 34-bar requirement, so the
+        row-count warning does not fire; only 28 bars carry prices.
+        """
+        df = self._frame(40, leading_nulls=12)
+
+        result, warnings = self._macd(df)
+
+        self._assert_all_undefined(result, df.height)
+        assert not [w for w in warnings if "Failed to compute" in w], warnings
+
+    def test_an_undefined_macd_produces_no_entry(self) -> None:
+        """Undefined must stay non-tradable rather than reading as a threshold cross."""
+        result, _ = self._macd(self._frame(30))
+
+        signalled = generate_signals(
+            result,
+            RuleSet(
+                logic="AND",
+                conditions=[
+                    Condition(
+                        left=Operand(indicator="m_macd"),
+                        operator="greater_than",
+                        right=Operand(constant=0.0),
+                    )
+                ],
+            ),
+            RuleSet(logic="AND", conditions=[]),
+        )
+
+        assert signalled["entry_signal"].sum() == 0
+
+    @pytest.mark.parametrize("name", ["SMA", "EMA", "RSI", "MAX", "MIN", "ATR", "BBANDS"])
+    def test_native_lookbacks_and_lengths_are_unmoved(self, name: str) -> None:
+        """Pin the natives that were already full-length, so an upgrade cannot move them."""
+        spec = INDICATOR_CATALOG[name]
+        lookback = spec.lookback(spec.resolve_params({}))
+        config = IndicatorConfig(id="p", type=name, params={})
+
+        short = self._frame(lookback)
+        short_result, short_warnings = compute_indicators(short, [config])
+        columns = [c for c in short_result.columns if c == "p" or c.startswith("p_")]
+        assert columns, name
+        assert not [w for w in short_warnings if "Failed to compute" in w], short_warnings
+        for column in columns:
+            assert len(short_result[column]) == short.height, column
+            assert short_result[column].is_not_null().sum() == 0, column
+
+        leading_nulls = 5
+        primed = self._frame(lookback + 40, leading_nulls=leading_nulls)
+        primed_result, primed_warnings = compute_indicators(primed, [config])
+        assert not [w for w in primed_warnings if "Failed to compute" in w], primed_warnings
+        defined = primed_result.select(
+            pl.all_horizontal([pl.col(c).is_not_null() for c in columns]).alias("defined")
+        )["defined"]
+        assert len(defined) == primed.height
+        assert int(defined.arg_max()) == leading_nulls + lookback, name
