@@ -69,8 +69,9 @@ def compute_metrics(  # noqa: PLR0913
         requested_end: Requested end date (YYYY-MM-DD).
         timeframe: Bar timeframe for annualization (Phase 3.6).
         risk_free_rate: Annual risk-free rate (default 0.0).
-        risk_free_rate_source: Provenance of the rate (e.g. "treasury_3m",
-            "fallback", "assumed_zero") — surfaced on the result for disclosure.
+        risk_free_rate_source: Provenance of the rate (e.g.
+            "treasury_3m_period_mean", "fallback", "assumed_zero") — surfaced
+            on the result for disclosure.
 
     Returns:
         BacktestResult with all metrics computed.

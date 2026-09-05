@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import polars as pl
 import pytest
@@ -1077,11 +1077,15 @@ class TestWalkForwardCallbackWarnings:
             warmup_bars={"AAPL": 0},
         )
         fmp_client = AsyncMock()
-        fmp_client.get_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+        fmp_client.get_period_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
         monkeypatch.setattr(server._state, "fmp_client", fmp_client)
         monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
 
-        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
+        response = await server._run_single_backtest(
+            json.dumps(_CALLBACK_STRATEGY),
+            "2024-01-01",
+            "2024-12-31",
+        )
 
         assert response["warnings"] == exec_result.warnings
 
@@ -1104,11 +1108,113 @@ class TestWalkForwardCallbackWarnings:
             warmup_bars={"AAPL": 0},
         )
         fmp_client = AsyncMock()
-        fmp_client.get_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+        fmp_client.get_period_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
         monkeypatch.setattr(server._state, "fmp_client", fmp_client)
         monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
 
-        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
+        response = await server._run_single_backtest(
+            json.dumps(_CALLBACK_STRATEGY),
+            "2024-01-01",
+            "2024-12-31",
+        )
 
         assert response["dependency_versions"] == indicator_stack_versions()
         assert response["price_basis"] == "dividend_adjusted"
+
+
+class TestWalkForwardRiskFreeWindow:
+    """Every fold prices its metrics off the full requested range."""
+
+    async def test_the_fold_prices_the_range_it_is_handed_not_its_own_window(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A fold covers months; the risk-free rate covers the whole request.
+
+        Folds are run against sub-windows of the request, so reading the rate
+        off each fold's own dates would make one fold's Sharpe incomparable
+        with the next one's and multiply the provider lookups by 2N.
+        """
+        exec_result = server._ExecutionResult(
+            equity_df=pl.DataFrame(
+                {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
+            ),
+            trades=[],
+            warnings=[],
+            warmup_bars={"AAPL": 0},
+        )
+        fmp_client = AsyncMock()
+        fmp_client.get_period_risk_free_rate_with_source.return_value = (
+            0.021,
+            "treasury_3m_period_mean",
+        )
+        monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+        monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+        fold = {
+            **_CALLBACK_STRATEGY,
+            "data_config": {"start_date": "2024-07-01", "end_date": "2024-09-30"},
+        }
+
+        response = await server._run_single_backtest(
+            json.dumps(fold),
+            "2018-01-01",
+            "2024-12-31",
+        )
+
+        fmp_client.get_period_risk_free_rate_with_source.assert_awaited_once_with(
+            "2018-01-01",
+            "2024-12-31",
+        )
+        assert response["risk_free_rate_source"] == "treasury_3m_period_mean"
+
+    async def test_the_job_hands_every_fold_the_requested_range(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The submitted job binds the strategy's own dates to the callback."""
+        captured: dict[str, Any] = {}
+        submitted: list[Any] = []
+
+        async def fake_validate(**kwargs: Any) -> Any:
+            captured["run_backtest_fn"] = kwargs["run_backtest_fn"]
+            return MagicMock()
+
+        def capture_job(coro: Any, **_: Any) -> str:
+            submitted.append(coro)
+            return "job-1"
+
+        job_store = AsyncMock()
+        job_store.submit_job = MagicMock(side_effect=capture_job)
+        monkeypatch.setattr(server._state, "job_store", job_store)
+        monkeypatch.setattr(server._state, "settings", None)
+        monkeypatch.setattr(server, "walk_forward_validate", fake_validate)
+
+        strategy_json = json.dumps(
+            {
+                **_CALLBACK_STRATEGY,
+                "data_config": {"start_date": "2018-01-01", "end_date": "2024-12-31"},
+            }
+        )
+        response = await server.backtest_walk_forward_tool(strategy_json, n_windows=3)
+        assert response["job_id"] == "job-1"
+        await submitted[0]
+
+        exec_result = server._ExecutionResult(
+            equity_df=pl.DataFrame(
+                {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
+            ),
+            trades=[],
+            warnings=[],
+            warmup_bars={"AAPL": 0},
+        )
+        fmp_client = AsyncMock()
+        fmp_client.get_period_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+        monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+        monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+
+        await captured["run_backtest_fn"](json.dumps(_CALLBACK_STRATEGY))
+
+        fmp_client.get_period_risk_free_rate_with_source.assert_awaited_once_with(
+            "2018-01-01",
+            "2024-12-31",
+        )

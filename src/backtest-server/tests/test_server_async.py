@@ -489,7 +489,7 @@ async def test_intraday_result_reports_the_raw_price_basis(
         warmup_bars={"AAPL": 0},
     )
     fmp_client = AsyncMock()
-    fmp_client.get_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
+    fmp_client.get_period_risk_free_rate_with_source.return_value = (0.0, "assumed_zero")
     monkeypatch.setattr(server._state, "fmp_client", fmp_client)
     monkeypatch.setattr(server._state, "cache", MagicMock())
     monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
@@ -498,6 +498,44 @@ async def test_intraday_result_reports_the_raw_price_basis(
 
     assert response["price_basis"] == "raw"
     assert response["dependency_versions"] == indicator_stack_versions()
+
+
+async def test_sync_run_takes_the_risk_free_rate_from_the_backtest_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Metrics must be priced off the window's yield, not the day's yield.
+
+    The rate was fetched as "the latest 3-month Treasury" and memoized by
+    today's date, so a 2015-2020 run borrowed 2026's yield and its Sharpe,
+    Sortino and alpha moved whenever the Treasury moved while the historical
+    prices did not.
+    """
+    strategy = _make_strategy(start="2015-01-01", end="2020-12-31")
+    exec_result = server._ExecutionResult(
+        equity_df=pl.DataFrame(
+            {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [10_000.0, 10_000.0]}
+        ),
+        trades=[],
+        warnings=[],
+        warmup_bars={"AAPL": 0},
+    )
+    fmp_client = AsyncMock()
+    fmp_client.get_period_risk_free_rate_with_source.return_value = (
+        0.021,
+        "treasury_3m_period_mean",
+    )
+    monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+    monkeypatch.setattr(server._state, "cache", MagicMock())
+    monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+
+    response = await server._run_sync_backtest(strategy, "cache-key")
+
+    fmp_client.get_period_risk_free_rate_with_source.assert_awaited_once_with(
+        "2015-01-01",
+        "2020-12-31",
+    )
+    assert response["risk_free_rate"] == pytest.approx(0.021)
+    assert response["risk_free_rate_source"] == "treasury_3m_period_mean"
 
 
 class TestWarmupPlannerBounds:

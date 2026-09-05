@@ -51,8 +51,8 @@ class BacktestResult:
     timeframe: str = "daily"
 
     # Risk-free rate disclosure (accuracy §5) — the rate Sharpe/Sortino/alpha
-    # were computed against, and where it came from ("treasury_3m", "fallback",
-    # "assumed_zero").
+    # were computed against, and where it came from ("treasury_3m_period_mean",
+    # "fallback", "assumed_zero").
     risk_free_rate: float = 0.0
     risk_free_rate_source: str = "assumed_zero"
 

@@ -744,18 +744,27 @@ async def backtest_walk_forward_tool(
     except (json.JSONDecodeError, ValueError, KeyError) as exc:
         return {"isError": True, "error": f"Invalid strategy: {exc}"}
 
-    return _submit_walk_forward_job(strategy_json, n_windows)
+    return _submit_walk_forward_job(
+        strategy_json,
+        n_windows,
+        strategy.data_config.start_date,
+        strategy.data_config.end_date,
+    )
 
 
 def _submit_walk_forward_job(
     strategy_json: str,
     n_windows: int,
+    window_start: str,
+    window_end: str,
 ) -> dict[str, Any]:
     """Submit walk-forward validation as an async job.
 
     Args:
         strategy_json: Validated strategy JSON string.
         n_windows: Number of walk-forward windows.
+        window_start: First requested date, used for the risk-free rate.
+        window_end: Last requested date, used for the risk-free rate.
 
     Returns:
         Job submission response with job_id and polling hints.
@@ -765,12 +774,15 @@ def _submit_walk_forward_job(
     # Estimate: 2 backtests per window, ~5s each
     estimated = float(n_windows * 2 * 5)
 
+    async def _run_fold(fold_json: str) -> dict[str, Any]:
+        return await _run_single_backtest(fold_json, window_start, window_end)
+
     async def _run() -> dict[str, Any]:
         try:
             result = await walk_forward_validate(
                 strategy_json=strategy_json,
                 n_windows=n_windows,
-                run_backtest_fn=_run_single_backtest,
+                run_backtest_fn=_run_fold,
             )
             return result.to_dict()
         except Exception as exc:
@@ -797,7 +809,11 @@ def _submit_walk_forward_job(
     }
 
 
-async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
+async def _run_single_backtest(
+    strategy_json: str,
+    window_start: str,
+    window_end: str,
+) -> dict[str, Any]:
     """Run a single backtest from a strategy JSON string.
 
     This is the reusable backtest function passed to walk_forward_validate.
@@ -806,6 +822,10 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
 
     Args:
         strategy_json: JSON string of a strategy definition.
+        window_start: First date of the *requested* range, not of this fold.
+        window_end: Last date of the requested range. Every fold is scored
+            against the same full-range risk-free rate — one memoized fetch
+            for the run — so the folds stay comparable with each other.
 
     Returns:
         BacktestResult dict.
@@ -813,8 +833,7 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
     """
     strategy = StrategyDefinition.from_dict(json.loads(strategy_json))
     exec_result = await _execute_strategy(strategy)
-    fmp_client: FMPClient = _state.require("fmp_client")
-    rate, source = await fmp_client.get_risk_free_rate_with_source()
+    rate, source = await _period_risk_free_rate(window_start, window_end)
     result = compute_metrics(
         equity_df=exec_result.equity_df,
         trades=exec_result.trades,
@@ -843,6 +862,21 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
 
 
 # --- Internal Helpers ---
+
+
+async def _period_risk_free_rate(start_date: str, end_date: str) -> tuple[float, str]:
+    """Resolve the risk-free rate that prices a backtest window's metrics.
+
+    Args:
+        start_date: First requested date (YYYY-MM-DD).
+        end_date: Last requested date (YYYY-MM-DD).
+
+    Returns:
+        Tuple of (annual risk-free rate as decimal, provenance label).
+
+    """
+    fmp_client: FMPClient = _state.require("fmp_client")
+    return await fmp_client.get_period_risk_free_rate_with_source(start_date, end_date)
 
 
 def _build_cache_key(strategy: StrategyDefinition) -> str:
@@ -895,8 +929,8 @@ async def _run_sync_backtest(
         logger.exception("backtest_failed")
         return {"isError": True, "error": format_api_error(exc)}
 
-    fmp_client: FMPClient = _state.require("fmp_client")
-    rate, source = await fmp_client.get_risk_free_rate_with_source()
+    data_config = strategy.data_config
+    rate, source = await _period_risk_free_rate(data_config.start_date, data_config.end_date)
 
     result = compute_metrics(
         equity_df=exec_result.equity_df,

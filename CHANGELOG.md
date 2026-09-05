@@ -140,6 +140,18 @@ with the old semantics.
   `volume_scaled_slippage` enabled are affected. The causality conformance
   suite gained the counterfactual: bumping one bar's volume must not move any
   fill priced at or before that bar.
+- **Sharpe, Sortino and alpha are priced off the backtest window's Treasury
+  yield.** The 3-month rate was fetched as "the latest" one and memoized by
+  the date the run happened, so a 2015-2020 backtest was scored against 2026's
+  yield and its risk-adjusted metrics moved whenever the Treasury moved while
+  the historical prices did not. The rate is now the mean of the daily
+  3-month yields printed inside the requested range — fetched from FMP in
+  90-day chunks, because that endpoint truncates a longer request — and a
+  result discloses it as `treasury_3m_period_mean`. Walk-forward scores every
+  fold against the full requested range, so the folds stay comparable and the
+  run still costs one lookup. A provider failure, a window the provider has no
+  yields for, or a range beyond the 120-chunk cap still falls back to 4.5%
+  labelled `fallback`.
 
 ### Fixed
 
