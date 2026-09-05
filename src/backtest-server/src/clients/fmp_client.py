@@ -6,9 +6,9 @@ import asyncio
 import json
 import math
 import re
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from statistics import fmean
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
@@ -21,9 +21,15 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 1.0
 FALLBACK_RISK_FREE_RATE = 0.045  # 3-month T-bill fallback when FMP unavailable
 # FMP truncates a treasury-rates response at roughly one quarter, so a window
-# is fetched in chunks this size. The cap bounds the request loop at ~30 years.
+# is fetched in chunks this size. The chunk cap must admit the longest window
+# the strategy schema accepts (``TIMEFRAME_MAX_YEARS["daily"]``, 30 years) so
+# no valid backtest falls back to the constant; a test pins the two together.
 TREASURY_CHUNK_DAYS = 90
-MAX_TREASURY_CHUNKS = 120
+MAX_RISK_FREE_WINDOW_YEARS = 30
+MAX_TREASURY_CHUNKS = math.ceil(MAX_RISK_FREE_WINDOW_YEARS * 366 / TREASURY_CHUNK_DAYS)
+# Memoized windows per client. A window ending today is refetched on the next
+# UTC day so a partial window does not freeze for the life of the process.
+MAX_RISK_FREE_MEMO_ENTRIES = 64
 
 _APIKEY_PATTERN = re.compile(r"apikey=[^&\s]+")
 
@@ -128,32 +134,72 @@ def _parse_rate_window(start_date: str, end_date: str) -> tuple[date, date]:
     return start, end
 
 
-def _month3_by_date(rows: list[Any]) -> dict[str, float]:
-    """Index the 3-month treasury yield of each dated row by its date.
+def _month3_by_date(
+    rows: list[Any],
+    chunk_start: date,
+    chunk_end: date,
+) -> dict[str, float]:
+    """Index the 3-month treasury yield of each in-window row by its date.
+
+    The provider truncates wide requests to their most recent rows and, with no
+    range at all, returns the latest quotes. A row dated outside the requested
+    chunk is therefore evidence the range was not honoured, and letting it into
+    the mean would relabel today's yield as the window's. Such rows are counted
+    and logged, never averaged.
 
     Args:
         rows: Treasury-rates rows as the provider returned them.
+        chunk_start: First day the rows were requested for (inclusive).
+        chunk_end: Last day the rows were requested for (inclusive).
 
     Returns:
         Mapping of ISO date to that day's ``month3`` percent value. A row that
-        is not a dict, carries no date, or whose ``month3`` is missing, boolean,
-        non-numeric or non-finite is skipped rather than coerced into a number.
+        is not a dict, carries no parseable date, lies outside the chunk, or
+        whose ``month3`` is missing, boolean, non-numeric or non-finite is
+        skipped rather than coerced into a number.
 
     """
     values: dict[str, float] = {}
+    outside = 0
     for row in rows:
         if not isinstance(row, dict):
             continue
-        row_date = row.get("date")
+        row_day = _row_date(row.get("date"))
         month3 = row.get("month3")
-        if not isinstance(row_date, str) or not row_date:
+        if row_day is None:
+            continue
+        if not chunk_start <= row_day <= chunk_end:
+            outside += 1
             continue
         if isinstance(month3, bool) or not isinstance(month3, int | float):
             continue
         if not math.isfinite(month3):
             continue
-        values[row_date] = float(month3)
+        values[row_day.isoformat()] = float(month3)
+    if outside or not values:
+        logger.warning(
+            "treasury_chunk_rows_outside_window" if outside else "treasury_chunk_empty",
+            chunk_start=chunk_start.isoformat(),
+            chunk_end=chunk_end.isoformat(),
+            rows_outside_window=outside,
+            rows_in_window=len(values),
+        )
     return values
+
+
+def _row_date(value: object) -> date | None:
+    """Parse a provider row's date, returning None when it is not an ISO date."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _utc_today() -> date:
+    """Return today's UTC date; a seam so tests can move the calendar."""
+    return datetime.now(UTC).date()
 
 
 # The adjustment basis stored prices sit on. Changing the endpoint above must
@@ -191,10 +237,11 @@ class FMPClient:
         self.api_key = settings.fmp_api_key
         self.client = httpx.AsyncClient(timeout=30.0)
         # The risk-free rate describes a backtest window, so it is memoized per
-        # (start, end): walk-forward's ~2N folds share one window and therefore
-        # one lookup, and a second window is its own entry rather than a
-        # collision with the first.
-        self._rfr_cache: dict[tuple[str, str], tuple[float, str]] = {}
+        # (start, end, UTC day): walk-forward's ~2N folds share one window and
+        # therefore one lookup, a second window is its own entry, and a window
+        # still accruing yields is looked up afresh each day. The dict is
+        # bounded; the oldest entry is evicted first.
+        self._rfr_cache: dict[tuple[str, str, str], tuple[float, str]] = {}
 
     async def __aenter__(self) -> FMPClient:
         """Async context manager entry."""
@@ -442,22 +489,6 @@ class FMPClient:
         except (httpx.HTTPError, httpx.TimeoutException):
             return False
 
-    async def get_treasury_rates(self) -> dict[str, float] | None:
-        """Fetch the latest US treasury rates for all maturities from FMP.
-
-        Returns:
-            The most recent rates dict (percent values keyed by maturity, e.g.
-            ``month3``) or None when the response is empty or not a list.
-
-        Raises:
-            httpx.HTTPError: If the request ultimately fails after retries.
-
-        """
-        data = await self._request_with_retry("treasury-rates", {"apikey": self.api_key})
-        if isinstance(data, list) and data:
-            return cast(dict[str, float], data[0])
-        return None
-
     async def get_period_risk_free_rate_with_source(
         self,
         start_date: str,
@@ -488,12 +519,15 @@ class FMPClient:
 
         """
         start, end = _parse_rate_window(start_date, end_date)
-        cached = self._rfr_cache.get((start_date, end_date))
+        key = (start_date, end_date, _utc_today().isoformat())
+        cached = self._rfr_cache.get(key)
         if cached is not None:
             return cached
 
         result = await self._resolve_period_risk_free_rate(start, end)
-        self._rfr_cache[(start_date, end_date)] = result
+        if len(self._rfr_cache) >= MAX_RISK_FREE_MEMO_ENTRIES:
+            self._rfr_cache.pop(next(iter(self._rfr_cache)))
+        self._rfr_cache[key] = result
         return result
 
     async def _resolve_period_risk_free_rate(
@@ -516,9 +550,8 @@ class FMPClient:
         by_date: dict[str, float] = {}
         try:
             for chunk_start, chunk_end in _build_date_chunks(start, end, TREASURY_CHUNK_DAYS):
-                by_date.update(
-                    _month3_by_date(await self._fetch_treasury_chunk(chunk_start, chunk_end))
-                )
+                rows = await self._fetch_treasury_chunk(chunk_start, chunk_end)
+                by_date.update(_month3_by_date(rows, chunk_start, chunk_end))
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning(
                 "risk_free_rate_fallback",

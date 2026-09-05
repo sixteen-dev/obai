@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import date
 from typing import Any
 
 import httpx
 import pytest
 
-from src.clients.fmp_client import FALLBACK_RISK_FREE_RATE, FMPClient
+from src.clients import fmp_client
+from src.clients.fmp_client import (
+    FALLBACK_RISK_FREE_RATE,
+    MAX_RISK_FREE_WINDOW_YEARS,
+    MAX_TREASURY_CHUNKS,
+    TREASURY_CHUNK_DAYS,
+    FMPClient,
+)
 from src.config import Settings
+from src.models.strategy import TIMEFRAME_MAX_YEARS
 
 
 @pytest.fixture()
@@ -25,11 +34,13 @@ async def client() -> AsyncGenerator[FMPClient, None]:
 class _RecordingTreasury:
     """Stand-in for ``_request_with_retry`` that records params and replays rows."""
 
-    def __init__(self, rows: list[Any]) -> None:
+    def __init__(self, rows: list[Any] | None = None) -> None:
         """Store the rows every call returns.
 
         Args:
-            rows: Response body handed back for each recorded request.
+            rows: Response body handed back for each recorded request. When
+                None, each request is answered with one row dated on its own
+                ``from`` day carrying a 4.5 yield, so every chunk is in-window.
 
         """
         self.rows = rows
@@ -39,31 +50,14 @@ class _RecordingTreasury:
         """Record one request and replay the configured rows."""
         assert endpoint == "treasury-rates"
         self.calls.append(dict(params))
+        if self.rows is None:
+            return [{"date": params["from"], "month3": 4.5}]
         return self.rows
 
     @property
     def windows(self) -> list[tuple[str, str]]:
         """Return the (from, to) window of every recorded request."""
         return [(call["from"], call["to"]) for call in self.calls]
-
-
-class TestTreasuryRates:
-    """Test the raw latest-rates endpoint helper."""
-
-    async def test_treasury_rates_extracts_first_element(
-        self,
-        client: FMPClient,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """get_treasury_rates returns the first dict from the FMP list response."""
-
-        async def fake_request(endpoint: str, params: dict[str, str]) -> object:
-            assert endpoint == "treasury-rates"
-            return [{"month3": 4.5}]
-
-        monkeypatch.setattr(client, "_request_with_retry", fake_request)
-        rates = await client.get_treasury_rates()
-        assert rates == {"month3": 4.5}
 
 
 class TestPeriodRiskFreeRate:
@@ -155,7 +149,7 @@ class TestPeriodRiskFreeRate:
         The chunks must cover the whole window with no gap: a hole would drop
         the yields of those days out of the mean without any error.
         """
-        recorder = _RecordingTreasury([{"date": "2023-01-03", "month3": 4.5}])
+        recorder = _RecordingTreasury()
         monkeypatch.setattr(client, "_request_with_retry", recorder)
 
         rate, _ = await client.get_period_risk_free_rate_with_source(
@@ -204,7 +198,7 @@ class TestPeriodRiskFreeRate:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The memo is keyed by the window, so another period is its own lookup."""
-        recorder = _RecordingTreasury([{"date": "2023-01-03", "month3": 4.5}])
+        recorder = _RecordingTreasury()
         monkeypatch.setattr(client, "_request_with_retry", recorder)
 
         await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
@@ -294,6 +288,110 @@ class TestPeriodRiskFreeRate:
             "2026-01-01",
         ) == (FALLBACK_RISK_FREE_RATE, "fallback")
         assert recorder.calls == []
+
+    async def test_rows_outside_the_requested_chunk_do_not_enter_the_mean(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A row the provider dated outside the chunk is evidence the range was ignored.
+
+        FMP answers a request with no range with the latest quotes; if the
+        range were dropped, today's yield would be averaged and published as
+        the window's. Such rows are skipped so the label stays honest.
+        """
+        recorder = _RecordingTreasury(
+            [
+                {"date": "2023-01-03", "month3": 4.0},
+                {"date": "2026-09-03", "month3": 9.0},
+                {"date": "2022-12-30", "month3": 9.0},
+            ]
+        )
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+
+        rate, source = await client.get_period_risk_free_rate_with_source(
+            "2023-01-01",
+            "2023-01-30",
+        )
+
+        assert rate == pytest.approx(0.04)
+        assert source == "treasury_3m_period_mean"
+
+    async def test_only_out_of_window_rows_fall_back(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When nothing the provider returned lies in the window, there is no mean."""
+        recorder = _RecordingTreasury([{"date": "2026-09-03", "month3": 9.0}])
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+
+        assert await client.get_period_risk_free_rate_with_source(
+            "2023-01-01",
+            "2023-01-30",
+        ) == (FALLBACK_RISK_FREE_RATE, "fallback")
+
+    def test_the_chunk_cap_admits_the_longest_window_the_schema_accepts(self) -> None:
+        """The cap is derived from the schema ceiling, so no valid window falls back."""
+        assert TIMEFRAME_MAX_YEARS["daily"] == MAX_RISK_FREE_WINDOW_YEARS
+        longest_span_days = int(MAX_RISK_FREE_WINDOW_YEARS * 365.25) + 1
+        assert longest_span_days <= MAX_TREASURY_CHUNKS * TREASURY_CHUNK_DAYS
+
+    async def test_the_longest_daily_window_is_fetched_rather_than_defaulted(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A 30-year daily backtest is legal, so its rate must be the period mean.
+
+        A cap of 120 chunks silently defaulted every daily window between
+        29.57 and 30 years to the constant while the schema accepted them.
+        """
+        recorder = _RecordingTreasury()
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+
+        rate, source = await client.get_period_risk_free_rate_with_source(
+            "1996-01-01",
+            "2025-12-31",
+        )
+
+        assert source == "treasury_3m_period_mean"
+        assert rate == pytest.approx(0.045)
+        assert len(recorder.calls) == 122
+
+    async def test_a_window_is_looked_up_again_on_a_new_day(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A window ending today keeps accruing yields, so the memo lasts one UTC day."""
+        recorder = _RecordingTreasury()
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+        monkeypatch.setattr(fmp_client, "_utc_today", lambda: date(2026, 9, 5))
+        await client.get_period_risk_free_rate_with_source("2026-08-01", "2026-09-05")
+        monkeypatch.setattr(fmp_client, "_utc_today", lambda: date(2026, 9, 6))
+
+        await client.get_period_risk_free_rate_with_source("2026-08-01", "2026-09-05")
+
+        assert len(recorder.calls) == 2
+
+    async def test_the_memo_is_bounded(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The oldest window is evicted once the memo is full, so it cannot grow unbounded."""
+        recorder = _RecordingTreasury()
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+        monkeypatch.setattr(fmp_client, "MAX_RISK_FREE_MEMO_ENTRIES", 2)
+        await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
+        await client.get_period_risk_free_rate_with_source("2023-02-01", "2023-02-28")
+        await client.get_period_risk_free_rate_with_source("2023-03-01", "2023-03-30")
+
+        await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
+
+        assert len(client._rfr_cache) == 2  # noqa: SLF001
+        assert len(recorder.calls) == 4
 
     async def test_a_backwards_window_raises(self, client: FMPClient) -> None:
         """An end before its start is a programming error, not a provider failure."""

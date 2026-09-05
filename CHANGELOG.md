@@ -149,9 +149,13 @@ with the old semantics.
   90-day chunks, because that endpoint truncates a longer request — and a
   result discloses it as `treasury_3m_period_mean`. Walk-forward scores every
   fold against the full requested range, so the folds stay comparable and the
-  run still costs one lookup. A provider failure, a window the provider has no
-  yields for, or a range beyond the 120-chunk cap still falls back to 4.5%
-  labelled `fallback`.
+  run still costs one lookup. Rows the provider dates outside the requested
+  chunk are logged and left out of the mean, so a request whose range was not
+  honoured cannot pass today's yield off as the window's. The chunk cap admits
+  the longest window the schema accepts (30 years); the memo is bounded and
+  keyed by UTC day, so a window still accruing yields is refreshed daily. A
+  provider failure, a window the provider has no yields for, or a range beyond
+  the cap still falls back to 4.5% labelled `fallback`.
 
 ### Fixed
 
