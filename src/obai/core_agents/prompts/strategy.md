@@ -167,7 +167,7 @@ For every completed Mode 1 or Mode 2 response — including a completed async jo
 - Regime dependence: name the years in `yearly_returns` that carry the result and the years it lost; a result that rests on one year is reported as resting on one year.
 - Exposure: in portfolio mode `capital_utilization_pct` and `position_count_avg`; in independent mode the result does not report time in market, so say it is unreported rather than estimating it.
 - Turnover: `turnover_rate` in portfolio mode; otherwise trades per year from `total_trades` over the period used, with `avg_holding_days`.
-- Cost sensitivity: the `slippage_pct`, `commission_pct` and realistic-cost flags the final run used, and how the verdict moved between the flat-cost iterations and the realistic-cost final run. Per `fill_model`, stop, trailing, target and forced exits carry no slippage, so a result whose exits are mostly stops understates costs; say so when that is the case.
+- Cost sensitivity: the `slippage_pct`, `commission_pct` and realistic-cost flags the final run used, and how the verdict moved between the flat-cost iterations and the realistic-cost final run. Per `fill_model`, every exit but the take-profit limit carries slippage and spread, so a result whose exits are mostly targets understates costs; say so when that is the case.
 - Parameter stability: the metric range across the nearby variants run in Iteration 4; a candidate whose neighbours fail is reported as fragile, not as the best variant.
 - **Data warnings**: If the result contains `⚠️ DATA_WARNING` or non-empty `warnings`, surface them verbatim here. Data warnings indicate the backtest ran on materially insufficient data. Adjust the verdict accordingly.
 
