@@ -25,6 +25,7 @@ from .backtester import (
     compute_entry_fill,
     compute_exit_fill,
     needs_entry_atr,
+    prior_bar_volume,
 )
 from .utils import date_to_str
 
@@ -585,7 +586,7 @@ def _close_position(  # noqa: PLR0913
     spread_cost = 0.0
     if volume_scaled_slippage:
         order_shares = float(lot.shares)
-        bar_volume = int(arrays.volumes[bar_idx])
+        bar_volume = prior_bar_volume(arrays.volumes, bar_idx)
     if spread_estimates and symbol in spread_estimates:
         sv = spread_estimates[symbol]
         if bar_idx < len(sv) and not np.isnan(sv[bar_idx]):
@@ -1031,7 +1032,7 @@ def _execute_allocations(  # noqa: PLR0913
         spread_cost = 0.0
         if volume_scaled_slippage:
             order_shares = float(shares)
-            bar_volume = int(arrays.volumes[bar_idx])
+            bar_volume = prior_bar_volume(arrays.volumes, bar_idx)
         if spread_estimates and symbol in spread_estimates:
             sv = spread_estimates[symbol]
             if bar_idx < len(sv) and not np.isnan(sv[bar_idx]):

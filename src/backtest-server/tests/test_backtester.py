@@ -1211,3 +1211,91 @@ class TestOrderTypeAwareExitCosts:
         assert costed_trades[0].exit_reason == "stop_loss"
         assert costed_trades[0].exit_price == pytest.approx(94.9905)
         assert costed["equity"][-1] < free["equity"][-1]
+
+
+_CAUSAL_VOLUMES: list[int] = [20_000, 500_000, 30_000, 500_000]
+
+
+def _causal_volume_df(volumes: list[int], exits: list[bool]) -> pl.DataFrame:
+    """Build a four-bar frame entering on bar 1, with per-bar volumes under test."""
+    return _make_signal_df(
+        prices=[100.0, 100.0, 100.0, 90.0],
+        entries=[True, False, False, False],
+        exits=exits,
+        highs=[101.0, 101.0, 101.0, 101.0],
+        lows=[99.0, 99.0, 99.0, 89.0],
+        volumes=volumes,
+        opens=[100.0, 100.0, 100.0, 100.0],
+    )
+
+
+def _bumped(volumes: list[int], bar: int) -> list[int]:
+    """Return the volume list with one bar's volume multiplied by ten."""
+    bumped = list(volumes)
+    bumped[bar] *= 10
+    return bumped
+
+
+def _causal_trade(volumes: list[int], exits: list[bool], risk: RiskManagement) -> Trade:
+    """Run the volume-scaled engine over the causal frame and return its trade."""
+    _, trades = run_backtest(
+        _causal_volume_df(volumes, exits),
+        PositionSizing(max_position_pct=100.0),
+        risk,
+        BacktestConfig(slippage_pct=0.1, commission_pct=0.0, volume_scaled_slippage=True),
+    )
+    assert len(trades) == 1
+    return trades[0]
+
+
+class TestParticipationUsesThePriorBarsVolume:
+    """A fill at bar ``idx``'s open cannot know bar ``idx``'s completed volume."""
+
+    _SIGNAL_EXITS: list[bool] = [False, True, False, False]
+    _NO_EXITS: list[bool] = [False, False, False, False]
+
+    def test_entry_ignores_its_own_bars_volume(self) -> None:
+        """Bar 1's own volume prints after the entry fills at its open."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.entry_price == pytest.approx(base.entry_price)
+
+    def test_entry_uses_the_previous_bars_volume(self) -> None:
+        """Bar 0 is the last completed bar when the entry is decided."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 0), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.entry_price != pytest.approx(base.entry_price)
+
+    def test_signal_exit_ignores_its_own_bars_volume(self) -> None:
+        """The signal exit fills at bar 2's open, before bar 2's volume exists."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 2), self._SIGNAL_EXITS, RiskManagement())
+
+        assert base.exit_reason == "signal"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_signal_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 1 is the last completed bar when the signal exit is decided."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.exit_price != pytest.approx(base.exit_price)
+
+    def test_stop_exit_ignores_its_own_bars_volume(self) -> None:
+        """A stop pierced inside bar 3 cannot size against bar 3's volume."""
+        risk = RiskManagement(stop_loss_pct=5.0)
+        base = _causal_trade(_CAUSAL_VOLUMES, self._NO_EXITS, risk)
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 3), self._NO_EXITS, risk)
+
+        assert base.exit_reason == "stop_loss"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_stop_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 2 is the last completed bar when the stop fills on bar 3."""
+        risk = RiskManagement(stop_loss_pct=5.0)
+        base = _causal_trade(_CAUSAL_VOLUMES, self._NO_EXITS, risk)
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 2), self._NO_EXITS, risk)
+
+        assert altered.exit_price != pytest.approx(base.exit_price)

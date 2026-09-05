@@ -1055,3 +1055,101 @@ class TestPortfolioStopExitCosts:
         assert [t.exit_reason for t in costed.trades] == ["stop_loss"]
         assert costed.trades[0].exit_price == pytest.approx(94.9905)
         assert costed.equity_curve[-1] < free.equity_curve[-1]
+
+
+_CAUSAL_VOLUMES: list[int] = [20_000, 500_000, 30_000, 500_000]
+
+
+def _causal_volume_frame(volumes: list[int], exits: list[bool]) -> pl.DataFrame:
+    """Build a four-bar frame entering on bar 1, with per-bar volumes under test."""
+    return _make_signal_df(
+        prices=[100.0, 100.0, 100.0, 90.0],
+        entries=[True, False, False, False],
+        exits=exits,
+        highs=[101.0, 101.0, 101.0, 101.0],
+        lows=[99.0, 99.0, 99.0, 89.0],
+        volumes=volumes,
+        opens=[100.0, 100.0, 100.0, 100.0],
+    )
+
+
+def _bumped(volumes: list[int], bar: int) -> list[int]:
+    """Return the volume list with one bar's volume multiplied by ten."""
+    bumped = list(volumes)
+    bumped[bar] *= 10
+    return bumped
+
+
+def _causal_portfolio_trade(
+    volumes: list[int],
+    exits: list[bool],
+    stop_loss_pct: float | None,
+) -> object:
+    """Run the volume-scaled portfolio over the causal frame; return its trade."""
+    result = run_portfolio_backtest(
+        signal_dfs={"TEST": _causal_volume_frame(volumes, exits)},
+        initial_capital=100_000.0,
+        position_sizing=PositionSizing(
+            method="equal_weight",
+            max_position_pct=100.0,
+            max_positions=1,
+            allocation_mode="portfolio",
+        ),
+        slippage_pct=0.1,
+        commission_pct=0.0,
+        stop_loss_pct=stop_loss_pct,
+        volume_scaled_slippage=True,
+    )
+    assert len(result.trades) == 1
+    return result.trades[0]
+
+
+class TestPortfolioParticipationUsesThePriorBarsVolume:
+    """The shared-capital engine sizes participation off the last completed bar."""
+
+    _SIGNAL_EXITS: list[bool] = [False, True, False, False]
+    _NO_EXITS: list[bool] = [False, False, False, False]
+
+    def test_entry_ignores_its_own_bars_volume(self) -> None:
+        """Bar 1's own volume prints after the entry fills at its open."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, None)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, None)
+
+        assert altered.entry_price == pytest.approx(base.entry_price)
+
+    def test_entry_uses_the_previous_bars_volume(self) -> None:
+        """Bar 0 is the last completed bar when the entry is decided."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, None)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 0), self._SIGNAL_EXITS, None)
+
+        assert altered.entry_price != pytest.approx(base.entry_price)
+
+    def test_signal_exit_ignores_its_own_bars_volume(self) -> None:
+        """The signal exit fills at bar 2's open, before bar 2's volume exists."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, None)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 2), self._SIGNAL_EXITS, None)
+
+        assert base.exit_reason == "signal"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_signal_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 1 is the last completed bar when the signal exit is decided."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, None)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, None)
+
+        assert altered.exit_price != pytest.approx(base.exit_price)
+
+    def test_stop_exit_ignores_its_own_bars_volume(self) -> None:
+        """A stop pierced inside bar 3 cannot size against bar 3's volume."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._NO_EXITS, 5.0)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 3), self._NO_EXITS, 5.0)
+
+        assert base.exit_reason == "stop_loss"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_stop_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 2 is the last completed bar when the stop fills on bar 3."""
+        base = _causal_portfolio_trade(_CAUSAL_VOLUMES, self._NO_EXITS, 5.0)
+        altered = _causal_portfolio_trade(_bumped(_CAUSAL_VOLUMES, 2), self._NO_EXITS, 5.0)
+
+        assert altered.exit_price != pytest.approx(base.exit_price)

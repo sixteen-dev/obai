@@ -107,7 +107,11 @@ For this repo, "industry standard" means:
    one exception: a limit order fills at its limit or better, so it fills at
    the target level, or at a better open on a gap up, and carries neither
    slippage nor spread. The limit is assumed filled whenever the bar's high
-   touches it — no partial fills and no queue position are modeled. Percent
+   touches it — no partial fills and no queue position are modeled. When
+   slippage is scaled by participation, the participation rate is measured
+   against the previous completed bar's volume, since a fill at bar `t`'s open
+   cannot know the volume bar `t` goes on to print; a fill on the first bar of
+   a frame has no completed bar and falls back to the flat rate. Percent
    commission is charged on both entry and exit. Results state both conventions
    in their `fill_timing` and `fill_model` fields.
 8. Portfolio mode uses shared cash, discrete share counts, and runs each day in

@@ -7,9 +7,10 @@ there (``end_of_backtest``), and ``is_last_bar_of_session`` peeks at bar ``k+1``
 to decide the intraday session boundary, so the last bar of a prefix is
 legitimately different from the same bar inside a longer run.
 
-Within-bar information is out of scope. Volume-scaled slippage reads the full
-bar's volume and the Corwin-Schultz spread window is already backward-looking;
-both are documented ex-post modeling inputs, not leaks this suite polices.
+Within-bar information is out of scope with one exception this suite does
+police: a fill sizes its participation against the previous bar's completed
+volume, never against the volume of the bar it fills on. The Corwin-Schultz
+spread window is already backward-looking, so it needs no counterfactual here.
 """
 
 from __future__ import annotations
@@ -41,6 +42,9 @@ from tests.conformance_fixtures import random_walk_intraday, random_walk_ohlcv
 CUT_POINTS: tuple[int, ...] = (30, 60, 90)
 INTRADAY_CUT_POINTS: tuple[int, ...] = (13, 27, 45)
 COMPARED_COLUMNS: tuple[str, ...] = ("fast", "slow", "rsi", "entry_signal", "exit_signal")
+
+# The bars the volume-scaled run below fills an entry or an exit on.
+VOLUME_FILL_BARS: tuple[int, ...] = (48, 49, 53, 58, 63, 65, 81, 82)
 
 _INDICATORS: list[IndicatorConfig] = [
     IndicatorConfig(id="fast", type="SMA", params={"length": 5}),
@@ -111,6 +115,40 @@ def _run_single(signals: pl.DataFrame) -> tuple[pl.DataFrame, list[Trade]]:
         RiskManagement(stop_loss_pct=4.0, take_profit_pct=6.0),
         BacktestConfig(symbol="X", slippage_pct=0.1, commission_pct=0.1, initial_capital=10_000.0),
     )
+
+
+def _run_single_volume_scaled(signals: pl.DataFrame) -> tuple[pl.DataFrame, list[Trade]]:
+    """Run the single-symbol engine with participation-scaled slippage on."""
+    return run_backtest(
+        signals,
+        PositionSizing(max_position_pct=60.0),
+        RiskManagement(stop_loss_pct=4.0, take_profit_pct=6.0),
+        BacktestConfig(
+            symbol="X",
+            slippage_pct=0.1,
+            commission_pct=0.1,
+            initial_capital=10_000.0,
+            volume_scaled_slippage=True,
+        ),
+    )
+
+
+def _with_bumped_volume(df: pl.DataFrame, bar: int) -> pl.DataFrame:
+    """Return the frame with one bar's volume multiplied by twenty."""
+    volumes = df["volume"].to_list()
+    volumes[bar] *= 20
+    return df.with_columns(pl.Series("volume", volumes, dtype=df.schema["volume"]))
+
+
+def _fills_through(trades: list[Trade], bars: list[str], bar: int) -> list[tuple[Any, ...]]:
+    """Reduce every fill priced at or before ``bar`` to its date and price."""
+    fills: list[tuple[Any, ...]] = []
+    for trade in trades:
+        if bars.index(trade.entry_date) <= bar:
+            fills.append((trade.entry_date, "entry", round(trade.entry_price, 9)))
+        if bars.index(trade.exit_date) <= bar:
+            fills.append((trade.exit_date, "exit", round(trade.exit_price, 9)))
+    return fills
 
 
 def _run_intraday(signals: pl.DataFrame) -> tuple[pl.DataFrame, list[Trade]]:
@@ -258,6 +296,28 @@ class TestPrefixInvariance:
             assert [_portfolio_trade_key(t) for t in _settled(prefix.trades, cutoff)] == [
                 _portfolio_trade_key(t) for t in _settled(full.trades, cutoff)
             ]
+
+    def test_a_fill_cannot_read_the_volume_of_its_own_bar(self) -> None:
+        """Participation is sized off the last completed bar, not the fill bar.
+
+        Bumping one bar's volume must leave every fill priced at or before
+        that bar, and the equity curve through it, exactly where they were.
+        Bars after it may move: that volume is the input to the next fill.
+        """
+        df = random_walk_ohlcv(0)
+        bars = [date_to_str(value) for value in df["date"].to_list()]
+        equity_full, trades_full = _run_single_volume_scaled(_pipeline(df))
+
+        assert {bars.index(trade.entry_date) for trade in trades_full} | {
+            bars.index(trade.exit_date) for trade in trades_full
+        } == set(VOLUME_FILL_BARS)
+
+        for bar in VOLUME_FILL_BARS:
+            equity, trades = _run_single_volume_scaled(_pipeline(_with_bumped_volume(df, bar)))
+            assert equity["equity"][: bar + 1].to_list() == pytest.approx(
+                equity_full["equity"][: bar + 1].to_list(), abs=1e-9
+            )
+            assert _fills_through(trades, bars, bar) == _fills_through(trades_full, bars, bar)
 
     def test_session_anchored_columns_are_prefix_invariant(self) -> None:
         """A session-wide aggregate must publish only what the bar could know.

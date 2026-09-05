@@ -130,6 +130,16 @@ with the old semantics.
   order and is the one exception: it still fills at its level or a better open
   with neither slippage nor spread, and the published `fill_model` string and
   `docs/conformance.md` items 6 and 7 say so.
+- **Participation-scaled slippage is sized from the previous bar's volume.**
+  Both engines fed the fill bar's own completed volume into the participation
+  rate, so a fill at bar `t`'s open was priced with information bar `t` had not
+  printed yet — an illiquid day that later traded heavily looked cheap to
+  trade. Entries and every exit reason now measure participation against the
+  last completed bar, and a fill on a frame's first bar, which has no completed
+  bar behind it, falls back to the flat rate. Only runs with
+  `volume_scaled_slippage` enabled are affected. The causality conformance
+  suite gained the counterfactual: bumping one bar's volume must not move any
+  fill priced at or before that bar.
 
 ### Fixed
 

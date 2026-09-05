@@ -53,6 +53,29 @@ def _effective_slippage(
     return max(MIN_SLIPPAGE_PCT, min(scaled, MAX_SLIPPAGE_PCT))
 
 
+def prior_bar_volume(
+    volumes: np.ndarray[Any, np.dtype[np.int64]],
+    idx: int,
+) -> int | None:
+    """Return the volume of the last bar completed before the fill bar.
+
+    A fill at bar ``idx``'s open happens before bar ``idx`` has printed any
+    volume, so participation is measured against bar ``idx - 1``.
+
+    Args:
+        volumes: Per-bar volume array.
+        idx: Index of the bar the order fills on.
+
+    Returns:
+        Bar ``idx - 1``'s volume, or None on bar 0, where no bar has
+        completed yet and slippage falls back to the flat rate.
+
+    """
+    if idx <= 0:
+        return None
+    return int(volumes[idx - 1])
+
+
 def _adverse_sell_price(
     reference_price: float,
     slippage_pct: float,
@@ -700,7 +723,7 @@ def _open_position(  # noqa: PLR0913
             if state.sizing_method == "atr_risk"
             else (equity_at_decision * state.position_size) / open_price
         )
-        bar_volume = int(market.volumes[idx])
+        bar_volume = prior_bar_volume(market.volumes, idx)
         state.order_shares = order_shares
     if cfg.spread_estimates is not None and not np.isnan(cfg.spread_estimates[idx]):
         spread_cost = float(cfg.spread_estimates[idx]) / 2
@@ -986,7 +1009,7 @@ def _compute_exit_price(
     spread_cost = 0.0
     if cfg.volume_scaled_slippage:
         order_shares = state.order_shares
-        bar_volume = int(market.volumes[idx])
+        bar_volume = prior_bar_volume(market.volumes, idx)
     if cfg.spread_estimates is not None and not np.isnan(cfg.spread_estimates[idx]):
         spread_cost = float(cfg.spread_estimates[idx]) / 2
 
