@@ -47,16 +47,23 @@ This is a shape template, not a recommended parameter set.
     "conditions": []
   },
   "position_sizing": {
-    "method": "<equal_weight_or_fixed_pct>",
+    "method": "<equal_weight_or_fixed_pct_or_atr_risk>",
     "max_position_pct": "<number>",
     "max_positions": "<integer>",
-    "allocation_mode": "<independent_or_portfolio>"
+    "allocation_mode": "<independent_or_portfolio>",
+    "risk_pct": "<number_or_null>"
   },
   "risk_management": {
     "stop_loss_pct": "<number_or_null>",
     "take_profit_pct": "<number_or_null>",
     "close_eod": "<true_or_false>",
-    "no_entry_after": "<HH:MM_or_null>"
+    "no_entry_after": "<HH:MM_or_null>",
+    "atr_indicator": "<atr_indicator_id_or_null>",
+    "stop_atr_multiple": "<number_or_null>",
+    "trailing_stop_pct": "<number_or_null>",
+    "trailing_stop_atr_multiple": "<number_or_null>",
+    "max_holding_bars": "<integer_or_null>",
+    "reentry_cooldown_bars": "<integer_or_null>"
   },
   "execution_config": {
     "slippage_pct": "<number>",
@@ -76,6 +83,12 @@ Field rules:
 - `timeframe` defaults to `"daily"` if omitted. Supported: `daily`, `1hour`, `15min`, `5min`.
 - `close_eod` forces position close at session end. Use `true` for day trading strategies.
 - `no_entry_after` prevents new entries after a time (e.g., `"15:30"`). Recommended for day trading.
+- `atr_indicator` names a declared indicator whose `type` is `ATR`; the ATR stop, ATR trailing stop and `atr_risk` sizing all read that indicator's column.
+- `stop_atr_multiple` places the initial stop that multiple of the named ATR indicator's signal-bar value below the fill; it is frozen for the trade and excludes `stop_loss_pct`.
+- `atr_risk` buys the whole number of shares whose loss at the ATR stop equals `risk_pct` of equity at the fill, capped by `max_position_pct` and, in portfolio mode, by cash and `max_positions`; it requires `stop_atr_multiple`.
+- A trailing stop trails the highest high since entry by a percent of it (`trailing_stop_pct`) or a multiple of the named ATR (`trailing_stop_atr_multiple`), ratchets only upward, is set from the completed bar and checked against the next bar's low, and fills at its level or the worse open.
+- `max_holding_bars` exits at the close of the Nth bar held, counting the entry bar as the first; an earlier signal, stop, or target on that bar wins.
+- `reentry_cooldown_bars` blocks a new entry in a symbol for that many bars after its last exit.
 
 ## Realistic Execution Costs
 
@@ -107,7 +120,7 @@ Each `left` and `right` in a condition is an **operand** — exactly one of thes
 
 | Operand type | JSON format | Use for |
 |---|---|---|
-| indicator | `{"indicator": "..."}` | Computed indicator columns OR raw OHLCV columns (`close`, `open`, `high`, `low`, `volume`) |
+| indicator | `{"indicator": "..."}` | Computed indicator columns, raw OHLCV columns (`close`, `open`, `high`, `low`, `volume`), or `benchmark_close` when `universe.benchmark` is set |
 | constant | `{"constant": N}` | Fixed numeric thresholds |
 | time_of_day | `{"time_of_day": "current"}` | Current bar's time. Only valid value is `"current"`. **Intraday only — errors on daily.** |
 | time | `{"time": "HH:MM"}` | Fixed time value (pairs with `after_time`/`before_time`). **Intraday only — errors on daily.** |
@@ -138,15 +151,34 @@ Shape examples only — not recommended parameters:
 
 ## Supported Indicators
 
-Use `backtest_get_supported_indicators_tool` to discover available indicators, their parameter names, output scale, and multi-output fields. Do not assume indicator parameters or output units from training data.
+Use `backtest_get_supported_indicators_tool` to discover available indicators, their parameter names with each parameter's accepted range, default and whether it is required, output scale, multi-output fields, the lookback in bars at default parameters, whether the indicator is recursive, and a description. Do not assume indicator parameters or output units from training data. A parameter outside its accepted range, or of the wrong type, is rejected at validation rather than dropped from the run.
 
-### VWAP (Intraday Only)
+An indicator's `source` takes a raw price column or the `id` of any indicator declared before it, so indicators compose: derive a series, then measure it, then reference that measurement. Indicators compute in list order in one pass, so declare each before whatever sources it — a `source` naming an indicator declared later, or a name that is neither a raw column nor a declared indicator, is rejected at validation. When `universe.benchmark` is set, a `source` or a `second_source` may also name `benchmark_close`, the benchmark's close aligned as of each bar, so the same measure can be taken on the benchmark and compared with the symbol's in a rule. Compose this way before concluding a derived quantity cannot be expressed.
+
+### VWAP and Session Anchors
 
 - Session-resetting VWAP: `cumsum(typical_price * volume) / cumsum(volume)`, resetting at each new trading day.
 - Requires intraday timeframe (`5min`, `15min`, or `1hour`). Raises a validation error on `daily` timeframe.
 - Produces a column (e.g., `vwap_1`) that can be compared against raw price columns in conditions.
 - Usage: `close crosses_above vwap_1` for momentum entries, `close less_than vwap_1` for mean-reversion entries.
 - No parameters needed, just `"type": "VWAP"` with an id like `"id": "vwap_1"`.
+- `AVWAP`: the anchored variant, accumulated from `anchor_date` onward instead of from the session open. Param: `anchor_date`, required and inside the data window; undefined before it. Valid on daily and intraday bars. It anchors one event rather than a rolling reference, so each walk-forward fold whose window does not contain the anchor fails validation and is counted among the failed windows.
+- `OPENING_RANGE`: highest high and lowest low of the first `minutes` of each session. Param: `minutes`, which must be a whole multiple of the bar size. Outputs suffixed `_high` and `_low`, undefined until that interval has closed. Intraday only.
+
+### Trend, Volatility and Channels
+
+- `KAMA`: adaptive moving average whose gain follows the efficiency ratio of `source`. Param: `length`. Its smoothing constants are fixed by the library and are not adjustable.
+- `NATR`: average true range as a percent of price, so one threshold carries across differently priced symbols. Param: `length`. Reads high/low/close and ignores `source`.
+- `PLUS_DI` / `MINUS_DI`: the directional components that pair with `ADX`, which reports strength without direction. Param: `length`.
+- `MAX` / `MIN`: highest and lowest value of `source` over the window, including the current bar. Param: `length`. For a channel that excludes the current bar use `DONCHIAN`.
+- `DONCHIAN`: channel over the prior bars, excluding the current bar. Param: `length`. Outputs: `upper`, `middle`, `lower`. Reads high/low and ignores `source`.
+- `KELTNER`: channel around an EMA of close, set `multiplier` average true ranges wide. Params: `length`, `atr_length`, `multiplier`. Reads high/low/close and ignores `source`. Outputs: `upper`, `middle`, `lower`.
+- `BBANDS` also emits `percent_b` and `bandwidth` alongside `upper`, `middle` and `lower`; both are fractions, not percentages.
+
+### Volume and Series Transforms
+
+- `RVOL`: bar volume against the mean volume of the preceding bars, the current bar excluded. Param: `length`. Reads volume and ignores `source`.
+- `LAG`: an earlier value of any source. Param: `periods`.
 
 ### Candlestick Patterns
 
@@ -162,14 +194,18 @@ Use `backtest_get_supported_indicators_tool` to discover available indicators, t
 - `LINEARREG_SLOPE`: Slope of the linear regression. Useful for trend strength. Param: `length`.
 - `LINEARREG_ANGLE`: Angle of the linear regression in degrees. Param: `length`.
 - `STDDEV`: Standard deviation. Useful for volatility regimes. Param: `length`.
+- `ZSCORE`: displacement of `source` from its own window mean, in population standard deviations. Param: `length`.
+- `PERCENTILE_RANK`: percentile of the current `source` value against the preceding values, the current bar excluded. Param: `length`. Its `source` may be any earlier indicator id, which is how a volatility or squeeze regime filter is expressed.
 
-### Dual-Input Indicators (BETA, CORREL)
+### Two-Series Indicators (BETA, CORREL, RATIO, DIFF)
 
 - `BETA`: Beta coefficient between two columns. Params: `length`, `second_source` (column name).
 - `CORREL`: Pearson correlation between two columns. Params: `length`, `second_source` (column name).
-- Both inputs must be columns within the same symbol's DataFrame. These are NOT cross-symbol indicators.
+- `RATIO`: the `source` series divided by `second_source`, unitless. Param: `second_source`, which is required.
+- `DIFF`: the `source` series minus `second_source`, in the units of both. Param: `second_source`, which is required.
+- Both inputs must be columns within the same symbol's DataFrame. These are NOT cross-symbol indicators, though `second_source` may name `benchmark_close` when `universe.benchmark` is set.
 - Example: compute BETA between `close` and a previously computed `sma_50` column by setting `"source": "close"` and `"params": {"length": 20, "second_source": "sma_50"}`.
-- The `second_source` param defaults to the indicator's `source` field if not specified.
+- The discovery tool reports each two-series indicator's default second series: `BETA` and `CORREL` default to the `high` column, so name an explicit column whenever the intent is a market-relative measure. `RATIO` and `DIFF` have no default and are rejected at validation when `second_source` is omitted.
 
 ## Supported Operators
 
@@ -200,17 +236,46 @@ Map the user's exact wording to the operator below.
 
 Threshold rule (load-bearing): threshold operators fire on every bar where the condition holds; crossover operators fire only on the bar of transition. Misclassifying a threshold check as a crossover often produces zero trades. Do not promote a threshold to a crossover because the strategy family ("mean reversion") commonly uses crossovers — preserve the user's wording.
 
+## Hypothesis templates
+
+Each template names the behavior it exploits, the rule shape that tests it, the regime in which it should fail, and the engine capabilities it needs. Shapes only: choose lengths and thresholds from the hypothesis and test them; do not copy values from memory.
+
+### Trend breakout with volatility filter
+
+- Hypothesis: a close beyond the recent range continues when the range was quiet before the break.
+- Entry shape: `close` `crosses_above` an upper-channel output, AND a volatility indicator `less_than` a threshold, optionally AND a trend-strength indicator `greater_than` a threshold.
+- Exit shape: `close` `crosses_below` a shorter trend indicator, or the trailing stop.
+- Should fail when: ranging markets, and volatility expansions that reverse.
+- Requires: channel from `DONCHIAN` (prior bars only) or `BBANDS`; volatility from `NATR` (percent, so one threshold carries across symbols), `ATR` (price units, so a threshold is per symbol) or `STDDEV`; trend strength `ADX`; risk `stop_atr_multiple` and `trailing_stop_atr_multiple`; sizing `atr_risk`.
+
+### Mean reversion with regime filter
+
+- Hypothesis: short-term oversold readings inside an intact uptrend revert.
+- Entry shape: an oscillator `less_than` a threshold, AND `close` `greater_than` a long trend indicator, or AND a trend-strength indicator `less_than` a threshold for a ranging-regime variant.
+- Exit shape: the oscillator `greater_than` a threshold, or `close` `crosses_above` the mean indicator, with `max_holding_bars` as the time cap.
+- Should fail when: the trend breaks and the dip keeps falling, and in gap-driven regimes.
+- Requires: oscillator `RSI`, `WILLR` or `CCI`; trend `SMA` or `EMA`; regime `ADX`; a price displacement in deviations from `ZSCORE`; `max_holding_bars`; `stop_loss_pct` or `stop_atr_multiple`.
+
+### Volume-confirmed momentum
+
+- Hypothesis: price strength accompanied by above-normal participation persists.
+- Entry shape: `ROC` `greater_than` a threshold, or `close` `greater_than` a trend indicator, AND a relative-volume indicator `greater_than` a threshold.
+- Exit shape: `close` `crosses_below` the trend indicator, or the trailing stop.
+- Should fail when: news-driven volume spikes exhaust, and in low-liquidity names where volume is noise.
+- Requires: `ROC`; participation from `RVOL`, whose reference is the preceding bars with the current bar excluded; `trailing_stop_pct`; `reentry_cooldown_bars`.
+
 ## Intraday Strategy Guidelines
 
 When building strategies with `timeframe` other than `"daily"`:
 
 - **Indicator period adjustment**: SMA(200) on 5-min bars = 200 bars = ~2.5 trading days. For a "200-day SMA equivalent" on 5-min data, use SMA(200 * 78) = SMA(15600). Always think in bars, not days.
+- **Relative volume**: `RVOL` on intraday bars measures the bar against the preceding bars, not the same time of day in earlier sessions, so the shape of the session sits inside the value.
 - **Use `close_eod: true`** for day trading strategies to force-close all positions at session end.
 - **Use `no_entry_after`** to prevent new entries near session close (e.g., `"15:30"` gives 30min to exit before close).
 - **Retention limits**: 5-min and 15-min data is limited to 2 years. 1-hour data limited to 5 years. Don't request longer ranges.
 - **Time-of-day filters**: Use `after_time`/`before_time` operators with `time_of_day`/`time` operands to restrict entries to specific session windows (e.g., avoid first 15min and last 30min).
 - **Holding style**: Report as "intraday" with timeframe in the Strategy Summary. Include `avg_holding_minutes` in Backtest Evidence when available.
-- **Trade count**: Intraday strategies produce many more trades per year. A minimum of 100+ trades is expected for statistical significance.
+- **Trade count**: Intraday strategies produce many more trades per year, so a low count there points to a rule that rarely fires. Trade count is not a significance test: consecutive trades in one symbol overlap and are correlated, so treat any count floor as a screen and state the power limitation in words rather than as a threshold met.
 - **Multi-symbol caveat**: The engine backtests each symbol independently and averages equity curves. Portfolio allocation mode (shared capital) is only available for daily timeframes — do not use `allocation_mode: portfolio` with intraday bars.
 
 ## Portfolio Allocation Mode
@@ -229,10 +294,10 @@ Cross-symbol strategies (sector rotation, pairs trading, ranking) remain unsuppo
 
 When using `allocation_mode: portfolio`, the result includes a `portfolio_metrics` section:
 - `capital_utilization_pct`: Approximate deployment level, estimated from position counts (not exact dollar tracking). Treat as a directional indicator, not a precise measure.
-- `turnover_rate`: Approximate activity level, computed as sum of absolute trade P&L divided by mean equity. Not standard buy+sell volume turnover — use as a relative comparison between strategies, not an absolute figure.
+- `turnover_rate`: Approximate activity level, computed as total traded notional (entry plus exit) divided by mean equity. It measures capital churned, not profit — use as a relative comparison between strategies, not an absolute figure.
 - `position_count_max`: Maximum number of concurrent positions held.
 - `position_count_avg`: Average number of concurrent positions held.
-- `signals_skipped_count`: Number of entry signals that fired but could not be filled due to capital constraints.
+- `signals_skipped_count`: Number of entry signals that fired but were not filled (capital limits, cooldown, or an undefined ATR); `signal_diagnostics.entries_skipped_by_reason` splits them.
 - `signals_skipped_symbols`: Unique symbols where signals were skipped.
 
 ### When to use portfolio mode
