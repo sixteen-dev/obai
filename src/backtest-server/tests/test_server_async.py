@@ -1,17 +1,13 @@
-"""Tests for async contract: tri-state async_mode, response fields, TTL cleanup.
-
-NOTE: Tests in TestSyncDefaultSmallJob through TestCacheHitSkipsAsync are skipped
-because the server was refactored to remove module-level globals (_cache, _downloader,
-_job_store, _settings, _data_store). The test fixture needs a full rewrite to match
-the current server architecture. JobStore TTL tests still work (no server dependency).
-"""
+"""Tests for async contract: tri-state async_mode, response fields, TTL cleanup."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import polars as pl
 import pytest
@@ -38,6 +34,7 @@ from src.server import (
     _execute_strategy,
     _finalize_backtest_response,
     _required_warmup_bars,
+    _ServerState,
     _state,
     _warmup_calendar_days,
     _warmup_fetch_start,
@@ -92,115 +89,186 @@ def _strategy_json(
     return json.dumps(_make_strategy(symbols, start, end).to_dict())
 
 
-SKIP_REASON = (
-    "Server refactored: module-level globals (_cache, _downloader, etc.) removed. "
-    "Test fixture needs rewrite to match current architecture."
-)
+# The tool reads both numbers off the settings object, so the tests pin them
+# rather than depending on whatever the deployed configuration carries.
+_AUTO_ASYNC_THRESHOLD_SECONDS = 10.0
+_JOB_RESULT_TTL_SECONDS = 3600
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
+@pytest.fixture()
+async def _async_server_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[dict[str, Any]]:
+    """Install a bootstrapped server state whose dependencies are stubs.
+
+    ``backtest_run_strategy_tool`` resolves every dependency through
+    ``src.server._state``, so the whole state object is swapped instead of
+    the module-level globals an earlier server exposed. The job store is
+    real — what it records *is* the async contract — while the cache and the
+    settings are stubs. Any task the store starts is awaited on teardown so
+    no job outlives the test's event loop.
+
+    Args:
+        monkeypatch: Fixture used to install the state on ``src.server``.
+
+    Yields:
+        Mapping of "cache", "job_store" and "settings" to the installed stubs.
+
+    """
+    cache = MagicMock()
+    cache.get.return_value = None
+    cache.get_extras.return_value = None
+
+    settings = MagicMock()
+    settings.auto_async_threshold_seconds = _AUTO_ASYNC_THRESHOLD_SECONDS
+    settings.job_result_ttl_seconds = _JOB_RESULT_TTL_SECONDS
+
+    # The cache key fingerprints each symbol's stored mtime; "never stored"
+    # is the honest answer here and keeps the key a plain string.
+    data_store = MagicMock()
+    data_store.get_last_modified.return_value = None
+
+    job_store = JobStore()
+    monkeypatch.setattr(
+        server,
+        "_state",
+        _ServerState(
+            fmp_client=MagicMock(),
+            db_manager=MagicMock(),
+            data_store=data_store,
+            downloader=MagicMock(),
+            cache=cache,
+            job_store=job_store,
+            settings=settings,
+        ),
+    )
+
+    yield {"cache": cache, "job_store": job_store, "settings": settings}
+
+    pending = list(job_store._tasks.values())
+    if pending:
+        await asyncio.gather(*pending)
+
+
+def _stub_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    estimate: float,
+    sync_result: dict[str, Any] | None = None,
+) -> AsyncMock:
+    """Replace the runtime estimate and the sync backtest with stubs.
+
+    The routing decision is the thing under test, so the estimate is stated
+    outright instead of being coaxed out of a symbol count and a date range,
+    and no real backtest runs on either branch.
+
+    Args:
+        monkeypatch: Fixture used to install the stubs on ``src.server``.
+        estimate: Seconds ``_estimate_runtime`` should report.
+        sync_result: Payload ``_run_sync_backtest`` should return.
+
+    Returns:
+        The stub standing in for ``_run_sync_backtest``.
+
+    """
+    run_sync = AsyncMock(return_value=dict(sync_result or {"total_return_pct": 0.0}))
+    monkeypatch.setattr(server, "_estimate_runtime", MagicMock(return_value=estimate))
+    monkeypatch.setattr(server, "_run_sync_backtest", run_sync)
+    return run_sync
+
+
 class TestSyncDefaultSmallJob:
     """async_mode=None with small estimate should return result directly."""
 
-    @pytest.mark.asyncio()
-    async def test_returns_sync_result(self, _mock_server_globals: Any) -> None:
-        """Small strategy should run synchronously by default."""
-        mock_result: dict[str, Any] = {
-            "total_return_pct": 5.0,
-            "cache_hit": False,
-        }
-        with patch(
-            "src.server._run_sync_backtest",
-            new_callable=AsyncMock,
-            return_value=mock_result,
-        ):
-            result = await backtest_run_strategy_tool(
-                _strategy_json(),
-                async_mode=None,
-            )
+    async def test_returns_sync_result(
+        self,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An estimate under the threshold runs inline and returns metrics."""
+        run_sync = _stub_runtime(
+            monkeypatch,
+            estimate=_AUTO_ASYNC_THRESHOLD_SECONDS - 9.0,
+            sync_result={"total_return_pct": 5.0, "cache_hit": False},
+        )
+
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=None)
 
         assert "job_id" not in result
         assert result["total_return_pct"] == 5.0
+        assert run_sync.await_args is not None
+        assert run_sync.await_args.kwargs["estimated_seconds"] == 1.0
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
 class TestAutoAsyncLargeJob:
     """async_mode=None with high estimate should auto-submit async."""
 
-    @pytest.mark.asyncio()
-    async def test_returns_job_id(self, _mock_server_globals: Any) -> None:
-        """Large strategy should trigger auto-async."""
-        # 50 symbols × 15 years × 0.5 = 375 >> threshold of 10
-        strat = _strategy_json(
-            symbols=[f"SYM{i}" for i in range(50)],
-            start="2009-01-01",
-            end="2024-01-01",
-        )
-        result = await backtest_run_strategy_tool(strat, async_mode=None)
+    async def test_returns_job_id(
+        self,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An estimate over the threshold is queued without the caller asking."""
+        _stub_runtime(monkeypatch, estimate=_AUTO_ASYNC_THRESHOLD_SECONDS + 50.0)
+
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=None)
 
         assert "job_id" in result
         assert result["auto_async"] is True
         assert result["status"] == "queued"
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
 class TestExplicitAsync:
     """async_mode=True should always return job_id."""
 
-    @pytest.mark.asyncio()
     async def test_explicit_returns_job_id(
         self,
-        _mock_server_globals: Any,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Explicit async returns job_id with auto_async=False."""
-        result = await backtest_run_strategy_tool(
-            _strategy_json(),
-            async_mode=True,
-        )
+        """A forced async job is queued even when the estimate is tiny."""
+        _stub_runtime(monkeypatch, estimate=_AUTO_ASYNC_THRESHOLD_SECONDS - 9.0)
+
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=True)
 
         assert "job_id" in result
         assert result["auto_async"] is False
         assert result["status"] == "queued"
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
 class TestForceSync:
     """async_mode=False should run sync even if estimate is high."""
 
-    @pytest.mark.asyncio()
     async def test_force_sync_large_strategy(
         self,
-        _mock_server_globals: Any,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Force sync returns result directly even for large strategies."""
-        mock_result: dict[str, Any] = {"total_return_pct": 10.0, "cache_hit": False}
-        strat = _strategy_json(
-            symbols=[f"SYM{i}" for i in range(50)],
-            start="2009-01-01",
-            end="2024-01-01",
+        """A forced sync run returns metrics even when auto-async would fire."""
+        _stub_runtime(
+            monkeypatch,
+            estimate=_AUTO_ASYNC_THRESHOLD_SECONDS + 50.0,
+            sync_result={"total_return_pct": 10.0, "cache_hit": False},
         )
-        with patch(
-            "src.server._run_sync_backtest",
-            new_callable=AsyncMock,
-            return_value=mock_result,
-        ):
-            result = await backtest_run_strategy_tool(strat, async_mode=False)
+
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=False)
 
         assert "job_id" not in result
         assert result["total_return_pct"] == 10.0
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
 class TestAsyncResponseFields:
     """Async response should have all required contract fields."""
 
-    @pytest.mark.asyncio()
-    async def test_all_fields_present(self, _mock_server_globals: Any) -> None:
+    async def test_all_fields_present(
+        self,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Check job_id, status, auto_async, estimated, poll, expires."""
-        result = await backtest_run_strategy_tool(
-            _strategy_json(),
-            async_mode=True,
-        )
+        _stub_runtime(monkeypatch, estimate=20.0)
+
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=True)
 
         required = {
             "job_id",
@@ -211,31 +279,33 @@ class TestAsyncResponseFields:
             "expires_at",
         }
         assert required.issubset(result.keys())
+        assert result["estimated_seconds"] == 20.0
         assert isinstance(result["poll_after_seconds"], int)
         assert 5 <= result["poll_after_seconds"] <= 30
+        assert datetime.fromisoformat(result["expires_at"]) > datetime.now(UTC)
 
 
-@pytest.mark.skip(reason=SKIP_REASON)
 class TestCacheHitSkipsAsync:
     """Cached results bypass async regardless of async_mode."""
 
-    @pytest.mark.asyncio()
     async def test_cache_hit_returns_directly(
         self,
-        _mock_server_globals: Any,
+        _async_server_state: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Cache hit returns result even with async_mode=True."""
-        mock_cached = MagicMock()
-        mock_cached.to_dict.return_value = {"total_return_pct": 7.0}
-        _mock_server_globals["cache"].get.return_value = mock_cached
+        _stub_runtime(monkeypatch, estimate=_AUTO_ASYNC_THRESHOLD_SECONDS + 50.0)
+        cached = MagicMock()
+        cached.to_dict.return_value = {"total_return_pct": 7.0}
+        cached.warnings = []
+        _async_server_state["cache"].get.return_value = cached
 
-        result = await backtest_run_strategy_tool(
-            _strategy_json(),
-            async_mode=True,
-        )
+        result = await backtest_run_strategy_tool(_strategy_json(), async_mode=True)
 
         assert result["cache_hit"] is True
+        assert result["total_return_pct"] == 7.0
         assert "job_id" not in result
+        assert _async_server_state["job_store"]._jobs == {}
 
 
 class TestJobTtlCleanup:
