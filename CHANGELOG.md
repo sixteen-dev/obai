@@ -188,7 +188,11 @@ with the old semantics.
   comparison false, so the strategy trades nothing — all validated clean and
   reached the engine. Execution costs, position sizing, every stop and
   take-profit distance, and rule constants must now be finite, non-boolean
-  numbers, reported as `<field> must be a finite number; got <value>`.
+  numbers, reported as `<field> must be a finite number; got <value>`; a JSON
+  integer too large for a float is rejected the same way instead of crashing
+  the validator. `slippage_pct` and `commission_pct` are bounded at 100, since
+  a fee above the price would book a negative fill, and `max_positions` must
+  be a whole number like the other bar and position counts.
 
 ### Package versions
 

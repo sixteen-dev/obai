@@ -1331,7 +1331,20 @@ def test_opening_range_is_rejected_on_daily_bars(
 
 # NaN, the infinities, a bool, and a numeric-looking string: the four shapes a
 # JSON number can arrive in that no inequality rejects on its own.
-_MALFORMED_NUMBERS: list[Any] = [float("nan"), float("inf"), float("-inf"), True, "5"]
+_MALFORMED_NUMBERS: list[Any] = [
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    True,
+    "5",
+    # A JSON integer literal of this size parses to an int no float can hold.
+    10**400,
+]
+# Bar and position counts are whole numbers, so any int, however large, counts;
+# a bool is still not a count.
+_MALFORMED_NON_INTEGERS: list[Any] = [
+    bad for bad in _MALFORMED_NUMBERS if isinstance(bad, bool) or not isinstance(bad, int)
+]
 
 
 class TestFiniteNumericInputs:
@@ -1352,12 +1365,26 @@ class TestFiniteNumericInputs:
         assert config.validate() == []
 
     @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
-    @pytest.mark.parametrize("field", ["max_position_pct", "max_positions"])
-    def test_position_sizing_rejects_malformed_numbers(self, field: str, bad: Any) -> None:
+    def test_position_sizing_rejects_malformed_numbers(self, bad: Any) -> None:
         """A malformed cap sizes every position without ever tripping a bound."""
-        errors = PositionSizing(**{field: bad}).validate()
+        errors = PositionSizing(max_position_pct=bad).validate()
 
-        assert errors == [f"{field} must be a finite number; got {bad}"]
+        assert errors == [f"max_position_pct must be a finite number; got {bad}"]
+
+    @pytest.mark.parametrize("bad", [*_MALFORMED_NON_INTEGERS, 5.5, 0])
+    def test_max_positions_must_be_a_whole_count(self, bad: Any) -> None:
+        """A fractional or malformed position count would round its way through the engine."""
+        errors = PositionSizing(max_positions=bad).validate()
+
+        assert errors == [f"max_positions must be an integer >= 1; got {bad}"]
+
+    @pytest.mark.parametrize("field", ["slippage_pct", "commission_pct"])
+    def test_fees_over_one_hundred_percent_are_rejected(self, field: str) -> None:
+        """A fee over 100% of price books a negative fill; the bound keeps every fill positive."""
+        errors = ExecutionConfig(**{field: 150.0}).validate()
+
+        assert errors == [f"{field} must be in [0, 100]; got 150.0"]
+        assert ExecutionConfig(**{field: 100.0}).validate() == []
 
     @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
     def test_risk_pct_rejects_malformed_numbers(self, bad: Any) -> None:
@@ -1387,7 +1414,7 @@ class TestFiniteNumericInputs:
 
         assert errors == [f"{field} must be a finite number; got {bad}"]
 
-    @pytest.mark.parametrize("bad", _MALFORMED_NUMBERS)
+    @pytest.mark.parametrize("bad", _MALFORMED_NON_INTEGERS)
     @pytest.mark.parametrize("field", ["max_holding_bars", "reentry_cooldown_bars"])
     def test_bar_limits_reject_malformed_numbers(self, field: str, bad: Any) -> None:
         """A bar count is a whole number of bars; nothing else counts bars."""

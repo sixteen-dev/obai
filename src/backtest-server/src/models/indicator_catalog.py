@@ -75,7 +75,11 @@ def _is_real_number(value: Any) -> bool:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    return math.isfinite(value)
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # A JSON integer can exceed what f64 holds; the plugin could not decode it.
+        return False
 
 
 @dataclass(frozen=True)

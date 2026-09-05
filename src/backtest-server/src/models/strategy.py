@@ -184,7 +184,13 @@ def _finite_number_error(name: str, value: object) -> str | None:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return f"{name} must be a finite number; got {value}"
-    if not math.isfinite(value):
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        # A JSON integer has arbitrary precision; one too large for a float is
+        # as unusable as infinity and must not crash the validator.
+        finite = False
+    if not finite:
         return f"{name} must be a finite number; got {value}"
     return None
 
@@ -396,12 +402,12 @@ class PositionSizing:
                 f"Supported: {sorted(SUPPORTED_ALLOCATION_MODES)}"
             )
         pct_error = _finite_number_error("max_position_pct", self.max_position_pct)
-        count_error = _finite_number_error("max_positions", self.max_positions)
-        errors.extend(e for e in (pct_error, count_error) if e is not None)
-        if pct_error is None and not 0 < self.max_position_pct <= _MAX_PCT:
+        if pct_error is not None:
+            errors.append(pct_error)
+        elif not 0 < self.max_position_pct <= _MAX_PCT:
             errors.append(f"max_position_pct must be in (0, 100]; got {self.max_position_pct}")
-        if count_error is None and self.max_positions < 1:
-            errors.append(f"max_positions must be >= 1; got {self.max_positions}")
+        if _is_invalid_bar_count(self.max_positions):
+            errors.append(f"max_positions must be an integer >= 1; got {self.max_positions}")
         errors.extend(self._risk_pct_errors())
         return errors
 
@@ -582,16 +588,20 @@ class ExecutionConfig:
     estimate_spread: bool = False
 
     def validate(self) -> list[str]:
-        """Reject fees and capital that are not finite numbers, or out of range."""
+        """Reject fees and capital that are not finite numbers, or out of range.
+
+        Fees are bounded above as well as below: a fill pays them as a fraction
+        of its price, so a rate over 100% would book a negative fill price.
+        """
         errors: list[str] = []
         slippage_error = _finite_number_error("slippage_pct", self.slippage_pct)
         commission_error = _finite_number_error("commission_pct", self.commission_pct)
         capital_error = _finite_number_error("initial_capital", self.initial_capital)
         errors.extend(e for e in (slippage_error, commission_error, capital_error) if e is not None)
-        if slippage_error is None and self.slippage_pct < 0:
-            errors.append(f"slippage_pct must be >= 0; got {self.slippage_pct}")
-        if commission_error is None and self.commission_pct < 0:
-            errors.append(f"commission_pct must be >= 0; got {self.commission_pct}")
+        if slippage_error is None and not 0 <= self.slippage_pct <= _MAX_PCT:
+            errors.append(f"slippage_pct must be in [0, 100]; got {self.slippage_pct}")
+        if commission_error is None and not 0 <= self.commission_pct <= _MAX_PCT:
+            errors.append(f"commission_pct must be in [0, 100]; got {self.commission_pct}")
         if capital_error is None and self.initial_capital <= 0:
             errors.append(f"initial_capital must be > 0; got {self.initial_capital}")
         return errors
