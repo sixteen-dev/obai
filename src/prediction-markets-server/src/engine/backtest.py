@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from statistics import median
 from typing import Any, Literal
 
@@ -74,12 +75,14 @@ def simulate_rule(
 ) -> list[Trade]:
     """Run the rule against one row per market.
 
-    V1 is single-entry per market. The earliest sampled YES price inside
-    the entry band of the rule wins; ties on timestamp are broken by source
-    order in the iterable.
+    V1 is single-entry per market. The earliest sampled YES row satisfying
+    the FULL entry predicate wins — price band plus any TTR filter — so a
+    later in-band row is still considered when the earliest one fails the
+    time bound; ties on timestamp are broken by source order in the
+    iterable.
 
     TTR filters (``min_days_to_resolution``/``max_days_to_resolution``)
-    are checked at the candidate entry timestamp, not at tool-invocation
+    are checked at each candidate entry timestamp, not at tool-invocation
     time — for resolved markets the invocation time is always after
     ``end_date`` so a wall-clock check would skip every trade.
 
@@ -112,26 +115,14 @@ def simulate_rule(
 
     """
     _validate_costs(entry_cost=entry_cost, exit_cost=exit_cost)
-    p_min = rule.entry.price_min
-    p_max = rule.entry.price_max
-    min_days = rule.filters.min_days_to_resolution
-    max_days = rule.filters.max_days_to_resolution
-
-    def _eligibility(row: PriceRow) -> bool:
-        return p_min <= row.price <= p_max
-
     trades: list[Trade] = []
     for market in markets:
-        entry_row = select_earliest_eligible_observation(market.yes_token_rows, _eligibility)
+        entry_row = select_earliest_eligible_observation(
+            market.yes_token_rows,
+            partial(_is_eligible_entry, rule=rule, market=market),
+        )
         if entry_row is None:
-            _bump(out_skipped, "no_eligible_entry")
-            continue
-        days_to_resolution = (market.end_date - entry_row.timestamp).total_seconds() / 86_400.0
-        if min_days is not None and days_to_resolution < min_days:
-            _bump(out_skipped, "ttr_min_unmet")
-            continue
-        if max_days is not None and days_to_resolution > max_days:
-            _bump(out_skipped, "ttr_max_exceeded")
+            _bump(out_skipped, _classify_entry_skip(market, rule))
             continue
         trade = _build_trade(
             market,
@@ -144,6 +135,43 @@ def simulate_rule(
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def _is_in_entry_band(row: PriceRow, *, rule: PredictionRule) -> bool:
+    """Price-only half of the entry predicate."""
+    return rule.entry.price_min <= row.price <= rule.entry.price_max
+
+
+def _is_eligible_entry(row: PriceRow, *, rule: PredictionRule, market: BacktestMarket) -> bool:
+    """Full entry predicate: price band AND the rule's TTR bounds at this row."""
+    if not _is_in_entry_band(row, rule=rule):
+        return False
+    days_to_resolution = _days_between(row.timestamp, market.end_date)
+    min_days = rule.filters.min_days_to_resolution
+    if min_days is not None and days_to_resolution < min_days:
+        return False
+    max_days = rule.filters.max_days_to_resolution
+    return max_days is None or days_to_resolution <= max_days
+
+
+def _classify_entry_skip(market: BacktestMarket, rule: PredictionRule) -> str:
+    """Name the skip reason when no row satisfied the full entry predicate.
+
+    Falls back to the price-only predicate so the diagnostics still separate
+    "never printed inside the band" from "printed in band, but every such
+    print sat outside the time-to-resolution window".
+    """
+    band_row = select_earliest_eligible_observation(
+        market.yes_token_rows,
+        partial(_is_in_entry_band, rule=rule),
+    )
+    if band_row is None:
+        return "no_eligible_entry"
+    days_to_resolution = _days_between(band_row.timestamp, market.end_date)
+    min_days = rule.filters.min_days_to_resolution
+    if min_days is not None and days_to_resolution < min_days:
+        return "ttr_min_unmet"
+    return "ttr_max_exceeded"
 
 
 def _build_trade(
@@ -189,21 +217,22 @@ def _trade_at_resolution(
     entry_row: PriceRow,
     side: str,
     entry_price_effective: float,
-) -> Trade | None:
-    """Exit at the terminal sampled YES price; payoff math from winning_outcome.
+) -> Trade:
+    """Exit at settlement; payoff math from winning_outcome.
 
-    exit_price/exit_ts come from the last sampled row (preserves pre-change
-    byte-for-byte behavior for hold_to_resolution; reused for the
-    stop_take_profit max-hold-not-violated fallthrough). PnL math is the
+    Per docs/prediction-markets-intermediate-exits-plan.md:103 the exit
+    metadata describes the settlement, not the last sampled quote:
+    ``exit_price`` is the terminal 0/1 settlement value, ``exit_ts`` is the
+    market's scheduled ``end_date``, and ``time_to_exit_days`` measures the
+    capital lock-up from entry to that date. (``end_date`` is the scheduled
+    close, which need not be the exact settlement instant.) PnL math is the
     §10.4 terminal payoff on the cost-adjusted entry
-    (``entry_price_effective``) — ``1 - entry`` (win) or ``-entry`` (lose),
-    independent of the terminal sampled price. ``exit_cost`` is not applied:
-    resolution settles to 0/1 with no exit transaction (§11.6). The
-    displayed ``entry_price`` stays the observed market price.
+    (``entry_price_effective``) — ``1 - entry`` (win) or ``-entry`` (lose) —
+    and is unchanged. ``exit_cost`` is not applied: resolution settles to
+    0/1 with no exit transaction (§11.6). The displayed ``entry_price``
+    stays the observed market price. Reused for the stop_take_profit
+    max-hold-not-violated fallthrough.
     """
-    exit_row = market.yes_token_rows[-1] if market.yes_token_rows else None
-    if exit_row is None:
-        return None
     # Winning outcome is matched against the YES outcome label per market
     # because the YES side maps onto a specific outcome ("Yes" by
     # convention but not guaranteed).
@@ -215,13 +244,13 @@ def _trade_at_resolution(
         side=side,
         entry_ts=entry_row.timestamp,
         entry_price=entry_row.price,
-        exit_ts=exit_row.timestamp,
-        exit_price=exit_row.price,
+        exit_ts=market.end_date,
+        exit_price=1.0 if realized_win else 0.0,
         realized_win=realized_win,
         return_on_cost=return_on_cost,
         pnl_per_contract=pnl_per_contract,
         exit_reason="resolution",
-        time_to_exit_days=_days_between(entry_row.timestamp, exit_row.timestamp),
+        time_to_exit_days=_days_between(entry_row.timestamp, market.end_date),
     )
 
 

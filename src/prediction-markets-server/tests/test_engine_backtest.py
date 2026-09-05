@@ -285,13 +285,20 @@ def test_summarize_trades_hold_to_resolution_exit_breakdown_only_resolution() ->
 
 
 def test_simulate_rule_trade_includes_resolution_exit_metadata() -> None:
-    """Each hold_to_resolution trade carries exit_reason='resolution' and time_to_exit_days."""
+    """A hold_to_resolution trade must describe settlement, not the last quote.
+
+    exit_price is the 0/1 settlement value, exit_ts is the market's
+    scheduled end_date, and the holding time runs from entry to that date
+    (10 days here) rather than to the last sampled row.
+    """
     rule = _rule(0.05, 0.15)
     trades = simulate_rule(rule, [_winner_market("0xW")])
     assert len(trades) == 1
     trade = trades[0]
     assert trade.exit_reason == "resolution"
-    assert trade.time_to_exit_days == pytest.approx(9.0, abs=1e-9)
+    assert trade.exit_price in (0.0, 1.0)
+    assert trade.exit_ts == _now()
+    assert trade.time_to_exit_days == pytest.approx(10.0, abs=1e-9)
 
 
 # ── stop_take_profit walk ──
@@ -507,3 +514,64 @@ def test_summarize_trades_exit_breakdown_share_sums_to_one() -> None:
     assert breakdown["stop"]["count"] == 1
     assert breakdown["resolution"]["count"] == 1
     assert breakdown["resolution"]["win_rate_at_resolution"] == 1.0
+
+
+def _banded_market(condition: str, prices_by_days: list[tuple[float, float]]) -> BacktestMarket:
+    """Winner market whose YES rows are given as (days_before_end, price) pairs."""
+    rows = [
+        _row(f"{condition}-Y", condition, _now() - timedelta(days=days), price)
+        for days, price in prices_by_days
+    ]
+    return BacktestMarket(
+        condition_id=condition,
+        event_slug="event-ttr",
+        end_date=_now(),
+        winning_outcome_label="Yes",
+        yes_token_rows=rows,
+    )
+
+
+def _max_days_rule(max_days: int):
+    return validate_rule(
+        {
+            "side": "YES",
+            "entry": {"price_min": 0.4, "price_max": 0.6},
+            "exit": {"type": "hold_to_resolution"},
+            "filters": {"max_days_to_resolution": max_days},
+        }
+    )
+
+
+def test_simulate_rule_max_ttr_enters_on_a_later_in_band_row() -> None:
+    """Regression: the TTR bound belongs in the entry predicate, not after it.
+
+    The 30-day print is in band but too early for max_days_to_resolution=7;
+    the 5-day print satisfies both, so the market must trade at 5 days
+    instead of being dropped on the first in-band row.
+    """
+    market = _banded_market("0xT", [(30, 0.50), (5, 0.50), (1, 0.70)])
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(_max_days_rule(7), [market], out_skipped=skipped)
+    assert len(trades) == 1
+    assert trades[0].entry_ts == _now() - timedelta(days=5)
+    assert trades[0].entry_price == pytest.approx(0.50, abs=1e-9)
+    assert skipped.get("ttr_max_exceeded", 0) == 0
+
+
+def test_simulate_rule_max_ttr_skip_counted_when_no_later_row_qualifies() -> None:
+    """Every in-band print is outside the max TTR bound → one ttr_max_exceeded."""
+    market = _banded_market("0xT", [(30, 0.50), (20, 0.50)])
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(_max_days_rule(7), [market], out_skipped=skipped)
+    assert trades == []
+    assert skipped.get("ttr_max_exceeded") == 1
+
+
+def test_simulate_rule_no_in_band_row_is_not_a_ttr_skip() -> None:
+    """A market that never prints inside the band is no_eligible_entry, not TTR."""
+    market = _banded_market("0xT", [(30, 0.90), (5, 0.95)])
+    skipped: dict[str, int] = {}
+    trades = simulate_rule(_max_days_rule(7), [market], out_skipped=skipped)
+    assert trades == []
+    assert skipped.get("no_eligible_entry") == 1
+    assert skipped.get("ttr_max_exceeded", 0) == 0

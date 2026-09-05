@@ -61,15 +61,18 @@ def build_out_of_sample(
     Args:
         items: Observations or Trades feeding the split.
         key: Accessor for each item's entry/observation timestamp.
-        market_key: Accessor for each item's market id (drives ``low_n``).
+        market_key: Accessor for each item's market id (drives ``low_n``
+            and ``overlap_market_count``).
         spec: The split request (``fraction`` or ``cutoff``).
         aggregate: Maps an item list to that tool's metrics dict.
         delta: Maps ``(holdout_metrics, train_metrics)`` to a delta dict.
 
     Returns:
         The ``out_of_sample`` block: split metadata, ``train``/``holdout``
-        metrics, ``delta``, and ``low_n`` (True when either half holds
-        fewer than ``LOW_N_FLOOR`` distinct markets).
+        metrics, ``delta``, ``low_n`` (True when either half holds fewer
+        than ``LOW_N_FLOOR`` distinct markets), and
+        ``overlap_market_count`` (markets contributing to both halves, so
+        the caller can see when the split is not market-independent).
 
     """
     train, holdout = split_by_entry(items, key=key, fraction=spec.fraction, cutoff=spec.cutoff)
@@ -84,7 +87,13 @@ def build_out_of_sample(
         "holdout": holdout_metrics,
         "delta": delta(holdout_metrics, train_metrics),
         "low_n": _below_floor(train, market_key) or _below_floor(holdout, market_key),
+        "overlap_market_count": _overlap_count(train, holdout, market_key),
     }
+
+
+def _overlap_count(train: list[_T], holdout: list[_T], market_key: Callable[[_T], str]) -> int:
+    """Count markets contributing observations to both halves of the split."""
+    return len({market_key(item) for item in train} & {market_key(item) for item in holdout})
 
 
 def _below_floor(items: list[_T], market_key: Callable[[_T], str]) -> bool:

@@ -141,3 +141,35 @@ def test_summary_to_dict_includes_low_n_fields() -> None:
     assert "low_n_bucket_count" in d
     assert d["buckets"], "expected at least one bucket"
     assert "low_n" in d["buckets"][0]
+
+
+def test_bucket_low_n_counts_distinct_markets_not_observations() -> None:
+    """20 sampled points from ONE market are one outcome, not 20 — flag low_n.
+
+    sample_weighted keeps every sampled price, so a single market can fill a
+    bucket past the usability floor while contributing a single resolution.
+    """
+    end = _aware(2026, 6, 1)
+    rows = [
+        PriceRow(
+            token_id="single_t",
+            condition_id="single",
+            timestamp=end - timedelta(days=5, minutes=i),
+            price=0.4,
+            fidelity_minutes=60,
+            source="clob_prices_history",
+            fetched_at=end,
+        )
+        for i in range(20)
+    ]
+    observations = bucket_observations(
+        market=MarketContext(condition_id="single", end_date=end, winning_outcome_label="Yes"),
+        outcome_label="Yes",
+        rows=rows,
+        sampling_mode="sample_weighted",
+    )
+    summary = aggregate_calibration(observations, sampling_mode="sample_weighted")
+    [bucket] = summary.buckets
+    assert bucket.sample_size == 20
+    assert bucket.market_count == 1
+    assert bucket.low_n is True

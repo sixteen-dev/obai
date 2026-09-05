@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..engine import monte_carlo_to_dict, run_monte_carlo
+from ..engine import monte_carlo_to_dict, run_monte_carlo, validate_returns
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -55,14 +55,16 @@ def monte_carlo_prediction_risk(
     Returns:
         Dict matching the §15 response contract with metrics, limitations,
         and quality_flags. Always contains the IID limitation text and an
-        ``iid_monte_carlo_assumption`` quality flag.
+        ``iid_monte_carlo_assumption`` quality flag; any ``limitations``
+        carried by ``monte_carlo_input`` are forwarded ahead of them.
 
     Raises:
         ValueError: If neither (or both) of monte_carlo_input / returns
-            are supplied, or if the chosen returns list is empty.
+            are supplied, if the chosen returns list is empty, or if any
+            return is non-finite or below -1.0 (worse than a total loss).
 
     """
-    chosen_returns, source_fingerprint, condition_count = _resolve_returns(
+    chosen_returns, source_fingerprint, condition_count, upstream_limitations = _resolve_returns(
         monte_carlo_input=monte_carlo_input,
         returns=returns,
     )
@@ -88,6 +90,7 @@ def monte_carlo_prediction_risk(
         "source_market_count": condition_count,
         "metrics": monte_carlo_to_dict(result),
         "limitations": [
+            *upstream_limitations,
             IID_LIMITATION,
             "Resampling does not generate new causal evidence — paths reflect "
             "the observed historical distribution only.",
@@ -103,8 +106,12 @@ def _resolve_returns(
     *,
     monte_carlo_input: dict[str, Any] | None,
     returns: list[float] | None,
-) -> tuple[list[float], str | None, int]:
-    """Pick exactly one source of returns; fail loud on both/neither/empty."""
+) -> tuple[list[float], str | None, int, list[str]]:
+    """Pick exactly one source of returns; fail loud on both/neither/empty.
+
+    Also returns the upstream ``limitations`` the §10.5 payload carries
+    (empty for inline returns) so the response can forward them unchanged.
+    """
     if monte_carlo_input is None and returns is None:
         msg = "Provide either monte_carlo_input (from backtest_prediction_rule) or returns."
         raise ValueError(msg)
@@ -118,12 +125,15 @@ def _resolve_returns(
             raise ValueError(msg)
         condition_ids = monte_carlo_input.get("condition_ids", [])
         count = len(condition_ids) if isinstance(condition_ids, list) else 0
+        raw_limits = monte_carlo_input.get("limitations", [])
+        upstream = [str(item) for item in raw_limits] if isinstance(raw_limits, list) else []
         return (
-            [float(r) for r in raw],
+            validate_returns(raw),
             monte_carlo_input.get("source_backtest_fingerprint"),
             count,
+            upstream,
         )
     if not returns:
         msg = "returns list is empty."
         raise ValueError(msg)
-    return [float(r) for r in returns], None, 0
+    return validate_returns(returns), None, 0, []

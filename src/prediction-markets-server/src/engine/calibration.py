@@ -25,7 +25,7 @@ from .observations import Observation, SamplingMode
 # deliberate, not silent.
 _LOG_EPS = 1e-15
 _WIN_THRESHOLD = 0.5
-# A bucket's realized_frequency is a noisy estimate below this many samples.
+# A bucket's realized_frequency is a noisy estimate below this many markets.
 # Buckets under the floor are tagged `low_n=True` and excluded from the
 # overall expected_calibration_error so a small bucket's lucky run cannot
 # bias the headline number, and downstream callers cannot mistake the
@@ -46,7 +46,7 @@ class CalibrationBucket:
     excess_return: float  # realized - implied
     brier_score: float
     log_loss: float
-    low_n: bool  # sample_size < _BUCKET_USABILITY_FLOOR; frequency is unreliable
+    low_n: bool  # market_count < _BUCKET_USABILITY_FLOOR; frequency is unreliable
 
 
 @dataclass(frozen=True)
@@ -163,17 +163,20 @@ def _summarize_bucket(
     """Aggregate a single (price_bucket, ttr_bucket) group."""
     implied = _mean([o.implied_probability for o in group])
     realized = _mean([o.realized_win for o in group])
+    # Observations from one market share a single resolution outcome, so the
+    # independent unit for the usability gate is the distinct market count.
+    market_count = len({o.condition_id for o in group})
     return CalibrationBucket(
         price_bucket=price_label,
         ttr_bucket=ttr_label,
         sample_size=len(group),
-        market_count=len({o.condition_id for o in group}),
+        market_count=market_count,
         implied_probability=implied,
         realized_frequency=realized,
         excess_return=realized - implied,
         brier_score=_mean(_brier_terms(group)),
         log_loss=_mean(_log_loss_terms(group)),
-        low_n=len(group) < _BUCKET_USABILITY_FLOOR,
+        low_n=market_count < _BUCKET_USABILITY_FLOOR,
     )
 
 

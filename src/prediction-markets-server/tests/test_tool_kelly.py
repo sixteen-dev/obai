@@ -72,3 +72,105 @@ def test_rejects_both_input_sources() -> None:
             starting_bankroll=100.0,
             max_drawdown_limit=0.3,
         )
+
+
+def test_losing_distribution_sizes_to_zero() -> None:
+    """A distribution with no positive edge must recommend no allocation at all."""
+    result = estimate_empirical_kelly(
+        returns=[-1.0] * 20,
+        starting_bankroll=10_000.0,
+        max_drawdown_limit=0.30,
+        seed=1,
+    )
+    metrics = result["metrics"]
+    assert metrics is not None
+    assert metrics["naive_kelly"] == 0.0
+    assert metrics["half_kelly"] == 0.0
+    assert metrics["conservative_fraction"] == 0.0
+    assert "no_positive_edge" in result["quality_flags"]
+
+
+def test_positive_edge_distribution_has_no_no_positive_edge_flag() -> None:
+    """The no-trade flag must not fire when the sample supports an allocation."""
+    result = estimate_empirical_kelly(
+        returns=[0.5, -0.3] * 10,
+        starting_bankroll=10_000.0,
+        max_drawdown_limit=0.30,
+        seed=1,
+    )
+    assert result["metrics"]["naive_kelly"] > 0.0
+    assert "no_positive_edge" not in result["quality_flags"]
+
+
+def test_upstream_limitations_are_forwarded_from_monte_carlo_input() -> None:
+    """§10.5 limitations ride the payload into the numerical response."""
+    contamination = (
+        "min_lifetime_volume filters on lifetime volume, which is only known "
+        "after resolution — surviving markets are contaminated."
+    )
+    result = estimate_empirical_kelly(
+        monte_carlo_input={"returns": [0.5, -0.3] * 10, "limitations": [contamination]},
+        starting_bankroll=10_000.0,
+        max_drawdown_limit=0.30,
+        seed=1,
+    )
+    assert result["limitations"][0] == contamination
+
+
+def test_upstream_limitations_reach_the_qualitative_response() -> None:
+    """Withholding numbers must not withhold the upstream data caveats."""
+    contamination = "Survivorship-contaminated universe."
+    result = estimate_empirical_kelly(
+        monte_carlo_input={"returns": [0.5, -0.3], "limitations": [contamination]},
+    )
+    assert result["metrics"] is None
+    assert result["limitations"][0] == contamination
+
+
+def test_inline_returns_carry_no_upstream_limitations() -> None:
+    result = estimate_empirical_kelly(
+        returns=[0.5, -0.3] * 10,
+        starting_bankroll=10_000.0,
+        max_drawdown_limit=0.30,
+        seed=1,
+    )
+    assert result["limitations"][0].startswith("Kelly assumes returns are independent")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_rejects_non_finite_returns(bad: float) -> None:
+    with pytest.raises(ValueError, match=r"returns\[1\]"):
+        estimate_empirical_kelly(
+            returns=[0.1, bad, 0.2],
+            starting_bankroll=1_000.0,
+            max_drawdown_limit=0.30,
+        )
+
+
+def test_rejects_return_below_total_loss() -> None:
+    with pytest.raises(ValueError, match=r"returns\[2\]"):
+        estimate_empirical_kelly(
+            returns=[0.1, -1.0, -1.5],
+            starting_bankroll=1_000.0,
+            max_drawdown_limit=0.30,
+        )
+
+
+def test_rejects_non_finite_returns_from_monte_carlo_input() -> None:
+    with pytest.raises(ValueError, match=r"returns\[0\]"):
+        estimate_empirical_kelly(
+            monte_carlo_input={"returns": [float("inf"), 0.2]},
+            starting_bankroll=1_000.0,
+            max_drawdown_limit=0.30,
+        )
+
+
+def test_non_list_upstream_limitations_are_not_forwarded() -> None:
+    """A string in the payload's limitations slot must not leak as characters."""
+    result = estimate_empirical_kelly(
+        monte_carlo_input={"returns": [0.5, -0.3] * 10, "limitations": "contaminated"},
+        starting_bankroll=10_000.0,
+        max_drawdown_limit=0.30,
+        seed=1,
+    )
+    assert result["limitations"][0].startswith("Kelly assumes returns are independent")

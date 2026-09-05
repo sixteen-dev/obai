@@ -199,6 +199,31 @@ def _percentile(values: list[float], q: float) -> float:
     return sorted_values[lower] + fraction * (sorted_values[upper] - sorted_values[lower])
 
 
+def validate_returns(raw: list[Any]) -> list[float]:
+    """Coerce per-trade returns to floats, rejecting non-finite values and returns below -1.0.
+
+    Args:
+        raw: Return samples as supplied by the caller or a §10.5 payload.
+
+    Returns:
+        The same samples as floats.
+
+    Raises:
+        ValueError: Naming the offending index for a non-finite value or a
+            return worse than a total loss (below -1.0).
+
+    """
+    values = [float(value) for value in raw]
+    for index, value in enumerate(values):
+        if not math.isfinite(value):
+            msg = f"returns[{index}] is not a finite number: {value!r}."
+            raise ValueError(msg)
+        if value < -1.0:
+            msg = f"returns[{index}] is below -1.0, worse than a total loss: {value!r}."
+            raise ValueError(msg)
+    return values
+
+
 def _validate_inputs(
     *,
     returns: list[float],

@@ -35,7 +35,9 @@ logger = get_logger(__name__)
 _BASE_RATE_LIMITATIONS = (
     "Base rate is a population average for this price/TTR bucket, not a forecast "
     "for this specific market.",
-    "Edge is YES-side; for a NO trade use edge_no = -edge_yes.",
+    "Edge is YES-side; for a NO trade use edge_no = -edge_yes, which is the NO "
+    "edge at this tool's reference price only. Re-derive the executable NO edge "
+    "from the NO token's best ask in the market-state snapshot before acting.",
 )
 
 
