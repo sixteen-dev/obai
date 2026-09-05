@@ -247,7 +247,7 @@ class TestPrefixInvariance:
             "stop_loss",
             "take_profit",
         }
-        assert full.equity_curve[89] == pytest.approx(9699.285533357965, abs=1e-6)
+        assert full.equity_curve[89] == pytest.approx(9694.801135244965, abs=1e-6)
         assert len(_settled(full.trades, _cutoff(frames["A"], 90))) == 7
 
         for k in CUT_POINTS:
@@ -300,7 +300,7 @@ class TestPrefixInvariance:
             "eod_close",
             "stop_loss",
         }
-        assert equity_full["equity"][44] == pytest.approx(10149.638421134176, abs=1e-6)
+        assert equity_full["equity"][44] == pytest.approx(10119.159513476287, abs=1e-6)
         assert _cutoff(df, 45) == "2024-01-06T09:50:00"
         assert len(_settled(trades_full, _cutoff(df, 45))) == 4
 

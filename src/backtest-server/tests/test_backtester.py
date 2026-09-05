@@ -551,9 +551,10 @@ class TestVolumeScaledSlippage:
         )
         assert fill < 100.0
 
-    def test_exit_stop_unaffected_by_volume(self) -> None:
-        """Stop loss fills should ignore volume scaling."""
+    def test_exit_stop_at_reference_participation_matches_flat(self) -> None:
+        """A stop order scales with participation like any other liquidation."""
         no_vol = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 0.1)
+        # 500 shares / 50,000 volume = 1% participation = the reference rate.
         with_vol = compute_exit_fill(
             "stop_loss",
             100.0,
@@ -564,7 +565,7 @@ class TestVolumeScaledSlippage:
             order_shares=500.0,
             bar_volume=50_000,
         )
-        assert no_vol == with_vol
+        assert no_vol == pytest.approx(with_vol)
 
     def test_zero_slippage_with_scaling(self) -> None:
         """slippage_pct=0 with volume scaling should produce zero slippage."""
@@ -1094,3 +1095,119 @@ class TestReentryCooldown:
         )
 
         assert [t.entry_date for t in trades] == ["2023-01-03", "2023-01-05"]
+
+
+def _stop_exit_df() -> pl.DataFrame:
+    """Entry on bar 1 at open 100; bar 2 pierces the 5% stop without gapping."""
+    return _make_signal_df(
+        prices=[100.0, 100.0, 90.0],
+        entries=[True, False, False],
+        exits=[False, False, False],
+        highs=[101.0, 101.0, 101.0],
+        lows=[99.0, 99.0, 89.0],
+        opens=[100.0, 100.0, 100.0],
+    )
+
+
+class TestOrderTypeAwareExitCosts:
+    """Every exit that crosses the spread pays slippage; a limit exit does not."""
+
+    def test_stop_fills_below_the_level_by_the_slippage(self) -> None:
+        """A stop-market exit is a real liquidation, so it pays slippage."""
+        fill = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 1.0)
+
+        assert fill == pytest.approx(95.0 * 0.99)
+
+    def test_stop_gapped_through_fills_below_the_worse_open(self) -> None:
+        """The gap-through reference is the open, and it pays slippage too."""
+        fill = compute_exit_fill("stop_loss", 90.0, 99.0, 95.0, None, 1.0)
+
+        assert fill == pytest.approx(90.0 * 0.99)
+
+    def test_trailing_stop_pays_slippage_and_spread(self) -> None:
+        """The trail is a stop-market order and carries the same costs."""
+        fill = compute_exit_fill("trailing_stop", 110.0, 108.0, 108.0, None, 1.0, spread_cost=0.005)
+
+        assert fill == pytest.approx(108.0 * 0.99 - 108.0 * 0.005)
+
+    def test_stop_exit_scales_with_participation(self) -> None:
+        """Volume scaling reaches the stop path, not just the signal path."""
+        flat = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 0.1)
+        scaled = compute_exit_fill(
+            "stop_loss",
+            100.0,
+            99.0,
+            95.0,
+            None,
+            0.1,
+            order_shares=25_000.0,
+            bar_volume=100_000,
+        )
+
+        assert scaled < flat
+
+    def test_take_profit_limit_pays_no_slippage_or_spread(self) -> None:
+        """A limit order fills at its limit or better, never worse."""
+        at_level = compute_exit_fill(
+            "take_profit", 100.0, 99.0, None, 105.0, 1.0, spread_cost=0.005
+        )
+        gapped = compute_exit_fill("take_profit", 110.0, 99.0, None, 105.0, 1.0, spread_cost=0.005)
+
+        assert at_level == pytest.approx(105.0)
+        assert gapped == pytest.approx(110.0)
+
+    @pytest.mark.parametrize(
+        "reason", ["eod_close", "time_stop", "end_of_backtest", "unknown_reason"]
+    )
+    def test_forced_close_exits_fill_below_the_close(self, reason: str) -> None:
+        """Market-on-close liquidations pay slippage and the half-spread."""
+        fill = compute_exit_fill(reason, 100.0, 99.0, 95.0, 105.0, 1.0, spread_cost=0.005)
+
+        assert fill == pytest.approx(99.0 * 0.99 - 99.0 * 0.005)
+
+    @pytest.mark.parametrize(
+        ("reason", "expected"),
+        [
+            ("signal", 100.0),
+            ("stop_loss", 95.0),
+            ("trailing_stop", 95.0),
+            ("take_profit", 105.0),
+            ("eod_close", 99.0),
+            ("time_stop", 99.0),
+            ("end_of_backtest", 99.0),
+            ("unknown_reason", 99.0),
+        ],
+    )
+    def test_zero_costs_reproduce_the_level_prices(self, reason: str, expected: float) -> None:
+        """Parity pin: with no slippage and no spread every fill is unchanged."""
+        fill = compute_exit_fill(reason, 100.0, 99.0, 95.0, 105.0, 0.0, spread_cost=0.0)
+
+        assert fill == pytest.approx(expected)
+
+    def test_single_symbol_stop_exit_pays_the_slippage(self) -> None:
+        """End-to-end: the stop fill and the final equity both drop.
+
+        With 1% slippage the entry fills at ``100 * 1.01 = 101``, so the 5%
+        stop freezes at ``101 * 0.95 = 95.95`` and the exit fills 1% below it
+        at ``95.95 * 0.99 = 94.9905``. At zero slippage both are unchanged.
+        """
+        sizing = PositionSizing(max_position_pct=100.0)
+        risk = RiskManagement(stop_loss_pct=5.0)
+        free, free_trades = run_backtest(
+            _stop_exit_df(),
+            sizing,
+            risk,
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+        costed, costed_trades = run_backtest(
+            _stop_exit_df(),
+            sizing,
+            risk,
+            BacktestConfig(slippage_pct=1.0, commission_pct=0.0),
+        )
+
+        assert free_trades[0].exit_reason == "stop_loss"
+        assert free_trades[0].exit_price == pytest.approx(95.0)
+        assert costed_trades[0].exit_reason == "stop_loss"
+        assert costed_trades[0].exit_price == pytest.approx(94.9905)
+        assert costed["equity"][-1] < free["equity"][-1]

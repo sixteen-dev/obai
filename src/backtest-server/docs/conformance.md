@@ -93,13 +93,21 @@ For this repo, "industry standard" means:
    later in a bar cannot tighten the stop that same bar was checked against.
    The exit is labelled `trailing_stop` only when the trail sits strictly
    above the frozen level; a tie belongs to `stop_loss`.
-6. Gap-through stop exits fill at the worse open, matching LEAN-style
-   conservative stop behavior.
-7. Slippage and spread move fills in the unfavorable direction on entry and
-   signal-exit fills. Stop, trailing-stop and target exits fill at their level
-   or the worse open, and the forced exits — `eod_close`, `time_stop` and
-   `end_of_backtest` — fill at that bar's close, so none of them carries those
-   costs — a stop-heavy result therefore reads better than it would. Percent
+6. Gap-through stop exits reference the worse open, matching LEAN-style
+   conservative stop behavior; the reference price then pays the execution
+   costs of item 7.
+7. Slippage and spread move fills in the unfavorable direction on every order
+   that crosses the spread. The reference price depends on the order type:
+   market-on-open for `signal`, the stop level or the worse open for
+   `stop_loss` and `trailing_stop`, and that bar's close for the forced exits
+   `eod_close`, `time_stop` and `end_of_backtest`. Each of those references is
+   then moved against the position by the slippage percentage and the
+   half-spread, so a stop-heavy or session-closing strategy pays for its
+   liquidations instead of reading better than it would. `take_profit` is the
+   one exception: a limit order fills at its limit or better, so it fills at
+   the target level, or at a better open on a gap up, and carries neither
+   slippage nor spread. The limit is assumed filled whenever the bar's high
+   touches it — no partial fills and no queue position are modeled. Percent
    commission is charged on both entry and exit. Results state both conventions
    in their `fill_timing` and `fill_model` fields.
 8. Portfolio mode uses shared cash, discrete share counts, and runs each day in

@@ -118,6 +118,18 @@ with the old semantics.
   existing insufficient-data warning and the undefined bars stay non-tradable.
   Every other indicator value is unchanged, and the native TA-Lib core is still
   0.4.0.
+- **Stop, trailing-stop and forced-close exits now pay their execution costs.**
+  Slippage and the half-spread previously moved only signal exits against the
+  position, so a stop filled at exactly its level and an `eod_close`,
+  `time_stop` or `end_of_backtest` exit filled at the raw close — the engine
+  charged commission on those liquidations but no price impact. Every exit that
+  crosses the spread now takes the adverse adjustment on its reference price
+  (the stop level or the worse open for stops, that bar's close for the forced
+  exits), including the volume-scaled participation term, so the net returns of
+  stop-heavy and session-closing strategies fall. A `take_profit` is a limit
+  order and is the one exception: it still fills at its level or a better open
+  with neither slippage nor spread, and the published `fill_model` string and
+  `docs/conformance.md` items 6 and 7 say so.
 
 ### Fixed
 
@@ -154,7 +166,7 @@ with the old semantics.
 
 ### Package versions
 
-- `backtest-server`: `0.1.2 → 0.1.3` (engine version now keys the result cache).
+- `backtest-server`: `0.1.2 → 0.1.4` (engine version now keys the result cache).
 
 ## [1.6.0] - 2026-08-21
 

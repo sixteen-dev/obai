@@ -1006,3 +1006,52 @@ class TestReentryCooldown:
             ("AAA", "2023-01-07"),
         ]
         assert result.entries_skipped_by_reason == {"cooldown": 2, "insufficient_capital": 1}
+
+
+class TestPortfolioStopExitCosts:
+    """The shared-capital engine inherits the order-type-aware exit costs."""
+
+    @staticmethod
+    def _stop_frame() -> pl.DataFrame:
+        """Entry on bar 1 at open 100; bar 2 pierces the 5% stop without gapping."""
+        return _make_signal_df(
+            prices=[100.0, 100.0, 90.0],
+            entries=[True, False, False],
+            exits=[False, False, False],
+            highs=[101.0, 101.0, 101.0],
+            lows=[99.0, 99.0, 89.0],
+            opens=[100.0, 100.0, 100.0],
+        )
+
+    @staticmethod
+    def _run(slippage_pct: float) -> object:
+        """Run the one-symbol portfolio with a 5% stop at the given slippage."""
+        return run_portfolio_backtest(
+            signal_dfs={"TEST": TestPortfolioStopExitCosts._stop_frame()},
+            initial_capital=100_000.0,
+            position_sizing=PositionSizing(
+                method="equal_weight",
+                max_position_pct=100.0,
+                max_positions=1,
+                allocation_mode="portfolio",
+            ),
+            slippage_pct=slippage_pct,
+            commission_pct=0.0,
+            stop_loss_pct=5.0,
+        )
+
+    def test_stop_exit_pays_the_slippage(self) -> None:
+        """The stop fill and the final equity both drop by the slippage.
+
+        With 1% slippage the entry fills at ``100 * 1.01 = 101``, so the 5%
+        stop freezes at ``101 * 0.95 = 95.95`` and the exit fills 1% below it
+        at ``95.95 * 0.99 = 94.9905``. At zero slippage both are unchanged.
+        """
+        free = self._run(0.0)
+        costed = self._run(1.0)
+
+        assert [t.exit_reason for t in free.trades] == ["stop_loss"]
+        assert free.trades[0].exit_price == pytest.approx(95.0)
+        assert [t.exit_reason for t in costed.trades] == ["stop_loss"]
+        assert costed.trades[0].exit_price == pytest.approx(94.9905)
+        assert costed.equity_curve[-1] < free.equity_curve[-1]

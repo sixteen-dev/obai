@@ -300,3 +300,10 @@ def test_fill_model_names_trailing_and_time_stops() -> None:
     """The published fill model must name every exit whose fill it governs."""
     assert "trailing" in FILL_MODEL
     assert "time stop" in FILL_MODEL
+
+
+def test_fill_model_states_which_exits_pay_execution_costs() -> None:
+    """The published fill model must say that stops pay and limits do not."""
+    assert "no slippage" in FILL_MODEL
+    assert "take-profit" in FILL_MODEL
+    assert FILL_MODEL.startswith("slippage/spread on signal, stop, trailing and forced exits")

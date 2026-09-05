@@ -53,6 +53,30 @@ def _effective_slippage(
     return max(MIN_SLIPPAGE_PCT, min(scaled, MAX_SLIPPAGE_PCT))
 
 
+def _adverse_sell_price(
+    reference_price: float,
+    slippage_pct: float,
+    order_shares: float | None,
+    bar_volume: int | None,
+    spread_cost: float,
+) -> float:
+    """Move a sell reference price down by slippage and the half-spread.
+
+    Args:
+        reference_price: Price the order would fill at with no costs.
+        slippage_pct: Slippage as a percentage.
+        order_shares: Number of shares (enables volume scaling).
+        bar_volume: Bar volume for participation rate computation.
+        spread_cost: Half-spread as a fraction of price.
+
+    Returns:
+        The adjusted (lower) fill price.
+
+    """
+    effective = _effective_slippage(slippage_pct, order_shares, bar_volume)
+    return reference_price * (1 - effective / 100) - reference_price * spread_cost
+
+
 def compute_entry_fill(
     open_price: float,
     slippage_pct: float,
@@ -94,8 +118,16 @@ def compute_exit_fill(  # noqa: PLR0913
 ) -> float:
     """Compute fill price for exit based on exit reason.
 
-    Volume-scaled slippage and spread cost apply only to signal-based exits.
-    Stop/TP/EOD paths use level prices and are unaffected.
+    The reference price depends on the order type, and every order that
+    crosses the spread pays slippage and the half-spread on top of it:
+
+    - ``signal`` is a market-on-open order and references the open.
+    - ``stop_loss`` and ``trailing_stop`` are stop-market orders and
+      reference the stop level, or the worse open on a gap through it.
+    - ``take_profit`` is a limit order: it fills at its limit or better, so
+      it references ``max(tp_level, open_price)`` and pays neither cost.
+    - ``eod_close``, ``time_stop``, ``end_of_backtest`` and any unrecognised
+      reason are market-on-close orders and reference the close.
 
     Args:
         reason: Exit reason (signal, stop_loss, trailing_stop, take_profit,
@@ -113,15 +145,15 @@ def compute_exit_fill(  # noqa: PLR0913
         Fill price for the exit.
 
     """
-    if reason == "signal":
-        effective = _effective_slippage(slippage_pct, order_shares, bar_volume)
-        return open_price * (1 - effective / 100) - open_price * spread_cost
-    if reason in ("stop_loss", "trailing_stop") and stop_level is not None:
-        return min(stop_level, open_price)
     if reason == "take_profit" and tp_level is not None:
         return max(tp_level, open_price)
-    # eod_close, time_stop, end_of_backtest, and fallback: market-on-close
-    return close_price
+    if reason == "signal":
+        reference = open_price
+    elif reason in ("stop_loss", "trailing_stop") and stop_level is not None:
+        reference = min(stop_level, open_price)
+    else:
+        reference = close_price
+    return _adverse_sell_price(reference, slippage_pct, order_shares, bar_volume, spread_cost)
 
 
 def check_intrabar_stop(
@@ -879,8 +911,9 @@ def _record_trade(  # noqa: PLR0913
 ) -> None:
     """Record a completed trade with proper fill model.
 
-    Phase 3.3 fill model:
-    - signal: open[idx] with slippage (unchanged)
+    Reference prices per exit reason (see ``compute_exit_fill``; every one
+    but ``take_profit`` then pays slippage and the half-spread):
+    - signal: open[idx]
     - stop_loss: stop level, or open[idx] if gap-through (worse fill)
     - take_profit: target level, or open[idx] if gap-through (better fill)
     - eod_close: close[idx] (session close price)

@@ -78,12 +78,15 @@ class WalkForwardResult:
 # payload is what lets a later turn rule out look-ahead from a stored result.
 FILL_TIMING = "signal_at_bar_close_fill_at_next_bar_open"
 
-# Which fills carry the configured execution costs. Slippage and spread move
-# signal exits against the position; level-based and forced exits do not, so a
-# stop-heavy result reads better than it would with the same costs applied.
+# Which fills carry the configured execution costs. Every exit that crosses the
+# spread — signal, stop, trailing stop, and the forced closes — is moved against
+# the position by slippage and the half-spread. A take-profit is a limit order,
+# so it fills at its level or a better open and pays neither.
 FILL_MODEL = (
-    "slippage/spread on signal exits; stop/trailing/target at level or worse open; "
-    "eod, time stop and end-of-backtest at close"
+    "slippage/spread on signal, stop, trailing and forced exits; "
+    "stop/trailing at level or worse open; "
+    "eod, time stop and end-of-backtest at close; "
+    "take-profit limit at level or better open, no slippage or spread"
 )
 
 
