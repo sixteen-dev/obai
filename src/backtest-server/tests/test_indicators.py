@@ -2022,8 +2022,8 @@ class TestShortHistoryOutputs:
     def test_macd_with_a_short_valid_tail_is_undefined_not_missing(self) -> None:
         """Leading nulls, not frame height, can starve the lookback.
 
-        The frame is 40 bars, above MACD's 34-bar requirement, so the
-        row-count warning does not fire; only 28 bars carry prices.
+        The frame is 40 bars, above MACD's 34-bar requirement, but only 28
+        carry prices, so the warning must count defined inputs, not rows.
         """
         df = self._frame(40, leading_nulls=12)
 
@@ -2031,6 +2031,9 @@ class TestShortHistoryOutputs:
 
         self._assert_all_undefined(result, df.height)
         assert not [w for w in warnings if "Failed to compute" in w], warnings
+        assert any("Insufficient data for m: need 34 rows, have 28" in w for w in warnings), (
+            warnings
+        )
 
     def test_an_undefined_macd_produces_no_entry(self) -> None:
         """Undefined must stay non-tradable rather than reading as a threshold cross."""

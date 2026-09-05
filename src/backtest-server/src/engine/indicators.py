@@ -491,9 +491,10 @@ def _apply_talib_indicator(
 
     """
     lookback = spec.lookback(resolved)
-    if lookback and len(df) <= lookback:
+    usable = _usable_rows(df, spec, config, resolved)
+    if lookback and usable <= lookback:
         warnings.append(
-            f"Insufficient data for {config.id}: need {lookback + 1} rows, have {len(df)}"
+            f"Insufficient data for {config.id}: need {lookback + 1} rows, have {usable}"
         )
 
     expr = _build_indicator_expr(spec, config, resolved, _build_talib_kwargs(spec, resolved))
@@ -530,6 +531,45 @@ def _build_talib_kwargs(spec: IndicatorSpec, resolved: dict[str, Any]) -> dict[s
     if spec.name == "BBANDS" and "std_dev" in resolved:
         talib_kwargs["nbdevdn"] = resolved["std_dev"]
     return talib_kwargs
+
+
+def _usable_rows(
+    df: pl.DataFrame,
+    spec: IndicatorSpec,
+    config: IndicatorConfig,
+    resolved: dict[str, Any],
+) -> int:
+    """Count the rows on which every input column of the indicator is defined.
+
+    A frame taller than the lookback can still starve it when an input is
+    another indicator's output, or a series with leading nulls; the native
+    library then returns nothing but undefined values and no error. Counting
+    defined inputs, not rows, is what makes the warning fire in that case.
+
+    Args:
+        df: Input DataFrame.
+        spec: Catalog entry, whose `inputs` decides which columns are read.
+        config: Indicator configuration, which carries `source`.
+        resolved: Params with the catalog's defaults filled in.
+
+    Returns:
+        The number of rows with no null or NaN in any input column; a column
+        the frame lacks counts as fully undefined.
+
+    """
+    columns = _INPUT_COLUMNS.get(spec.inputs)
+    if columns is None:
+        columns = (config.source,)
+        if spec.inputs == "dual":
+            columns += (str(resolved["second_source"]),)
+        if spec.inputs == "source_volume":
+            columns += ("volume",)
+    if any(name not in df.columns for name in columns):
+        return 0
+    defined = pl.all_horizontal(
+        pl.col(name).is_not_null() & ~pl.col(name).cast(pl.Float64).is_nan() for name in columns
+    )
+    return int(df.select(defined.sum()).item())
 
 
 def _build_indicator_expr(

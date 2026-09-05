@@ -116,6 +116,9 @@ with the old semantics.
   `macd`/`signal`/`hist` columns at all and a `Failed to compute` warning, so
   the rules referencing it silently went missing; the run now reports only the
   existing insufficient-data warning and the undefined bars stay non-tradable.
+  That warning now counts the rows on which the indicator's inputs are
+  defined rather than the frame's height, so a lookback starved by leading
+  nulls or by an upstream indicator's warm-up is reported too.
   Every other indicator value is unchanged, and the native TA-Lib core is still
   0.4.0.
 - **Stop, trailing-stop and forced-close exits now pay their execution costs.**
