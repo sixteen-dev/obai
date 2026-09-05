@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from agents import SQLiteSession
 
     from core_agents.central_hub_agent import CentralHubAgent
+    from core_agents.hub_settings import HubSettings, HubSettingsStore
 
 # Keep console quiet by default — only stdlib, no heavy imports.
 logging.basicConfig(level=logging.WARNING)
@@ -331,6 +332,7 @@ async def _run_query(  # noqa: PLR0912
     )
     from core_agents.config import get_config
     from core_agents.guardrails import get_rejection_message
+    from core_agents.response_assembly import AnswerAccumulator
     from evaluation.scorers.faithfulness import (
         CompletenessScorer,
         FaithfulnessScorer,
@@ -340,8 +342,11 @@ async def _run_query(  # noqa: PLR0912
     start = time.perf_counter()
     # Holds the text streamed since the last hub tool call (or query start).
     # Resets on every tool_call_item so intermediate "thinking" narration
-    # gets discarded — only the final segment (the answer) survives to stdout.
-    response_text = ""
+    # gets discarded, and drops any message the model labelled commentary —
+    # only the answer survives to stdout.
+    answer = AnswerAccumulator()
+    # A terminal specialist's output replaces the answer wholesale.
+    passthrough: str | None = None
     agents_called: list[str] = []
     tool_calls: list[dict[str, str]] = []
     current_agent = "central_hub"
@@ -353,7 +358,7 @@ async def _run_query(  # noqa: PLR0912
                 event,
                 PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
             ):
-                response_text = event.content
+                passthrough = event.content
                 continue
 
             if isinstance(event, AgentUpdatedStreamEvent):
@@ -371,21 +376,22 @@ async def _run_query(  # noqa: PLR0912
                         name: str = getattr(raw, "name", "unknown")
                         tool_calls.append({"tool": name, "agent": current_agent})
                     # Anything streamed before this hub tool call was thinking.
-                    response_text = ""
-                elif (
-                    item_type == "message_output_item"
-                    and isinstance(item, MessageOutputItem)
-                    and not response_text
-                ):
-                    # Fallback for the current segment when no deltas arrived.
-                    msg = ItemHelpers.text_message_output(item)
-                    if msg:
-                        response_text = msg
+                    answer.reset()
+                elif item_type == "message_output_item" and isinstance(item, MessageOutputItem):
+                    # Carries the phase label, and the whole text when no
+                    # deltas arrived.
+                    answer.note_message(
+                        item.raw_item.id,
+                        ItemHelpers.text_message_output(item),
+                        item.raw_item.phase,
+                    )
 
             elif isinstance(event, RawResponsesStreamEvent):
                 data = event.data
                 if isinstance(data, ResponseTextDeltaEvent) and data.delta:
-                    response_text += data.delta
+                    answer.add_delta(data.item_id, data.delta)
+
+        response_text = passthrough if passthrough is not None else answer.text()
 
         if not json_mode and response_text:
             sys.stdout.write(response_text)
@@ -752,12 +758,17 @@ async def _check_server(
 def web(
     port: int = typer.Option(8090, "--port", "-p", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind address"),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Dev: restart on Python source changes (each restart re-inits the hub).",
+    ),
 ) -> None:
     """Launch the web UI in a browser."""
     from clients.web.server import run_server
 
     typer.echo(f"Starting OBaI Web UI at http://{host}:{port}")
-    run_server(host=host, port=port)
+    run_server(host=host, port=port, reload=reload)
 
 
 # --- Lifecycle subcommands ---
@@ -838,6 +849,13 @@ _KNOWN_KEYS = [
 
 _ENV_FILE = Path.home() / ".obai" / ".env"
 
+# The two env vars that outrank ~/.obai/settings.json (see
+# core_agents.config._HubSettingsSource). A stale export here is the reason a
+# saved hub setting appears to do nothing, so both setters warn about it and
+# `show` names it as the source.
+_HUB_MODEL_ENV = "ORCHESTRATOR_MODEL"
+_HUB_EFFORT_ENV = "ORCHESTRATOR_REASONING_EFFORT"
+
 config_app = typer.Typer(help="Manage OBaI configuration.")
 cli.add_typer(config_app, name="config")
 
@@ -888,9 +906,208 @@ def config_set_key(
     typer.echo(f"{key_name} saved to {_ENV_FILE}")
 
 
+def _env_override(var_name: str) -> str | None:
+    """Return the environment value that outranks the hub settings file.
+
+    pydantic-settings matches env vars case-insensitively, so a lowercase
+    export shadows the file exactly as an upper-cased one does.
+
+    Args:
+        var_name: Upper-cased environment variable name.
+
+    Returns:
+        The value found in the environment, or None when it is unset.
+    """
+    for key, value in os.environ.items():
+        if key.upper() == var_name:
+            return value
+    return None
+
+
+def _load_hub_settings(store: HubSettingsStore) -> HubSettings:
+    """Load hub settings, turning a corrupt file into a clean CLI error.
+
+    Args:
+        store: Settings store to read.
+
+    Returns:
+        The stored settings, or the shipped defaults when no file exists.
+
+    Raises:
+        typer.Exit: The settings file exists but is not valid hub settings.
+    """
+    try:
+        return store.load()
+    except ValueError as e:
+        typer.echo(typer.style(str(e), fg=typer.colors.RED))
+        raise typer.Exit(1) from e
+
+
+def _echo_hub_saved(label: str, value: str, path: Path, env_var: str) -> None:
+    """Confirm a saved hub setting and flag an env var that outranks it.
+
+    Args:
+        label: Human-readable setting name.
+        value: Value just written.
+        path: Settings file that was written.
+        env_var: Environment variable that overrides the file.
+    """
+    typer.echo(f"{label} set to {typer.style(value, fg=typer.colors.GREEN)} in {path}")
+    override = _env_override(env_var)
+    if override is not None:
+        typer.echo(
+            typer.style(
+                f"Warning: {env_var}={override} is set in your environment and outranks "
+                f"this file. Unset it or the saved value will not take effect.",
+                fg=typer.colors.YELLOW,
+            )
+        )
+    # Deliberately not "obai restart": that tears down and rebuilds the whole
+    # Docker stack for a two-field change. Only the hub reads these settings,
+    # and every client builds its own on startup.
+    typer.echo("Applies to clients started from now on; relaunch a running obai chat/tui.")
+
+
+@config_app.command("set-model")
+def config_set_model(
+    model: str = typer.Argument(
+        ...,
+        help="Hub model name (e.g., gpt-5.6-sol, gpt-5.6-terra)",
+    ),
+) -> None:
+    """Set the hub model in ~/.obai/settings.json."""
+    from core_agents.hub_settings import HUB_MODELS, HubSettingsStore
+
+    if model not in HUB_MODELS:
+        typer.echo(f"Unknown model: {model}")
+        typer.echo(f"Valid models: {', '.join(HUB_MODELS)}")
+        raise typer.Exit(1)
+
+    store = HubSettingsStore()
+    settings = _load_hub_settings(store)
+    store.save(settings.model_copy(update={"hub_model": model}))
+    _echo_hub_saved("Hub model", model, store.path, _HUB_MODEL_ENV)
+
+
+@config_app.command("set-effort")
+def config_set_effort(
+    effort: str = typer.Argument(
+        ...,
+        help="Hub reasoning effort (e.g., medium, high, xhigh, max)",
+    ),
+) -> None:
+    """Set the hub reasoning effort in ~/.obai/settings.json."""
+    from core_agents.hub_settings import HUB_REASONING_EFFORTS, HubSettingsStore
+
+    if effort not in HUB_REASONING_EFFORTS:
+        typer.echo(f"Unknown reasoning effort: {effort}")
+        typer.echo(f"Valid efforts: {', '.join(HUB_REASONING_EFFORTS)}")
+        raise typer.Exit(1)
+
+    store = HubSettingsStore()
+    settings = _load_hub_settings(store)
+    store.save(settings.model_copy(update={"hub_reasoning_effort": effort}))
+    _echo_hub_saved("Hub reasoning effort", effort, store.path, _HUB_EFFORT_ENV)
+
+
+def _hub_file_keys(path: Path) -> set[str]:
+    """Return the field names actually present in the settings file.
+
+    Separates "the user chose this" from "this is the shipped default" for a
+    value that happens to equal the default. Only called once the file has
+    been validated, so it is known to parse.
+
+    Args:
+        path: Settings file path.
+
+    Returns:
+        Field names in the file; empty when the file is absent or empty.
+    """
+    if not path.is_file():
+        return set()
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return set()
+    return {str(key) for key in json.loads(raw)}
+
+
+def _hub_provenance(stored: str, field: str, env_var: str, file_keys: set[str]) -> tuple[str, str]:
+    """Resolve one hub setting's effective value and where it came from.
+
+    An environment value is reported verbatim and is deliberately not
+    validated here — it is what the hub will actually receive, valid or not.
+    :func:`_echo_hub_settings` flags it against the accepted values.
+
+    Args:
+        stored: Value the settings file resolved to.
+        field: Field name as written in the settings file.
+        env_var: Environment variable that outranks the file.
+        file_keys: Field names present in the settings file.
+
+    Returns:
+        The effective value and a human-readable source for it.
+    """
+    override = _env_override(env_var)
+    if override is not None:
+        return override, f"env {env_var}"
+    if field in file_keys:
+        return stored, "settings file"
+    return stored, "shipped default"
+
+
+def _echo_hub_settings() -> None:
+    """Print the resolved hub model and effort with the source of each.
+
+    Raises:
+        typer.Exit: The settings file exists but is not valid hub settings.
+    """
+    from core_agents.hub_settings import HUB_MODELS, HUB_REASONING_EFFORTS, HubSettingsStore
+
+    store = HubSettingsStore()
+    settings = _load_hub_settings(store)
+    file_keys = _hub_file_keys(store.path)
+    rows = (
+        ("hub model", settings.hub_model, "hub_model", _HUB_MODEL_ENV, HUB_MODELS),
+        (
+            "reasoning effort",
+            settings.hub_reasoning_effort,
+            "hub_reasoning_effort",
+            _HUB_EFFORT_ENV,
+            HUB_REASONING_EFFORTS,
+        ),
+    )
+
+    typer.echo(f"OBaI Hub Settings ({store.path}):\n")
+    rejected: list[str] = []
+    for label, stored, field, env_var, choices in rows:
+        value, source = _hub_provenance(stored, field, env_var, file_keys)
+        accepted = value in choices
+        colour = typer.colors.GREEN if accepted else typer.colors.RED
+        typer.echo(f"  {label:<22} {typer.style(f'{value:<16}', fg=colour)}  (from {source})")
+        if not accepted:
+            rejected.append(f"    {env_var}={value!r} — accepted values: {', '.join(choices)}")
+
+    # An env var is applied verbatim and outranks everything, so an unlisted
+    # value here is what the hub will get. Saying so is the whole point of
+    # this command: without it `show` reports a healthy green setting for a
+    # value that can fail every query.
+    if rejected:
+        typer.echo(
+            typer.style(
+                "\n  Not an accepted value — the hub may fail to start:", fg=typer.colors.RED
+            ),
+        )
+        typer.echo("\n".join(rejected))
+    typer.echo("\nChanges apply to clients started from now on.\n")
+
+
 @config_app.command("show")
 def config_show() -> None:
-    """Display API key status (masked)."""
+    """Display API key status (masked) and the resolved hub settings.
+
+    Raises:
+        typer.Exit: The hub settings file exists but is not valid.
+    """
     typer.echo(f"\nOBaI API Keys ({_ENV_FILE}):\n")
     for key_name, desc in _KNOWN_KEYS:
         val = os.environ.get(key_name, "")
@@ -901,6 +1118,7 @@ def config_show() -> None:
             status = typer.style("\u2717 not set", fg=typer.colors.RED)
         typer.echo(f"  {key_name:<22} {status}  ({desc})")
     typer.echo("")
+    _echo_hub_settings()
 
 
 def _load_env_file() -> None:

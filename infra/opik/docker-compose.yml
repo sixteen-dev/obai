@@ -36,6 +36,8 @@ services:
       retries: 120
     volumes:
       - opik-mysql-data:/var/lib/mysql
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - opik-network
     restart: unless-stopped
@@ -53,6 +55,8 @@ services:
       start_period: 10s
     volumes:
       - opik-redis-data:/data
+    mem_limit: 512m
+    memswap_limit: 512m
     networks:
       - opik-network
     restart: unless-stopped
@@ -81,6 +85,8 @@ services:
       retries: 120
     volumes:
       - opik-zookeeper-data:/bitnami/zookeeper
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - opik-network
     restart: unless-stopped
@@ -110,6 +116,8 @@ services:
     depends_on:
       opik-zookeeper:
         condition: service_healthy
+    mem_limit: 4g
+    memswap_limit: 4g
     networks:
       - opik-network
     restart: unless-stopped
@@ -130,6 +138,8 @@ services:
       start_period: 5s
     volumes:
       - opik-minio-data:/data
+    mem_limit: 512m
+    memswap_limit: 512m
     networks:
       - opik-network
     restart: unless-stopped
@@ -146,6 +156,8 @@ services:
       /usr/bin/mc mb --ignore-existing s3/public;
       /usr/bin/mc anonymous set download s3/public/;
       "
+    mem_limit: 256m
+    memswap_limit: 256m
     networks:
       - opik-network
 
@@ -173,7 +185,10 @@ services:
       ANALYTICS_DB_DATABASE_NAME: opik
       ANALYTICS_DB_USERNAME: opik
       ANALYTICS_DB_PASS: opik
-      JAVA_OPTS: "-Dliquibase.propertySubstitutionEnabled=true -XX:+UseG1GC -XX:MaxRAMPercentage=80.0"
+      # 70, not 80: the JVM reads the 4g cgroup limit, and memswap_limit now
+      # disables swap, so there is no grace page for metaspace, code cache,
+      # thread stacks and direct buffers. 80% left ~800m for all of that.
+      JAVA_OPTS: "-Dliquibase.propertySubstitutionEnabled=true -XX:+UseG1GC -XX:MaxRAMPercentage=70.0"
       REDIS_URL: redis://:opik@opik-redis:6379/
       OPIK_OTEL_SDK_ENABLED: "false"
       OPIK_USAGE_REPORT_ENABLED: "false"
@@ -200,6 +215,8 @@ services:
         condition: service_healthy
       opik-redis:
         condition: service_healthy
+    mem_limit: 4g
+    memswap_limit: 4g
     networks:
       - opik-network
     restart: unless-stopped
@@ -233,6 +250,8 @@ services:
     depends_on:
       opik-redis:
         condition: service_healthy
+    mem_limit: 2g
+    memswap_limit: 2g
     networks:
       - opik-network
     restart: unless-stopped
@@ -259,6 +278,8 @@ services:
     depends_on:
       opik-backend:
         condition: service_healthy
+    mem_limit: 256m
+    memswap_limit: 256m
     networks:
       - opik-network
     restart: unless-stopped

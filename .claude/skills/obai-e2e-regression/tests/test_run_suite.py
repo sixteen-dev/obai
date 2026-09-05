@@ -317,6 +317,108 @@ def test_execute_stops_before_next_case_when_observed_usage_would_exceed_cap(
     assert "exceeding between-case limit" in summary["abort_reason"]
 
 
+def _execute_with_harness_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    statuses: dict[str, str],
+    case_ids: list[str],
+) -> dict:
+    """Run a plan where named cases come back with a given harness status."""
+    cases = [_case(case_id) for case_id in case_ids]
+    plan = choose_cases(cases, max_api_calls=500)
+    cases_by_id = {case["id"]: case for case in cases}
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        case_id = command[command.index("--id") + 1]
+        _write_runner_packet(
+            command,
+            case=cases_by_id[case_id],
+            response="completed answer",
+            llm_spans=2,
+            harness_status=statuses.get(case_id, "completed"),
+        )
+        return run_suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_suite.subprocess, "run", fake_run)
+    return run_suite._execute_plan(
+        plan,
+        run_id="run-1",
+        cases_path=tmp_path / "cases.yaml",
+        run_dir=tmp_path / "run",
+        run_one_path=tmp_path / "run_one.py",
+    )
+
+
+def test_execute_contains_isolated_async_followup_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # One case's async follow-up failing does not make the remaining paid cases
+    # untrustworthy: the case is already judged inconclusive, which floors the
+    # suite exit code. Aborting only forfeited the unrun cases.
+    summary = _execute_with_harness_statuses(
+        monkeypatch,
+        tmp_path,
+        {"C2": "async_followup_failed"},
+        ["C1", "C2", "C3", "C4"],
+    )
+
+    assert summary["attempted_count"] == 4
+    assert summary["missing_case_ids"] == []
+    assert summary["abort_reason"] is None
+    assert summary["harness_failures"] == [
+        {"case_id": "C2", "harness_status": "async_followup_failed"}
+    ]
+
+
+def test_execute_aborts_on_session_mismatch_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A session mismatch means the harness itself cannot be trusted to bind a
+    # query to its trace, so it stays suite-fatal on the first occurrence.
+    summary = _execute_with_harness_statuses(
+        monkeypatch,
+        tmp_path,
+        {"C2": "session_mismatch"},
+        ["C1", "C2", "C3"],
+    )
+
+    assert summary["attempted_count"] == 2
+    assert summary["missing_case_ids"] == ["C3"]
+    assert "session_mismatch" in summary["abort_reason"]
+
+
+def test_execute_aborts_after_consecutive_harness_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Two in a row is the systemic signal; one is not.
+    summary = _execute_with_harness_statuses(
+        monkeypatch,
+        tmp_path,
+        {"C2": "async_followup_failed", "C3": "cli_failed"},
+        ["C1", "C2", "C3", "C4"],
+    )
+
+    assert summary["attempted_count"] == 3
+    assert summary["missing_case_ids"] == ["C4"]
+    assert "consecutive harness failures" in summary["abort_reason"]
+
+
+def test_execute_resets_consecutive_counter_after_a_clean_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Non-adjacent isolated failures must not accumulate into a false abort.
+    summary = _execute_with_harness_statuses(
+        monkeypatch,
+        tmp_path,
+        {"C1": "async_followup_failed", "C3": "cli_failed"},
+        ["C1", "C2", "C3", "C4"],
+    )
+
+    assert summary["attempted_count"] == 4
+    assert summary["abort_reason"] is None
+    assert len(summary["harness_failures"]) == 2
+
+
 def test_execute_rechecks_cases_snapshot_before_each_paid_subprocess(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -728,7 +830,9 @@ def test_resume_noncompleted_packet_aborts_before_next_paid_case(
             case=cases[0],
             response="partial answer",
             llm_spans=2,
-            harness_status="failed",
+            # A suite-fatal status: an isolated per-case harness failure is now
+            # contained, so the setup needs a status that still stops the run.
+            harness_status="session_mismatch",
         )
         return run_suite.subprocess.CompletedProcess(command, 1, stdout="", stderr="failed")
 
@@ -761,7 +865,7 @@ def test_resume_noncompleted_packet_aborts_before_next_paid_case(
     assert resumed["attempted_count"] == 0
     assert resumed["resumed_count"] == 1
     assert resumed["missing_case_ids"] == ["C2"]
-    assert "resumed case C1 ended with harness status 'failed'" in resumed["abort_reason"]
+    assert "resumed case C1 ended with harness status 'session_mismatch'" in resumed["abort_reason"]
 
 
 def test_resume_usage_over_limit_aborts_before_next_paid_case(
@@ -1087,6 +1191,60 @@ def test_execute_manifest_binds_selected_helper_paths_and_bytes(tmp_path: Path) 
         )
 
 
+def test_execute_manifest_binds_the_scoring_contract(tmp_path: Path) -> None:
+    """judge_packet.py decides every deterministic verdict, so name it.
+
+    It was reachable only through the whole-tree runtime fingerprint, which
+    proves *something* under scripts/ moved but not what. Editing it after a
+    run was finalized surfaced as "resume deterministic judgment mismatch
+    for CORE-CRYPTO-BOUNDARY" -- a case name, with no hint that the scoring
+    contract itself had changed underneath the stored judgments.
+    """
+    plan = choose_cases([_case("C1")])
+    run_dir = tmp_path / "run"
+    snapshot = run_dir / "cases.snapshot.yaml"
+    write_immutable_json(snapshot, {"suite": "v1"})
+
+    manifest = build_manifest(
+        plan,
+        cases_path=tmp_path / "cases.yaml",
+        cases_bytes=snapshot.read_bytes(),
+        cases_snapshot_path=snapshot,
+        mode="execute",
+    )
+
+    binding = manifest["runtime_helpers"]["judge_packet"]
+    assert binding["path"] == str(run_suite.DEFAULT_JUDGE_PACKET.resolve())
+    assert (
+        binding["sha256"] == hashlib.sha256(run_suite.DEFAULT_JUDGE_PACKET.read_bytes()).hexdigest()
+    )
+
+
+def test_scoring_contract_edit_is_named_in_the_resume_error(tmp_path: Path) -> None:
+    """A changed judge must fail the recheck by name, not by symptom."""
+    plan = choose_cases([_case("C1")])
+    run_dir = tmp_path / "run"
+    snapshot = run_dir / "cases.snapshot.yaml"
+    write_immutable_json(snapshot, {"suite": "v1"})
+    cases_bytes = snapshot.read_bytes()
+    manifest = build_manifest(
+        plan,
+        cases_path=tmp_path / "cases.yaml",
+        cases_bytes=cases_bytes,
+        cases_snapshot_path=snapshot,
+        mode="execute",
+    )
+    manifest["runtime_helpers"]["judge_packet"]["sha256"] = "0" * 64
+
+    with pytest.raises(PlanError, match=r"helper path/content changed.*: judge_packet$"):
+        validate_resume_manifest(
+            manifest,
+            plan,
+            cases_bytes=cases_bytes,
+            run_dir=run_dir,
+        )
+
+
 def test_runtime_fingerprint_changes_with_effective_environment_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1132,6 +1290,24 @@ def test_runtime_fingerprint_binds_preferences_file(
     preferences.write_text('{"risk_tolerance":"conservative"}')
 
     assert run_suite._runtime_fingerprint(bind_credential=False) != first
+
+
+def test_runtime_fingerprint_binds_hub_settings_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A hub model or effort swap cannot resume against a manifest that predates it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = tmp_path / ".obai" / "settings.json"
+    settings.parent.mkdir()
+
+    absent = run_suite._runtime_fingerprint(bind_credential=False)
+    settings.write_text('{"hub_model":"gpt-5.6-sol","hub_reasoning_effort":"medium"}')
+    sol = run_suite._runtime_fingerprint(bind_credential=False)
+    settings.write_text('{"hub_model":"gpt-5.6-terra","hub_reasoning_effort":"max"}')
+    terra = run_suite._runtime_fingerprint(bind_credential=False)
+
+    assert len({absent, sol, terra}) == 3
 
 
 def test_runtime_fingerprint_binds_cli_managed_environment(

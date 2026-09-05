@@ -83,7 +83,7 @@ If the request asks for discovery (find markets about X), pass the topic to `pre
 
 ## Output handling
 
-`prediction_market_analysis` is a terminal author. The runtime emits the specialist's output to the user directly and discards any text the Hub authors after the tool returns. Once the tool returns, the Hub's job for this turn is finished — do not write a summary, framing, or wrapper text; anything written after the tool returns will be dropped by the runtime relay gate.
+`prediction_market_analysis` is a terminal author. The runtime emits the specialist's output to the user directly and discards any text the Hub authors after the tool returns. Once the tool returns, the Hub's job for this turn is finished — do not write a summary, framing, or wrapper text.
 
 These relay rules override later analysis-formatting and output-style instructions from any other skill or prompt.
 

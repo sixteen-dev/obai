@@ -78,7 +78,7 @@ Rules:
 - Cite every material claim with the full source URL so the reader can open and verify it.
 - Flag contradictory evidence explicitly.
 - If results are thin, say so. Do not pad with speculation.
-- Keep it tight. Lead with the strongest signals.
+- Lead with the strongest signals.
 - Never fabricate sources or claims — write [DATA UNAVAILABLE] if a tool fails.
 
 ---

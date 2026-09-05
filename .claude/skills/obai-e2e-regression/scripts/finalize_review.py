@@ -244,10 +244,31 @@ def _review_map(review_artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return mapped
 
 
+def _requires_semantic_review(result: dict[str, Any]) -> bool:
+    """Return True when a case still has declared assertions left to execute.
+
+    A deterministic failure used to end the case, leaving its manual
+    assertions unexecuted. That let a wrong Greek unit ship unreported
+    inside a case already red for an unrelated text assertion.
+
+    Args:
+        result: One preliminary case judgment.
+
+    Returns:
+        True when the case needs an evidence-backed semantic review.
+    """
+    verdict = result.get("verdict")
+    if verdict == "needs_semantic_review":
+        return True
+    return verdict == "fail_product" and bool(result.get("unexecuted_assertions"))
+
+
 def _validate_case_review(
     result: dict[str, Any],
     review: dict[str, Any],
     packets: dict[str, tuple[dict[str, Any], str]],
+    *,
+    deterministic_verdict: str,
 ) -> tuple[str, dict[str, Any]]:
     case_id = str(result.get("case_id"))
     case_fingerprint = result.get("case_fingerprint")
@@ -347,13 +368,28 @@ def _validate_case_review(
     statuses = {decision_map[assertion]["status"] for assertion in expected_assertions}
     any_failed = "fail" in statuses
     any_inconclusive = "inconclusive" in statuses
-    if any_failed:
+    if deterministic_verdict == "fail_product":
+        # The case is already red on captured evidence. Review runs so its
+        # remaining assertions are still executed, but it can only add
+        # findings to that failure, never overturn it.
+        verdict = "fail_product"
+        reason = (
+            "deterministic and evidence-backed semantic assertions both failed"
+            if any_failed
+            else "deterministic assertions failed; declared semantic assertions were executed"
+        )
+    elif any_failed:
         verdict = "fail_product"
         reason = "one or more evidence-backed semantic assertions failed"
     elif any_inconclusive:
         verdict = "inconclusive_missing_evidence"
         reason = "one or more semantic assertions lacked sufficient captured evidence"
-    elif result.get("observed_outcome") == "success":
+    elif result.get("observed_outcome") == result.get("expected_outcome") == "success":
+        # Both terms, because observed "success" is also the judge's fallthrough
+        # when a declared degraded branch went unrecognised. A reviewer clearing
+        # that case certifies the branch was taken, not that the case succeeded,
+        # so it caps at pass_degraded rather than stamping a full green pass on
+        # a contract the response did not visibly satisfy.
         verdict = "pass"
         reason = "deterministic and evidence-backed semantic checks passed"
     else:
@@ -402,13 +438,19 @@ def finalize_results(
         if case_id in known_ids:
             raise ReviewError(f"preliminary results contains duplicate case {case_id}")
         known_ids.add(case_id)
-        if result.get("verdict") == "needs_semantic_review":
+        if _requires_semantic_review(result):
+            deterministic_verdict = str(result.get("verdict"))
             pending_ids.add(case_id)
             review = reviews.get(case_id)
             if review is None:
                 raise ReviewError(f"missing semantic review for {case_id}")
-            verdict, additions = _validate_case_review(result, review, packets)
-            result["deterministic_verdict"] = "needs_semantic_review"
+            verdict, additions = _validate_case_review(
+                result,
+                review,
+                packets,
+                deterministic_verdict=deterministic_verdict,
+            )
+            result["deterministic_verdict"] = deterministic_verdict
             result["verdict"] = verdict
             result.update(additions)
         finalized.append(result)

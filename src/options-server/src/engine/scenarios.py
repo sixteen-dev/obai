@@ -36,6 +36,14 @@ _EXPIRY_EPSILON = 1e-6
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 
 
+# Payoff scans run from a spot of zero to this multiple of the underlying. The
+# point count keeps the spacing the earlier half-to-one-and-a-half-spot window
+# used, so breakeven interpolation is no coarser for covering more ground. Every
+# strike is added to the grid on top of this.
+_PAYOFF_SCAN_HIGH_MULTIPLE = 1.5
+_PAYOFF_SCAN_POINTS = 750
+
+
 def _direction_sign(direction: str) -> int:
     """Return +1 for 'long', -1 for 'short', raising on any other value.
 
@@ -403,10 +411,17 @@ def position_risk_profile(
         net_theta += greeks["theta"] * qty * multiplier * sign
         net_vega += greeks["vega"] * qty * multiplier * sign
 
-    # Compute payoff curve at expiry across a price range
-    low = underlying * 0.5
-    high = underlying * 1.5
-    price_range = np.linspace(low, high, 500)
+    # Compute payoff curve at expiry across the underlying's whole domain up to
+    # a high cut-off. The scan starts at zero because that is a real bound the
+    # underlying cannot cross, not an arbitrary window edge.
+    high = underlying * _PAYOFF_SCAN_HIGH_MULTIPLE
+    # The payoff bends only at a strike, so every exact extreme sits on a
+    # strike or a scan edge. Sampling alone lands beside them and understates
+    # the worst case -- a straddle's trough is exactly at its strike.
+    kinks = [float(c["strike"]) for c in contracts if 0.0 < float(c["strike"]) < high]
+    price_range = np.unique(
+        np.concatenate([np.linspace(0.0, high, _PAYOFF_SCAN_POINTS), np.array(kinks)])
+    )
 
     payoffs: list[float] = []
     for price_point in price_range:
@@ -426,15 +441,16 @@ def position_risk_profile(
     max_profit: float | str = round(max(payoffs), 2)
     max_loss: float | str = round(min(payoffs), 2)
 
-    # Detect unlimited profit/loss at boundaries (check BOTH sides)
-    if payoffs[-1] == max(payoffs) and payoffs[-1] > payoffs[-2]:
+    # Only the high side is open. A payoff still sloped at the top of the scan
+    # keeps going, because the underlying has no ceiling; one still sloped at
+    # the bottom has already reached a spot of zero, so payoffs[0] is the true
+    # extreme rather than a value to extrapolate past.
+    # The slope at that open edge is what decides it, not whether the edge
+    # holds the extreme: a long straddle keeps rising above its call strike
+    # while its deepest point sits at a spot of zero on the put leg.
+    if payoffs[-1] > payoffs[-2]:
         max_profit = "unlimited"
-    if payoffs[0] == max(payoffs) and payoffs[0] > payoffs[1]:
-        max_profit = "unlimited"
-
-    if payoffs[0] == min(payoffs) and payoffs[0] < payoffs[1]:
-        max_loss = "unlimited"
-    if payoffs[-1] == min(payoffs) and payoffs[-1] < payoffs[-2]:
+    if payoffs[-1] < payoffs[-2]:
         max_loss = "unlimited"
 
     # Find zero-crossings for breakevens

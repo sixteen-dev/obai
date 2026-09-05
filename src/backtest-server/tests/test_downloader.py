@@ -35,6 +35,14 @@ def _make_ohlcv(start: date, days: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _bounds(df: pl.DataFrame) -> tuple[date, date]:
+    """Return a frame's first and last date, narrowed to ``date``."""
+    first, last = df["date"].min(), df["date"].max()
+    assert isinstance(first, date)
+    assert isinstance(last, date)
+    return first, last
+
+
 def _make_parquet_df(start: date, days: int) -> pl.DataFrame:
     """Build a Polars DataFrame like what DataStore.read_ohlcv returns."""
     rows = _make_ohlcv(start, days)
@@ -73,6 +81,9 @@ def mock_store() -> MagicMock:
     store.read_ohlcv.return_value = None
     store.get_date_range.return_value = None
     store.get_last_modified.return_value = None
+    # Cached rows are on the basis the client fetches today, so tests exercise
+    # the ordinary path rather than the stale-basis purge.
+    store.get_price_basis.return_value = "dividend_adjusted"
     store.write_ohlcv_async = AsyncMock()
     return store
 
@@ -428,3 +439,132 @@ class TestDividendAdjustedDaily:
         assert price_only_return == pytest.approx(0.0)
         assert total_return == pytest.approx(day2_close / adj_day1_close - 1.0)
         assert total_return > price_only_return
+
+
+class TestPriceBasisPurge:
+    """A cache written on a superseded adjustment basis cannot be extended."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_basis_purges_and_refetches_everything(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """Rows predating basis tracking report None, which means unknown.
+
+        These are the rows fetched from the raw endpoint before the daily feed
+        moved to dividend-adjusted. Extending them mixes two price scales in
+        one series while the answer calls it a total-return backtest.
+        """
+        mock_store.read_ohlcv.return_value = _make_parquet_df(date(2023, 1, 2), 252)
+        mock_store.get_date_range.return_value = (date(2023, 1, 2), date(2023, 12, 29))
+        mock_store.get_price_basis.return_value = None
+        mock_fmp.get_historical_daily.return_value = _make_ohlcv(date(2023, 1, 2), 365)
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        await dl.download_symbol("AAPL", "2023-01-01", "2024-01-01")
+
+        mock_store.delete_symbol.assert_called_once_with("AAPL", timeframe="daily")
+
+    @pytest.mark.asyncio
+    async def test_current_basis_keeps_the_cache(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """A matching basis must not throw away a usable cache."""
+        mock_store.read_ohlcv.return_value = _make_parquet_df(date(2023, 1, 2), 252)
+        mock_store.get_date_range.return_value = (date(2023, 1, 2), date(2023, 12, 29))
+        mock_fmp.get_historical_daily.return_value = _make_ohlcv(date(2023, 1, 2), 5)
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        await dl.download_symbol("AAPL", "2023-01-01", "2023-06-01")
+
+        mock_store.delete_symbol.assert_not_called()
+
+    def test_stale_basis_is_not_fresh(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """The freshness path returns cached rows without ever downloading.
+
+        If it ignored the basis, a cache younger than the freshness window
+        would be served straight back and the purge would never run.
+        """
+        mock_store.get_date_range.return_value = (date(2023, 1, 2), date(2023, 12, 29))
+        mock_store.get_last_modified.return_value = time.time()
+        mock_store.get_price_basis.return_value = None
+
+        dl = DataDownloader(mock_fmp, mock_store)
+
+        assert not dl._is_fresh("AAPL", date(2023, 2, 1), date(2023, 3, 1), timeframe="daily")
+
+    def test_empty_cache_is_not_treated_as_stale(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """Nothing cached means nothing to purge, not a basis mismatch."""
+        dl = DataDownloader(mock_fmp, mock_store)
+
+        assert not dl._basis_is_stale("AAPL", "daily")
+
+
+class TestDriftRefetchesTheWholeCachedSpan:
+    """A rebasing touches every cached row, not just the requested window."""
+
+    @pytest.mark.asyncio
+    async def test_narrow_request_inside_a_large_cache_refetches_all_of_it(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """Refetching only the request leaves the rest of the cache rebased wrong.
+
+        With 2020-2024 cached and 2022 requested, refetching 2022 alone left
+        2020-2021 and 2023-2024 on the old scale. The merged series then held
+        two price scales with a fabricated jump at each seam, and a later
+        request landing inside the refreshed part passed the drift probe and
+        backtested the mix.
+        """
+        cached = _make_parquet_df(date(2020, 1, 2), 1460)
+        cache_start, cache_end = _bounds(cached)
+        mock_store.read_ohlcv.return_value = cached
+        mock_store.get_date_range.return_value = (cache_start, cache_end)
+        mock_fmp.get_historical_daily.return_value = _split_ohlcv(
+            _make_ohlcv(date(2020, 1, 2), 1460), 10.0
+        )
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        await dl.download_symbol("NVDA", "2022-01-01", "2022-12-31")
+
+        spans = [
+            (call.kwargs["start_date"], call.kwargs["end_date"])
+            for call in mock_fmp.get_historical_daily.call_args_list
+        ]
+        refetch = [s for s in spans if s[0] <= cache_start.isoformat()]
+        assert refetch, f"no fetch covered the cache start; spans were {spans}"
+        assert refetch[0][1] >= cache_end.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_drift_drops_rows_the_provider_no_longer_returns(
+        self,
+        mock_fmp: AsyncMock,
+        mock_store: MagicMock,
+    ) -> None:
+        """A surviving old-scale row would sit inside the rebased series."""
+        cached = _make_parquet_df(date(2023, 1, 2), 60)
+        cache_start, cache_end = _bounds(cached)
+        mock_store.read_ohlcv.return_value = cached
+        mock_store.get_date_range.return_value = (cache_start, cache_end)
+        # The provider comes back with a shorter, rebased history.
+        mock_fmp.get_historical_daily.return_value = _split_ohlcv(
+            _make_ohlcv(date(2023, 1, 20), 30), 10.0
+        )
+
+        dl = DataDownloader(mock_fmp, mock_store)
+        result = await dl.download_symbol("NVDA", cache_start.isoformat(), cache_end.isoformat())
+
+        first_kept, _ = _bounds(result)
+        assert first_kept >= date(2023, 1, 20)

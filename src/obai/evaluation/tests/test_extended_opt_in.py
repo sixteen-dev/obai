@@ -340,7 +340,7 @@ def test_run_experiment_threads_loader_opt_in_before_id_filter(
         opik_clients_created += 1
         return object()
 
-    async def offline_query_runner(_query: str, _model: str, _verbose: bool) -> Any:
+    async def offline_query_runner(_query: str, _model: str | None, _verbose: bool) -> Any:
         raise AssertionError("The mocked experiment must not execute a query")
 
     monkeypatch.setattr(opik, "Opik", fake_opik_client)
@@ -385,7 +385,7 @@ def test_public_experiment_entry_points_validate_judge_key_before_opik(
         clients_created += 1
         raise AssertionError("Opik must not initialize without the judge key")
 
-    async def forbidden_query_runner(_query: str, _model: str, _verbose: bool) -> Any:
+    async def forbidden_query_runner(_query: str, _model: str | None, _verbose: bool) -> Any:
         raise AssertionError("A paid query must not start without the judge key")
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

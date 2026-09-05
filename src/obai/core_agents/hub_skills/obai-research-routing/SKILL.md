@@ -53,7 +53,7 @@ When structured-data specialists cannot answer a qualitative or thematic questio
 
 Before calling `research_analysis`:
 
-- if the user provided a company name, use it
+- if the user provided a company name, use it, and do not spend a `screener_lookup` resolving it to a ticker
 - if the user provided only a ticker, resolve ticker → company name via `screener_lookup` first
 - if the request is sector- or theme-level with no specific company, pass the sector or theme directly
 
@@ -75,6 +75,12 @@ The Hub may combine research with:
 - portfolio analysis for allocation context
 
 Do not call every specialist by default.
+
+## Repeat calls
+
+Call `research_analysis` once for the question, then at most one follow-up naming what the first pass left unresolved. If the gap survives that follow-up, report the gap; do not re-ask the same subject from another angle.
+
+Never fan out concurrent `research_analysis` calls over restatements of one question. They return overlapping sources while multiplying cost and latency, and the user waits for the slowest.
 
 ## Handoff preparation
 

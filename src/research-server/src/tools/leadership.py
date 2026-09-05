@@ -41,7 +41,8 @@ async def research_leadership(
                 ),
                 search_type="auto",
                 num_results=settings.default_num_results,
-                category="people",
+                # No category: Exa's people index cannot filter by date, and
+                # days_back is this tool's documented parameter.
                 highlight_query=f"{person} {company_name} leadership decisions performance",
                 start_published_date=_days_ago(days_back),
             )

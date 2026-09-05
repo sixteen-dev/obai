@@ -323,7 +323,34 @@ def compute_indicators(
             warnings.append(f"Failed to compute {config.id}: {exc}")
             logger.warning("indicator_failed", indicator=config.id, error=str(exc))
 
-    return result_df, warnings
+    return _mark_warmup_bars_undefined(df, result_df), warnings
+
+
+def _mark_warmup_bars_undefined(source: pl.DataFrame, computed: pl.DataFrame) -> pl.DataFrame:
+    """Represent an indicator's warm-up bars as null rather than NaN.
+
+    TA-Lib emits NaN for the bars before an indicator has enough history, and
+    in Polars a NaN compares True against a threshold: ``adx > 25`` is True on
+    every one of ADX(14)'s 27 warm-up bars, so a strategy enters on an
+    indicator that has no value yet. Null propagates through the comparison,
+    so an undefined indicator cannot satisfy a rule.
+
+    Only the columns this pass added are touched, so NaN arriving in the
+    source OHLCV keeps whatever meaning the caller gave it.
+
+    Args:
+        source: The frame as it was before indicator columns were added.
+        computed: The frame returned by the indicator pass.
+
+    Returns:
+        ``computed`` with NaN replaced by null in the float columns it added.
+
+    """
+    added = [col for col in computed.columns if col not in source.columns]
+    floats = [col for col in added if computed.schema[col].is_float()]
+    if not floats:
+        return computed
+    return computed.with_columns([pl.col(col).fill_nan(None) for col in floats])
 
 
 def get_supported_indicators() -> dict[str, Any]:
@@ -353,6 +380,13 @@ def get_supported_indicators() -> dict[str, Any]:
             "These OHLCV columns are always available as operand references "
             'in conditions (e.g., {"indicator": "close"} to compare price '
             "against a computed indicator like VWAP)."
+        ),
+        "source_note": (
+            "An indicator's `source` accepts a raw column or the `id` of any "
+            "indicator declared before it, so indicators can be built on one "
+            "another. Indicators are computed in list order in a single pass: "
+            "a source naming an indicator declared later has no column to read "
+            "and is reported as a warning."
         ),
     }
 

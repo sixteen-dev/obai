@@ -35,7 +35,9 @@ ALL_VERDICTS = PASS_VERDICTS | PRODUCT_VERDICTS | INCONCLUSIVE_VERDICTS
 # machine-unambiguous markers: a code in real HTTP context, or the original
 # textual signals. A bare number is excluded because it collides with financial
 # figures ("S&P 500", "504-session", "429 open positions", "403(b)").
-_HTTP_ERR_CODE = r"(?:401|403|408|425|429|500|502|503|504)"
+# 402 is included: an entitlement denial by definition, with no financial-prose
+# homograph the way 403 has in "403(b)", and still label-anchored below.
+_HTTP_ERR_CODE = r"(?:401|402|403|408|425|429|500|502|503|504)"
 # Separator: whitespace/punctuation/quotes only (\x22 is a double quote), so
 # '"status_code": 504' matches but a code trailing English words does not.
 _HTTP_LABEL_SEP = r"[\s:=#/.,()\x22'\[\]-]{0,5}"
@@ -44,7 +46,10 @@ _HTTP_STATUS_FAILURE = (
     r"\bfailed\s+with\s+status\b|\berror\s+code\b)"
     # \b before the code: an http version digit ("http/1.1") must not fuse onto
     # the status number ("http/1.1504") when the separator is zero-width.
-    + _HTTP_LABEL_SEP + r"\b" + _HTTP_ERR_CODE + r"\b"
+    + _HTTP_LABEL_SEP
+    + r"\b"
+    + _HTTP_ERR_CODE
+    + r"\b"
     r"|\b" + _HTTP_ERR_CODE + r"\s+"
     r"(?:unauthorized|forbidden|request\s+timeout|too\s+many\s+requests|"
     r"internal\s+server\s+error|bad\s+gateway|service\s+unavailable|gateway\s+timeout)\b"
@@ -55,35 +60,163 @@ PROVIDER_FAILURE_RE = re.compile(
     r"rate[ -]?limit|quota exceeded|provider (?:is )?unavailable|service unavailable|"
     r"provider.{0,30}(?:error|failed|failure|exploded|denied|timeout)|"
     r"(?:missing|invalid|incorrect|expired) api key|"
-    r"api key (?:missing|invalid|incorrect|expired|required)|"
+    # Entitlement wording deliberately stops at "api key". An entitlement
+    # denial reaches us as a labelled status code (402 in _HTTP_ERR_CODE),
+    # which is machine-emitted and cannot collide with prose. Matching
+    # "api <noun> required/expired" in free text would fire on ordinary
+    # coverage of a third party's pricing — "Reddit's API access required a
+    # paid plan", "Twitter's API subscription required re-verification" —
+    # and score a correct answer inconclusive_provider.
     r"authentication failed|upstream (?:error|timeout)|"
     r"connection (?:error|failed|refused|reset)|insufficient[_ ]quota|"
     r"internal server error|too many requests|"
     r"model\b.{0,80}\b(?:does not exist|not found|no access)|do not have access)",
     re.IGNORECASE,
 )
+# A refusal need not carry a modal verb. The product also declines by
+# verdict -- "Shared-expiry profile: Invalid", "Maximum profit/loss and
+# breakeven: Not calculated" -- which is a refusal to compute, not an answer.
+# Both patterns below are consulted only when the case declares the matching
+# outcome acceptable, so widening them cannot reclassify an ordinary success.
 REFUSAL_RE = re.compile(
     r"\b(?:cannot|can't|unable to|unsupported|not supported|"
-    r"refus(?:e|es|ed|ing|al)|won't|will not)\b",
+    r"refus(?:e|es|ed|ing|al)|won't|will not|"
+    r"not (?:calculated|computed|performed|produced))\b",
     re.IGNORECASE,
 )
+# Kept in step with the no-data vocabulary the case contracts assert on, so a
+# response cannot satisfy a case's own required_text and still be classified
+# as an ordinary success ("No valid quote found", "no exact US listing exists").
 DATA_UNAVAILABLE_RE = re.compile(
     r"\b(?:no (?:current )?data|data (?:is )?unavailable|no results?|no matching|"
-    r"no directly resolving|could not retrieve|couldn't retrieve|not available)\b",
+    r"no directly resolving|could not retrieve|couldn't retrieve|not available|"
+    r"no valid|no (?:exact |current )?(?:quote|price|listing)|not found|"
+    r"does not exist)\b",
     re.IGNORECASE,
 )
+# A required token proves a disclosure only where it sits outside a clause
+# reporting the thing's absence. "JPY units ... could not be verified" contains
+# "JPY" and discloses no currency, so counting it present lets a total refusal
+# satisfy the contract the case exists to make. Clauses break on line ends and
+# sentence terminators, never on commas: the absence predicate routinely governs
+# a comma-separated list ("fiscal period, JPY units, revenue ... could not be
+# verified"), and splitting there would hand the token back its own clause.
+_CLAUSE_SPLIT_RE = re.compile(r"(?:\r?\n|(?<=[.;!?])\s+)")
+# Scope detection, not outcome classification. REFUSAL_RE and DATA_UNAVAILABLE_RE
+# are tuned to decide whether a declared degraded outcome occurred, and they miss
+# the shapes that defeated these contracts -- "was unavailable because", "could
+# not be verified", "fingerprint: unverified", "not included in the stored
+# payload". Kept separate so widening it cannot reclassify any case's outcome.
+_ABSENCE_SUPPLEMENT_RE = re.compile(
+    r"\b(?:unavailable|unverified|unresolved|withheld|"
+    r"(?:could|can|would|did) not be \w+|"
+    r"not (?:included|provided|reported|disclosed|retained|verifiable)|"
+    r"fail(?:s|ed|ing)? closed)\b",
+    re.IGNORECASE,
+)
+
+
+def _states_an_absence(clause: str) -> bool:
+    """Report whether a clause records something missing rather than stating it.
+
+    Args:
+        clause: A single response clause.
+
+    Returns:
+        True when the clause reads as a refusal or a no-data report.
+
+    """
+    return bool(
+        DATA_UNAVAILABLE_RE.search(clause)
+        or REFUSAL_RE.search(clause)
+        or _ABSENCE_SUPPLEMENT_RE.search(clause)
+    )
+
+
+def _tolerates_absence(case: dict) -> bool:
+    """Report whether the case declares a refusal or no-data answer acceptable.
+
+    When it does, the refusal is the contracted answer rather than a failure to
+    answer, so its wording is a genuine disclosure and must still be allowed to
+    satisfy the case's own required_text.
+
+    Args:
+        case: Case definition.
+
+    Returns:
+        True when a refusal-shaped outcome is declared or rejection is expected.
+
+    """
+    if case.get("expect_rejection") is True:
+        return True
+    declared = {str(case.get("expected_outcome", "success"))}
+    alternatives = case.get("acceptable_outcomes")
+    if isinstance(alternatives, list):
+        declared.update(value for value in alternatives if isinstance(value, str))
+    return bool(declared & {"data_unavailable", "partial_refusal", "hub_reject"})
+
+
+def _disclosing_text(text: str) -> str:
+    """Keep the clauses that assert something, dropping the ones that report absence.
+
+    Args:
+        text: Normalized response text.
+
+    Returns:
+        The retained clauses joined by newlines; empty when every clause
+        reports an absence.
+
+    """
+    kept = [
+        clause
+        for clause in _CLAUSE_SPLIT_RE.split(text)
+        if clause.strip() and not _states_an_absence(clause)
+    ]
+    return "\n".join(kept)
+
+
 SPECIALIST_ERROR_RE = re.compile(
     r"\b(?:specialist error|tool error|provider error|execution error|status.?error)\b",
     re.IGNORECASE,
 )
+# Canonical job-ID parser, shared with run_one so the runner and the judge can
+# never disagree about whether a poll was correlated. The label may be followed
+# by an inline "id: value" / "id = value", or be a markdown-style label whose
+# value sits on the next line ("Job ID\n<id>"), and markdown emphasis may wrap
+# the label or enclose the colon ("**job_id**:", "**Job ID:**"). Requiring a
+# colon/equals, a table cell pipe, or a newline keeps prose such as "Job ID is
+# running" from being mistaken for an id. The pipe is needed because the product
+# renders async handles as a two-column markdown row, where the value is
+# separated from its label by a cell boundary and never by a colon.
+# A backtick-quoted value is the fourth separator. The product also writes the
+# handle inline mid-sentence ("job_id `bt_1a2b3c` - BTC-USD daily"), where the
+# code span is what delimits the id and no colon appears at all. The quoting is
+# what keeps this branch safe: prose like "job_id was missing" has no backtick,
+# so the lookahead fails and no id is invented from the following word.
 ASYNC_JOB_ID_RE = re.compile(
-    r"\bjob[_ ]?id\b\s*[:=]\s*`?"
+    r"\bjob[_ ]?id\b[*_`]{0,2}[ \t]*"
+    r"(?:[:=|][ \t]*[*_]{0,2}[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*|(?=`))`?"
     r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
     re.IGNORECASE,
 )
+# The only outcomes _observed_outcome derives from the response text. hub_reject
+# comes from the guardrail flag and specialist_error from an error payload, so
+# neither can be missed through phrasing and neither may be softened.
+PROSE_CLASSIFIED_OUTCOMES = frozenset({"data_unavailable", "partial_refusal"})
 ASYNC_PENDING_STATUSES = frozenset({"queued", "running", "pending", "in_progress"})
 ASYNC_FAILURE_STATUSES = frozenset({"failed", "cancelled", "expired", "not_found"})
+# The runner's label for a poll that answered without echoing its job ID back.
+ASYNC_MISSING_ECHO_STATUS = "job_id_missing"
+# The SDK's rejection of a tool call whose arguments did not match the schema.
+# The span keeps the specialist's name and carries no error_info, so it reads
+# as a second invocation unless it is recognised here.
+ARGUMENT_REJECTION_RE = re.compile(r"Invalid JSON input for tool\b", re.IGNORECASE)
 STRUCTURED_ERROR_STATUSES = frozenset({"error", "failed", "failure"})
+# A text assertion's declared kind. ``structural`` (a ticker, an ISO date, a
+# currency code, a contractually emitted field) stays a hard gate; ``lexical``
+# is one English phrasing of a property a correct answer may word differently,
+# so a miss is routed to semantic review instead of failing the case.
+LEXICAL_SPEC_KIND = "lexical"
 MAX_STRUCTURED_OUTPUT_JSON_CHARS = 65_536
 SKILL_LINE_RE = re.compile(r"^-\s+([A-Za-z0-9_.:-]+):\s+\w+", re.MULTILINE)
 _MISSING = object()
@@ -189,6 +322,7 @@ class JudgeResult:
     observed_tools: list[str] = field(default_factory=list)
     observed_skills: list[str] = field(default_factory=list)
     unexecuted_assertions: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -203,6 +337,7 @@ class AsyncContext:
     early_verdict: str | None = None
     reason: str = ""
     forced_outcome: str | None = None
+    missing_job_echo: bool = False
 
 
 def _dig(value: object, path: str) -> object:
@@ -266,6 +401,28 @@ def _explicit_structured_error_output(output: object) -> dict[str, Any] | None:
     return None
 
 
+def _span_output_error_payload(output: object) -> dict[str, Any] | None:
+    """Return a span output's explicit structured error payload, if any.
+
+    Real spans wrap the tool's own payload in an ``{"output": ...}`` envelope
+    whose value is usually a JSON-encoded string, so the error flag never sits
+    on the span's own dict. The envelope is unwrapped exactly once, never
+    recursively, and the flag is still read only from the payload's top level.
+
+    Args:
+        output: The raw value of a span's ``output`` field.
+
+    Returns:
+        The payload when the tool declared an explicit failure, else ``None``.
+    """
+    direct = _explicit_structured_error_output(output)
+    if direct is not None:
+        return direct
+    if not isinstance(output, dict):
+        return None
+    return _explicit_structured_error_output(output.get("output", _MISSING))
+
+
 def _span_error_evidence(span: dict[str, Any]) -> tuple[str, object] | None:
     error_info = span.get("error_info")
     if _present(error_info):
@@ -303,26 +460,75 @@ def _response_text(packet: dict[str, Any]) -> str:
     return ""
 
 
-_DASH_TRANSLATION = {
+# The guardrail refusal template restates the classifier's reading of the
+# user's request. Those words are the query, not the model's answer, so a
+# forbidden_text pattern drawn from the query fires on a refusal that leaked
+# nothing. Only this echo is dropped; the rest of the refusal is still scored.
+_GUARDRAIL_QUERY_ECHO_RE = re.compile(
+    r"^Your query appears to be:.*?(?=\n[ \t]*\n|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def _is_argument_rejection(span: dict[str, Any]) -> bool:
+    """Return True when the SDK refused this call for malformed arguments.
+
+    Args:
+        span: One raw trace span.
+
+    Returns:
+        True when the span output carries the SDK's argument-validation
+        rejection, which means no specialist work was performed.
+    """
+    output = span.get("output")
+    if output is None:
+        return False
+    text = output if isinstance(output, str) else json.dumps(output, default=str)
+    return ARGUMENT_REJECTION_RE.search(text) is not None
+
+
+def _assertion_text(packet: dict[str, Any]) -> str:
+    """Return the response text that hard text assertions apply to.
+
+    Args:
+        packet: Case packet.
+
+    Returns:
+        The response text, with the guardrail's query echo removed when the
+        run was rejected by the guardrail.
+    """
+    text = _response_text(packet)
+    stdout = _stdout_json(packet)
+    rejected = stdout.get("guardrail_rejected") is True or packet.get("guardrail_rejected") is True
+    if not rejected:
+        return text
+    return _GUARDRAIL_QUERY_ECHO_RE.sub("", text).strip()
+
+
+_PUNCTUATION_TRANSLATION = {
     0x2010: "-",  # hyphen
     0x2011: "-",  # non-breaking hyphen
     0x2012: "-",  # figure dash
     0x2013: "-",  # en dash
     0x2014: "-",  # em dash
     0x2212: "-",  # minus sign
+    0x2018: "'",  # left single quote
+    0x2019: "'",  # right single quote / apostrophe
+    0x02BC: "'",  # modifier letter apostrophe
 }
 
 
-def _normalize_dashes(text: str) -> str:
-    """Fold typographic hyphens and dashes to ASCII '-' for text assertions.
+def _normalize_typography(text: str) -> str:
+    """Fold typographic dashes and apostrophes to ASCII for text matching.
 
-    The product renders markdown with non-breaking hyphens (U+2011) and en
-    dashes, so assertions written with an ASCII '-' would otherwise miss
-    ``warm-up``, ``as-of``, ``pre-market`` and similar terms in an otherwise
-    correct answer. Folding only affects response text matching; span, numeric,
-    and evidence extraction keep their raw bytes.
+    The product renders markdown with non-breaking hyphens (U+2011), en
+    dashes and curly apostrophes, so assertions written with ASCII ``-`` or
+    ``'`` would otherwise miss ``warm-up``, ``as-of`` or ``can't`` in an
+    otherwise correct answer. A curly apostrophe alone made a live-order
+    refusal read as a success. Folding only affects response text matching;
+    span, numeric, and evidence extraction keep their raw bytes.
     """
-    return text.translate(_DASH_TRANSLATION)
+    return text.translate(_PUNCTUATION_TRANSLATION)
 
 
 def _authoritative_spans(packet: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
@@ -520,6 +726,73 @@ def _matches(text: str, spec: object) -> tuple[bool, str]:
     return False, repr(spec)
 
 
+def _is_lexical_spec(spec: object) -> bool:
+    """Report whether a text assertion is a phrasing choice, not a fact.
+
+    Args:
+        spec: One ``required_text`` or ``forbidden_text`` entry.
+
+    Returns:
+        True only when a dict spec declares exactly ``kind: lexical``. Bare
+        strings, specs with no ``kind``, and near-miss spellings the linter
+        rejects (``Lexical``, ``" lexical "``) are all structural, so an
+        unclassified assertion fails closed and keeps its hard-gate behaviour.
+    """
+    if not isinstance(spec, dict):
+        return False
+    return spec.get("kind") == LEXICAL_SPEC_KIND
+
+
+def _record_required_text_miss(
+    result: JudgeResult, spec: object, label: str, *, absence_only: bool
+) -> None:
+    """Record a required_text miss as a hard failure or a lexical diagnostic.
+
+    A lexical miss says only that the expected English did not appear, which a
+    correct answer may phrase differently, so it routes to semantic review
+    instead of failing. The absence-statement branch is the same judgement
+    about the same wording and is therefore treated the same way.
+
+    Args:
+        result: The result being accumulated; mutated in place.
+        spec: The assertion spec that did not match.
+        label: Human-readable label for the spec.
+        absence_only: True when the text matched only inside an absence clause.
+
+    Returns:
+        None.
+    """
+    detail = "only inside an absence statement" if absence_only else "missing"
+    if not _is_lexical_spec(spec):
+        result.checks_failed.append(f"required_text {detail}: {label}")
+        return
+    result.diagnostics.append(f"lexical required_text {detail}: {label}")
+    result.unexecuted_assertions.append(
+        f"lexical_text[{label}]: not matched literally; confirm the property holds in substance"
+    )
+
+
+def _record_forbidden_text_hit(result: JudgeResult, spec: object, label: str) -> None:
+    """Record a forbidden_text hit as a hard failure or a lexical diagnostic.
+
+    Args:
+        result: The result being accumulated; mutated in place.
+        spec: The assertion spec that matched.
+        label: Human-readable label for the spec.
+
+    Returns:
+        None.
+    """
+    if not _is_lexical_spec(spec):
+        result.checks_failed.append(f"forbidden_text present: {label}")
+        return
+    result.diagnostics.append(f"lexical forbidden_text present: {label}")
+    result.unexecuted_assertions.append(
+        f"lexical_text[{label}]: matched literally; "
+        "confirm the response does not assert the property in substance"
+    )
+
+
 def _first_occurrences_ordered(expected: list[str], observed: list[str]) -> bool:
     """Require required tools' first invocations to occur in declared order.
 
@@ -584,7 +857,50 @@ def _error_blob(packet: dict[str, Any], response: str) -> str:
             error = span.get("error_info")
             if error:
                 parts.append(error if isinstance(error, str) else json.dumps(error, sort_keys=True))
+            # Provider failures also arrive as a tool's own structured payload.
+            # Only an explicit top-level error flag contributes: dumping every
+            # span output here would hand PROVIDER_FAILURE_RE ordinary market
+            # prose narrating a third-party outage (see the module comment).
+            structured = _span_output_error_payload(span.get("output", _MISSING))
+            if structured is not None:
+                parts.append(json.dumps(structured, sort_keys=True))
     return "\n".join(parts)
+
+
+def _record_unrecognised_degraded_outcome(result: JudgeResult, acceptable: set[str]) -> None:
+    """Route an unrecognised degraded branch to review instead of failing it.
+
+    Only reached when the case declared a branch from ``PROSE_CLASSIFIED_OUTCOMES``.
+    Those are the outcomes ``_observed_outcome`` recognises by reading the
+    response, so a ``success`` fallthrough against one of them means the wording
+    was not recognised — and wording drifts: one gate run opened "Refused:
+    invalid shared-expiry profile" and passed, the next said the same thing as
+    "is invalid ... are undefined" and failed.
+
+    ``hub_reject`` and ``specialist_error`` are excluded in *both* directions.
+    Neither has a prose path at all — one is read from the guardrail flag, the
+    other from an error payload — so ``success`` against a case contracted for
+    them is a machine fact (the guardrail never fired), never a phrasing.
+
+    Structural ``forbidden_text`` has already hard-failed a response that did
+    the forbidden thing. A ``kind: lexical`` ``required_text`` miss has not,
+    which is exactly why this hands the reviewer an explicit outcome assertion
+    rather than leaving the case looking clean.
+
+    Args:
+        result: Judgement being built; its verdict and pending list are set.
+        acceptable: Outcomes the case contract declared.
+    """
+    branches = "|".join(sorted(acceptable))
+    result.verdict = "needs_semantic_review"
+    result.diagnostics.append(
+        f"outcome not recognised from wording: expected one of {sorted(acceptable)}"
+    )
+    result.unexecuted_assertions.append(
+        f"outcome[{branches}]: no declared branch matched literally; confirm the response "
+        "took one of them rather than answering the request in full"
+    )
+    result.reason = "declared outcome was not recognisable from wording"
 
 
 def _observed_outcome(case: dict[str, Any], packet: dict[str, Any], response: str) -> str:
@@ -609,7 +925,7 @@ def _observed_outcome(case: dict[str, Any], packet: dict[str, Any], response: st
         declared_outcomes.update(value for value in alternatives if isinstance(value, str))
     degraded_patterns = case.get("degraded_outcome_patterns")
     if isinstance(degraded_patterns, dict):
-        for outcome in ("data_unavailable", "partial_refusal"):
+        for outcome in sorted(PROSE_CLASSIFIED_OUTCOMES):
             pattern = degraded_patterns.get(outcome)
             if outcome in declared_outcomes and isinstance(pattern, str) and pattern:
                 if re.search(pattern, response):
@@ -716,6 +1032,7 @@ def _async_context(case: dict[str, Any], packet: dict[str, Any]) -> AsyncContext
         )
 
     selected = packet
+    missing_job_echo = False
     if polls:
         for index, raw_poll in enumerate(polls):
             if not isinstance(raw_poll, dict):
@@ -738,32 +1055,24 @@ def _async_context(case: dict[str, Any], packet: dict[str, Any]) -> AsyncContext
                     reason=f"async poll {index} is not correlated to job {job_id!r}",
                 )
 
-            declared_response_ids = raw_poll.get("response_job_ids")
-            if isinstance(declared_response_ids, list) and declared_response_ids != [job_id]:
+            declared_ids = raw_poll.get("response_job_ids")
+            observed_ids = _extract_async_job_ids(_response_text(raw_poll))
+            echoed_ids = declared_ids if isinstance(declared_ids, list) else observed_ids
+            wrong_job = [ids for ids in (echoed_ids, observed_ids) if ids and ids != [job_id]]
+            if wrong_job:
                 return AsyncContext(
                     packet=packet,
                     early_verdict="inconclusive_harness",
                     reason=(
-                        f"async poll {index} did not return exactly job ID {job_id!r}: "
-                        f"{declared_response_ids!r}"
+                        f"async poll {index} answered a job other than {job_id!r}: {wrong_job[0]!r}"
                     ),
                 )
-            if raw_poll.get("job_id_matches") is False:
-                return AsyncContext(
-                    packet=packet,
-                    early_verdict="inconclusive_harness",
-                    reason=f"async poll {index} explicitly failed job-ID correlation",
-                )
-            response_ids = _extract_async_job_ids(_response_text(raw_poll))
-            if response_ids != [job_id]:
-                return AsyncContext(
-                    packet=packet,
-                    early_verdict="inconclusive_harness",
-                    reason=(
-                        f"async poll {index} response did not echo exactly job ID "
-                        f"{job_id!r}: {response_ids!r}"
-                    ),
-                )
+            if not echoed_ids or not observed_ids:
+                # The poll was addressed to this job, exited cleanly and returned
+                # a real answer that simply never echoed the ID back. That is the
+                # product's behaviour, judged below against the case contract,
+                # not a fault in the harness.
+                missing_job_echo = True
         selected = _poll_packet(packet, polls[-1])
 
     if followup.get("timed_out") is True or followup.get("poll_limit_reached") is True:
@@ -799,7 +1108,11 @@ def _async_context(case: dict[str, Any], packet: dict[str, Any]) -> AsyncContext
             )
 
     if status == "completed":
-        return AsyncContext(packet=selected)
+        return AsyncContext(packet=selected, missing_job_echo=missing_job_echo)
+    if missing_job_echo and status == ASYNC_MISSING_ECHO_STATUS:
+        # The runner labels this poll by what it lacked. The poll itself
+        # completed, so judge its response instead of discarding the run.
+        return AsyncContext(packet=selected, missing_job_echo=True)
     if status in ASYNC_FAILURE_STATUSES:
         if case.get("expected_outcome") == "specialist_error" and _has_hard_outcome_assertions(
             case
@@ -1059,7 +1372,23 @@ def _enforce_specialist_call_ceiling(
             if evidence_label not in result.missing_evidence:
                 result.missing_evidence.append(evidence_label)
             continue
-        calls = [name for span in spans if (name := _call_name(span)) in FINANCIAL_SPECIALIST_TOOLS]
+        calls: list[str] = []
+        rejected: list[str] = []
+        for span in spans:
+            name = _call_name(span)
+            if name not in FINANCIAL_SPECIALIST_TOOLS:
+                continue
+            # An argument-rejected call performed no specialist work, so it
+            # cannot consume the ceiling. It is still a defect and still bills
+            # a model request, so it is reported under its own name.
+            target = rejected if _is_argument_rejection(span) else calls
+            target.append(str(name))
+        if rejected:
+            result.checks_failed.append(
+                f"malformed_specialist_invocation in {label}: the SDK rejected "
+                f"{len(rejected)} call(s) to {sorted(set(rejected))!r} for invalid "
+                "arguments, and each rejection still billed a model request"
+            )
         if len(calls) > ceiling:
             result.checks_failed.append(
                 "financial specialist call ceiling exceeded in "
@@ -1107,7 +1436,7 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
     packet = async_context.packet
     case_id = str(case.get("id") or packet.get("id") or "unknown")
     expected_outcome = str(case.get("expected_outcome", "success"))
-    response = _normalize_dashes(_response_text(packet))
+    response = _normalize_typography(_response_text(packet))
     observed_outcome = async_context.forced_outcome or _observed_outcome(case, packet, response)
     tools, tool_evidence = _observed_tools(packet)
     skills, skill_evidence = _observed_skills(packet)
@@ -1136,17 +1465,35 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
         result.reason = "CLI completed but no final response was captured"
         return result
 
+    if async_context.missing_job_echo:
+        # Correlation was established by the poll query, so the response is
+        # real evidence; the contract still requires the echo, so record the
+        # breach rather than letting a matching answer pass on it.
+        result.checks_failed.append("async poll did not echo its job ID back")
+
     assertions = _assertion_config(case)
+    asserted = _normalize_typography(_assertion_text(packet))
+    asserting = _disclosing_text(asserted)
+    # A case that declares a refusal acceptable contracts on the refusal's own
+    # wording, so its required_text must still be able to match it. That valve
+    # is about what counts as a disclosure, and does not extend to forbidden
+    # claims: an aggregate stated outright is forbidden whatever outcome the
+    # case tolerates.
+    required_haystack = asserted if _tolerates_absence(case) else asserting
     for spec in assertions.get("required_text", []) or []:
-        matched, label = _matches(response, spec)
+        matched, label = _matches(required_haystack, spec)
         if matched:
             result.checks_passed.append(f"required_text present: {label}")
-        else:
-            result.checks_failed.append(f"required_text missing: {label}")
+            continue
+        _record_required_text_miss(result, spec, label, absence_only=_matches(asserted, spec)[0])
     for spec in assertions.get("forbidden_text", []) or []:
-        matched, label = _matches(response, spec)
+        # A claim the answer refuses shares its vocabulary with the same claim
+        # asserted. Opting a spec in here scopes it to the clauses that assert,
+        # so the pattern stays simple instead of encoding polarity itself.
+        scoped = isinstance(spec, dict) and spec.get("only_when_asserted") is True
+        matched, label = _matches(asserting if scoped else asserted, spec)
         if matched:
-            result.checks_failed.append(f"forbidden_text present: {label}")
+            _record_forbidden_text_hit(result, spec, label)
         else:
             result.checks_passed.append(f"forbidden_text absent: {label}")
     for path in assertions.get("required_evidence", []) or []:
@@ -1409,6 +1756,13 @@ def judge_packet(case: dict[str, Any], packet: dict[str, Any]) -> JudgeResult:
             outcome for outcome in declared_alternatives if isinstance(outcome, str)
         )
     outcome_matches = observed_outcome in acceptable_outcomes
+    if (
+        not outcome_matches
+        and observed_outcome == "success"
+        and acceptable_outcomes & PROSE_CLASSIFIED_OUTCOMES
+    ):
+        _record_unrecognised_degraded_outcome(result, acceptable_outcomes)
+        return result
     if not outcome_matches:
         result.verdict = "fail_product"
         result.checks_failed.append(

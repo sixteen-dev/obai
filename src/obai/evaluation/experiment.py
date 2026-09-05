@@ -8,8 +8,8 @@ Usage:
     python -m evaluation experiment --name "baseline" --limit 3
 
     # Compare current vs candidate models in one command
-    python -m evaluation experiment --name "compare" --compare gpt-5.4 --limit 3
-    python -m evaluation experiment --name "compare" --compare gpt-5.4,gpt-5.4-mini --limit 3
+    python -m evaluation experiment --name "compare" --compare gpt-5.6-terra --limit 3
+    python -m evaluation experiment --name "compare" --compare gpt-5.6-terra,gpt-5.6-luna --limit 3
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from evaluation.trace.types import Trace
 logger = logging.getLogger(__name__)
 
 # Type alias for the async query runner function (cli.run_query_with_trace).
-QueryRunner = Callable[[str, str, bool], Awaitable[Trace]]
+QueryRunner = Callable[[str, str | None, bool], Awaitable[Trace]]
 
 # Score keys extracted from task output, mapped to human-readable metric names.
 # Boolean keys are converted to float (1.0/0.0), numeric keys pass through.

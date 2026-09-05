@@ -40,7 +40,7 @@ obai query "<question>" [OPTIONS]
 |------|-------|---------|-------------|
 | `--json` | `-j` | `false` | Structured JSON output (always use this) |
 | `--session` | `-s` | ephemeral | Named session for multi-turn conversation |
-| `--model` | `-m` | `ORCHESTRATOR_MODEL` | Override orchestrator model |
+| `--model` | `-m` | configured hub model | Override the orchestrator model for this query only. The default resolves `ORCHESTRATOR_MODEL` → `~/.obai/settings.json` → `gpt-5.6-terra` |
 
 ### JSON Output Structure
 
@@ -53,7 +53,7 @@ obai query "<question>" [OPTIONS]
   "elapsed_ms": 2340,
   "session_id": "cli_a1b2c3d4",
   "timestamp": "2026-03-16T10:30:00Z",
-  "model": "gpt-5.1",
+  "model": "gpt-5.6-terra",
   "guardrail_rejected": false,
   "faithfulness": {"numeric_accuracy": 0.95, "faithfulness_pass": true},
   "completeness": {"coverage_score": 0.88, "completeness_pass": true}
@@ -169,7 +169,7 @@ uv run python -m evaluation evaluate --suite --category A
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--suite` | `-s` | Run full test suite |
-| `--model` | `-m` | Model for queries (default: `gpt-4o`) |
+| `--model` | `-m` | Model label for the trace (default: `ORCHESTRATOR_MODEL`) |
 | `--judge` | `-j` | Model for LLM scorers (default: `anthropic/claude-sonnet-4-5-20250929`) |
 | `--no-builtin` | | Skip Opik built-in scorers (faster) |
 | `--category` | `-c` | Filter: A-G (A=single-agent, B=multi-agent, C=guardrails, D=errors, E=strategy/backtest, G=new capabilities) |
@@ -190,12 +190,42 @@ uv run python -m evaluation evaluate --suite --category A
 | Variable | Default | What it does |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key for all agents |
-| `ORCHESTRATOR_MODEL` | `gpt-5.5` | Central Hub model |
-| `SPECIALIST_MODEL` | `gpt-5-mini` | Default specialist model |
-| `STRATEGY_MODEL` | falls back to `ORCHESTRATOR_MODEL` | Strategy agent model |
+| `ORCHESTRATOR_MODEL` | `gpt-5.6-terra` | Central Hub model. Wins over `~/.obai/settings.json` (see below) |
+| `ORCHESTRATOR_REASONING_EFFORT` | `medium` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Wins over `~/.obai/settings.json` |
+| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Default specialist model |
+| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent model |
 | `EXA_API_KEY` | optional | Exa API key for research server |
 | `ENABLE_GUARDRAILS` | `true` | Block non-financial queries |
-| `RESEARCH_MODEL` | `gpt-5-mini` | Research agent model |
+| `RESEARCH_MODEL` | `gpt-5.6-luna` | Research agent model |
 | `ENABLE_INLINE_SCORING` | `true` | Score every query for faithfulness |
 | `MCP_TIMEOUT` | `30` | Request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
+
+Specialist effort tiers use the same values via `SPECIALIST_REASONING_EFFORT`, `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT`. `minimal` is not a valid tier — every `gpt-5.6` model rejects it.
+
+## Hub Settings File (`~/.obai/settings.json`)
+
+The hub model and reasoning effort are user-settable and persist across sessions:
+
+```json
+{
+  "hub_model": "gpt-5.6-terra",
+  "hub_reasoning_effort": "max"
+}
+```
+
+`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`. `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts are not settable here.
+
+```bash
+obai config set-model gpt-5.6-terra   # write hub model
+obai config set-effort high           # write hub reasoning effort
+obai config show                      # current values and where they came from
+```
+
+The web UI settings modal writes the same file.
+
+Three things to tell a user who asks why a change did not take effect:
+
+1. **Env wins.** Resolution is `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` → `~/.obai/settings.json` → shipped default. An export in the user's shell, or a leftover line in `~/.obai/.env` (the CLI loads it into the environment at startup), silently outranks the file. Check with `obai config show` before assuming the write failed.
+2. **Only the web UI applies a change live.** Saving in its settings modal retunes that server's own hub in place. A CLI write reaches no running process, so restart the client you use — exit and relaunch `obai chat` / `obai tui`; `obai query` builds a fresh hub every invocation and needs nothing. `--model` on `obai query` is the only per-query override.
+3. **A missing file is normal.** Absent or empty means shipped defaults, on a fresh install and after an upgrade alike. Only a file that exists and does not parse or validate is an error — it is reported, never silently ignored, so fix or delete it.

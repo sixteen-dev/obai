@@ -44,6 +44,9 @@ SKILL_DIR = SCRIPT_DIR.parent
 DEFAULT_CASES = SKILL_DIR / "cases" / "cases.yaml"
 DEFAULT_RUN_ONE = SCRIPT_DIR / "run_one.py"
 DEFAULT_PREFLIGHT = SCRIPT_DIR / "preflight.py"
+# The deterministic scoring contract. Unlike the two above it is imported,
+# not spawned, so there is no path to override and no CLI flag for it.
+DEFAULT_JUDGE_PACKET = SCRIPT_DIR / "judge_packet.py"
 DEFAULT_MAX_API_CALLS = 20
 CASES_SNAPSHOT_NAME = "cases.snapshot.yaml"
 EXIT_SUCCESS = 0
@@ -52,6 +55,56 @@ EXIT_CONFIGURATION = 2
 EXIT_INFRASTRUCTURE = 3
 CHAIN_CONTINUATION_VERDICTS = frozenset({"pass", "pass_degraded", "needs_semantic_review"})
 SKIPPED_VERDICT = "skipped_dependency"
+# Harness statuses that mean the harness itself can no longer bind a query to
+# its evidence. These stay suite-fatal on the first occurrence. Statuses scoped
+# to a single case (cli_failed, async_followup_failed) are contained instead.
+SUITE_FATAL_HARNESS_STATUSES = frozenset(
+    {"session_mismatch", "trace_lookup_failed", "trace_evidence_failed"}
+)
+MAX_CONSECUTIVE_HARNESS_FAILURES = 2
+MAX_HARNESS_FAILURES = 3
+
+
+def _harness_abort_reason(
+    *, subject: str, status: object, consecutive: int, total: int
+) -> str | None:
+    """Decide whether one case's harness failure must stop the paid run.
+
+    An isolated per-case harness failure is already recorded as an inconclusive
+    verdict, which floors the suite exit code at EXIT_INFRASTRUCTURE, so
+    stopping the whole run adds no safety and forfeits every unrun case. Only
+    statuses that invalidate the harness itself, or repeated failures, abort.
+    Cost-accounting and fingerprint gates are checked separately and remain
+    suite-fatal on their own.
+
+    Args:
+        subject: Human-readable subject for the message, e.g. "case C1" or
+            "resumed case C1".
+        status: The packet's harness_status value.
+        consecutive: Harness failures in an unbroken run through this case.
+        total: Harness failures seen so far in this run.
+
+    Returns:
+        The abort reason, or None to contain the failure and keep going.
+    """
+    # A missing status means there is no packet to judge, which is the same
+    # untrustworthy-evidence condition as a fatal status.
+    if status is None or status in SUITE_FATAL_HARNESS_STATUSES:
+        return (
+            f"{subject} ended with harness status {status!r}; "
+            "refusing to spend on cases that cannot produce trustworthy evidence"
+        )
+    if consecutive >= MAX_CONSECUTIVE_HARNESS_FAILURES:
+        return (
+            f"{consecutive} consecutive harness failures through {subject} "
+            f"(latest {status!r}); refusing additional paid cases"
+        )
+    if total > MAX_HARNESS_FAILURES:
+        return (
+            f"{total} harness failures in this run through {subject} "
+            f"(latest {status!r}); refusing additional paid cases"
+        )
+    return None
 
 
 class PlanError(ValueError):
@@ -265,9 +318,20 @@ def _git_metadata(cwd: Path) -> dict[str, Any]:
 def _runtime_script_bindings(
     *, run_one_path: Path = DEFAULT_RUN_ONE, preflight_path: Path = DEFAULT_PREFLIGHT
 ) -> dict[str, dict[str, str]]:
-    """Bind the exact helper programs selected for a paid run."""
+    """Bind the exact helper programs selected for a paid run.
+
+    ``judge_packet`` decides every deterministic verdict. The whole-tree
+    runtime fingerprint already covers it, but only as one file among many:
+    naming it here makes the scoring contract individually verifiable, so a
+    changed judge fails the recheck by file rather than surfacing later as
+    an unreproducible judgment for whichever case it happened to move.
+    """
     bindings: dict[str, dict[str, str]] = {}
-    for label, path in (("run_one", run_one_path), ("preflight", preflight_path)):
+    for label, path in (
+        ("run_one", run_one_path),
+        ("preflight", preflight_path),
+        ("judge_packet", DEFAULT_JUDGE_PACKET),
+    ):
         try:
             resolved = path.resolve(strict=True)
             payload = resolved.read_bytes()
@@ -280,6 +344,26 @@ def _runtime_script_bindings(
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
     return bindings
+
+
+def _changed_helper_labels(recorded: object, expected: dict[str, dict[str, str]]) -> list[str]:
+    """Name the helpers whose recorded binding no longer matches the tree.
+
+    Args:
+        recorded: The manifest's ``runtime_helpers`` value, of unknown shape.
+        expected: Bindings recomputed from the current tree.
+
+    Returns:
+        Sorted labels that differ, added, or went missing. Every label when
+        the manifest entry is not a mapping at all.
+    """
+    if not isinstance(recorded, dict):
+        return sorted(expected)
+    return sorted(
+        label
+        for label in set(expected) | set(recorded)
+        if recorded.get(label) != expected.get(label)
+    )
 
 
 def _runtime_fingerprint(
@@ -298,6 +382,7 @@ def _runtime_fingerprint(
         *runtime_source_paths(repo_root),
         Path(helper_bindings["run_one"]["path"]),
         Path(helper_bindings["preflight"]["path"]),
+        Path(helper_bindings["judge_packet"]["path"]),
     ]
     digest = hashlib.sha256()
     digest.update(_hash_tree(roots, root=repo_root).encode("ascii"))
@@ -403,8 +488,9 @@ def validate_resume_manifest(
         run_one_path=run_one_path,
         preflight_path=preflight_path,
     )
-    if manifest.get("runtime_helpers") != expected_helpers:
-        raise PlanError("run_one or preflight helper path/content changed since the manifest")
+    changed = _changed_helper_labels(manifest.get("runtime_helpers"), expected_helpers)
+    if changed:
+        raise PlanError(f"helper path/content changed since the manifest: {', '.join(changed)}")
     if manifest.get("runtime_fingerprint") != _runtime_fingerprint(
         run_one_path=run_one_path,
         preflight_path=preflight_path,
@@ -1043,6 +1129,8 @@ def _execute_plan(
     observed_request_total = 0
     abort_reason: str | None = None
     model_request_accounting_complete = True
+    harness_failures: list[dict[str, Any]] = []
+    consecutive_harness_failures = 0
     effective_cases_sha256 = cases_sha256 or ("0" * 64)
     effective_manifest_sha256 = manifest_sha256 or ("0" * 64)
 
@@ -1120,13 +1208,24 @@ def _execute_plan(
                         break
                     observed_request_total += prior_requests
                     resumed += 1
-                    if prior_packet is None or prior_packet.get("harness_status") != "completed":
-                        abort_reason = (
-                            f"resumed case {case_id} ended with harness status "
-                            f"{prior_packet.get('harness_status') if prior_packet else None!r}; "
-                            "refusing additional paid cases"
+                    prior_status = prior_packet.get("harness_status") if prior_packet else None
+                    # Mirror the live containment policy: a resumed run must not
+                    # re-abort on an isolated failure the original run contained.
+                    if prior_status == "completed":
+                        consecutive_harness_failures = 0
+                    else:
+                        harness_failures.append(
+                            {"case_id": case_id, "harness_status": prior_status}
                         )
-                        break
+                        consecutive_harness_failures += 1
+                        abort_reason = _harness_abort_reason(
+                            subject=f"resumed case {case_id}",
+                            status=prior_status,
+                            consecutive=consecutive_harness_failures,
+                            total=len(harness_failures),
+                        )
+                        if abort_reason:
+                            break
                     if observed_request_total > plan.max_api_calls:
                         abort_reason = (
                             f"resumed observed model requests reached {observed_request_total}, "
@@ -1359,12 +1458,19 @@ def _execute_plan(
             break
         observed_request_total += observed_requests
         packet_harness_status = packet.get("harness_status") if packet else None
-        if packet_harness_status != "completed":
-            abort_reason = (
-                f"case {case_id} ended with harness status {packet_harness_status!r}; "
-                "refusing to spend on cases that cannot produce trustworthy evidence"
+        if packet_harness_status == "completed":
+            consecutive_harness_failures = 0
+        else:
+            harness_failures.append({"case_id": case_id, "harness_status": packet_harness_status})
+            consecutive_harness_failures += 1
+            abort_reason = _harness_abort_reason(
+                subject=f"case {case_id}",
+                status=packet_harness_status,
+                consecutive=consecutive_harness_failures,
+                total=len(harness_failures),
             )
-            break
+            if abort_reason:
+                break
         if observed_request_total > plan.max_api_calls:
             abort_reason = (
                 f"observed model requests reached {observed_request_total}, exceeding "
@@ -1402,6 +1508,7 @@ def _execute_plan(
         "hard_model_request_cap_enforced": False,
         "model_request_accounting_complete": model_request_accounting_complete,
         "abort_reason": abort_reason,
+        "harness_failures": harness_failures,
         "verdict_counts": verdict_counts,
         "results": results,
     }

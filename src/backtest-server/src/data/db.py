@@ -15,6 +15,13 @@ from ..logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# Adds price_basis to databases created before it existed. The column stays
+# NULL for rows already stored, which is what marks them as written on an
+# unknown adjustment basis and therefore not reusable.
+_ADD_META_PRICE_BASIS = """
+ALTER TABLE _meta ADD COLUMN IF NOT EXISTS price_basis VARCHAR;
+"""
+
 # Schema DDL — Section 5.2-5.4 of design doc
 _CREATE_OHLCV = """
 CREATE TABLE IF NOT EXISTS ohlcv (
@@ -38,6 +45,7 @@ CREATE TABLE IF NOT EXISTS _meta (
     last_timestamp   TIMESTAMP,
     row_count        BIGINT,
     last_refreshed   TIMESTAMP NOT NULL,
+    price_basis      VARCHAR,
     PRIMARY KEY (symbol, timeframe)
 );
 """
@@ -192,5 +200,6 @@ class DuckDBManager:
             return
         self._conn.execute(_CREATE_OHLCV)
         self._conn.execute(_CREATE_META)
+        self._conn.execute(_ADD_META_PRICE_BASIS)
         self._conn.execute(_CREATE_INDEX)
         logger.info("duckdb_schema_initialized")

@@ -157,7 +157,7 @@ class TestComputeAggregates:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=42.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=42.0)
 
         assert result.n_windows == 3
         # mean([0.8, -0.3, 0.5]) = 1.0/3 ≈ 0.3333
@@ -183,7 +183,7 @@ class TestComputeAggregates:
             for i, sharpe in enumerate([0.5, 1.2, 0.8, 0.3, 0.1])
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=10.0)
 
         assert result.consistency_score == 100.0
 
@@ -203,7 +203,7 @@ class TestComputeAggregates:
             for i, s in enumerate(sharpes)
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=10.0)
 
         assert result.consistency_score == 40.0
 
@@ -230,10 +230,22 @@ class TestComputeAggregates:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=5.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=5.0)
 
         # mean([2.0-1.0, 1.5-0.5]) = mean([1.0, 1.0]) = 1.0
         assert abs(result.degradation - 1.0) < 0.001
+
+
+_METRICS_RESULT: dict[str, Any] = {
+    "performance": {
+        "sharpe_ratio": 1.0,
+        "sortino_ratio": 1.2,
+        "total_return_pct": 15.0,
+        "cagr_pct": 10.0,
+    },
+    "risk": {"max_drawdown_pct": -5.0},
+    "trading": {"win_rate_pct": 55.0, "total_trades": 20, "profit_factor": 1.5},
+}
 
 
 class TestWalkForwardValidate:
@@ -309,6 +321,132 @@ class TestWalkForwardValidate:
         assert isinstance(result, WalkForwardResult)
         assert result.n_windows == n_windows
         assert len(result.windows) == n_windows
+
+    async def test_serializes_execution_and_cost_assumptions(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """The stored payload must retain the assumptions the windows ran under.
+
+        ``to_dict`` carried windows and aggregates only, so a later turn could
+        not state slippage, commission, or starting capital without inventing
+        them. The values must track the strategy, not be a fixed echo.
+        """
+        strategy = json.loads(sample_strategy_json)
+        strategy["execution_config"] = {"slippage_pct": 0.25, "commission_pct": 0.05}
+        mock_fn = AsyncMock(
+            return_value={
+                "performance": {
+                    "sharpe_ratio": 1.0,
+                    "sortino_ratio": 1.2,
+                    "total_return_pct": 15.0,
+                    "cagr_pct": 10.0,
+                },
+                "risk": {"max_drawdown_pct": -5.0},
+                "trading": {"win_rate_pct": 55.0, "total_trades": 20, "profit_factor": 1.5},
+            }
+        )
+
+        result = await walk_forward_validate(
+            strategy_json=json.dumps(strategy),
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        assumptions = result.to_dict()["execution_config"]
+
+        assert assumptions["slippage_pct"] == 0.25
+        assert assumptions["commission_pct"] == 0.05
+        assert assumptions["initial_capital"] == 100_000.0
+
+    async def test_serializes_the_strategy_the_windows_ran(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """The stored payload must describe the strategy it validated.
+
+        Polling a completed job returned metrics with no rules, indicators, or
+        timeframe attached, so the answering turn could only report the
+        strategy as "not available from stored result". The definition is
+        resolved through the same parser the windows used, so defaults are
+        reported as applied rather than as sent.
+        """
+        mock_fn = AsyncMock(return_value=_METRICS_RESULT)
+
+        result = await walk_forward_validate(
+            strategy_json=sample_strategy_json,
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        strategy = result.to_dict()["strategy"]
+
+        assert strategy["name"] == "WF Test Strategy"
+        assert strategy["universe"]["symbols"] == ["AAPL"]
+        assert [ind["type"] for ind in strategy["indicators"]] == ["SMA"]
+        assert strategy["entry_rules"]["conditions"][0]["operator"] == "greater_than"
+
+    async def test_serializes_the_fill_timing_convention(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """Signals fire on a bar close and fill at the next bar's open.
+
+        The engine has always executed this way, but nothing in the payload
+        said so, leaving a reviewer unable to confirm no look-ahead from the
+        stored result alone.
+        """
+        mock_fn = AsyncMock(return_value=_METRICS_RESULT)
+
+        result = await walk_forward_validate(
+            strategy_json=sample_strategy_json,
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        assert result.to_dict()["fill_timing"] == "signal_at_bar_close_fill_at_next_bar_open"
+
+    async def test_window_metrics_carry_the_warmup_bar_count(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """Each window reports how many pre-start bars primed its indicators.
+
+        Every fold printed "warm-up coverage: not reported", so the pre-roll
+        could not be checked against the requested minimum even though the
+        engine had fetched and trimmed those bars.
+        """
+        mock_fn = AsyncMock(return_value={**_METRICS_RESULT, "warmup_bars": 312})
+
+        result = await walk_forward_validate(
+            strategy_json=sample_strategy_json,
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        window = result.to_dict()["windows"][0]
+
+        assert window["train_metrics"]["warmup_bars"] == 312
+        assert window["test_metrics"]["warmup_bars"] == 312
+
+    async def test_absent_warmup_count_is_reported_as_unknown_not_zero(
+        self,
+        sample_strategy_json: str,
+    ) -> None:
+        """A backtest that never reported a pre-roll must not read as zero.
+
+        Zero is a real, alarming value - it means the indicators ran unprimed.
+        Defaulting a missing count to it would manufacture that finding.
+        """
+        mock_fn = AsyncMock(return_value=_METRICS_RESULT)
+
+        result = await walk_forward_validate(
+            strategy_json=sample_strategy_json,
+            n_windows=2,
+            run_backtest_fn=mock_fn,
+        )
+
+        assert result.to_dict()["windows"][0]["train_metrics"]["warmup_bars"] is None
 
     async def test_window_dates_passed_correctly(
         self,
@@ -472,9 +610,12 @@ class TestWalkForwardResult:
             consistency_score=60.0,
             degradation=0.45678901,
             total_runtime_seconds=42.123456,
+            execution_config={"slippage_pct": 0.1, "commission_pct": 0.1},
+            strategy={},
         )
 
         d = result.to_dict()
+        assert d["execution_config"] == {"slippage_pct": 0.1, "commission_pct": 0.1}
         assert d["mean_test_sharpe"] == 0.3333
         assert d["std_test_sharpe"] == 0.1235
         assert d["mean_test_win_rate"] == 52.67
@@ -571,7 +712,7 @@ class TestFailedWindowHandling:
             ),
         ]
 
-        result = _compute_aggregates(windows, total_runtime=30.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=30.0)
 
         assert result.n_windows == 3
         assert result.failed_windows == 1
@@ -598,7 +739,7 @@ class TestFailedWindowHandling:
             for i in range(3)
         ]
 
-        result = _compute_aggregates(windows, total_runtime=10.0)
+        result = _compute_aggregates(windows, execution_config={}, strategy={}, total_runtime=10.0)
 
         assert result.n_windows == 3
         assert result.failed_windows == 3
@@ -795,3 +936,29 @@ class TestTestWindowWarmup:
         # Without it SMA is null for the first ~SMA_LENGTH bars, collapsing
         # active_bars to ~window_len - SMA_LENGTH (~50) — the signal-dead failure.
         assert active_bars >= 0.9 * window_len
+
+    async def test_execution_reports_the_bars_that_primed_the_indicators(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The pre-roll is counted before it is trimmed, so a fold can report it.
+
+        The bars exist only between the fetch and the trim; once execution
+        returns, the frames start at the requested date and the coverage is
+        unrecoverable. Every walk-forward fold printed "not reported" as a
+        result, leaving the pre-roll unverifiable from a stored job.
+        """
+        requested_start = date(2021, 1, 1)
+        requested_end = requested_start + timedelta(days=self._WINDOW_DAYS - 1)
+        series = self._uptrend_series(requested_start - timedelta(days=500), requested_end)
+        monkeypatch.setattr(server._state, "downloader", _StubDownloader(series))
+
+        strategy = StrategyDefinition.from_dict(
+            json.loads(self._strategy_json(requested_start.isoformat(), requested_end.isoformat()))
+        )
+        exec_result = await server._execute_strategy(strategy)
+
+        # Enough to prime the SMA that the window depends on, and strictly the
+        # bars ahead of the requested start rather than a share of the window.
+        assert exec_result.warmup_bars["TEST"] >= self._SMA_LENGTH
+        assert exec_result.symbol_dfs["TEST"].height == self._WINDOW_DAYS

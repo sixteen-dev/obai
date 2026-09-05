@@ -397,6 +397,112 @@ def test_runtime_tree_hash_includes_server_configs_and_ignores_caches(tmp_path: 
     assert second == third
 
 
+def test_runtime_tree_hash_separates_an_absent_named_file_from_an_empty_one(
+    tmp_path: Path,
+) -> None:
+    """Optional config files must hash stably when absent, distinctly when empty."""
+    settings = tmp_path / ".obai" / "settings.json"
+    settings.parent.mkdir(parents=True)
+
+    absent = run_one._hash_tree([settings], root=tmp_path)
+    settings.write_text("")
+    empty = run_one._hash_tree([settings], root=tmp_path)
+    settings.write_text('{"hub_model":"gpt-5.6-terra"}')
+    populated = run_one._hash_tree([settings], root=tmp_path)
+    settings.unlink()
+
+    assert run_one._hash_tree([settings], root=tmp_path) == absent
+    assert len({absent, empty, populated}) == 3
+
+
+def test_runtime_source_paths_bind_the_hub_settings_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    paths = run_one.runtime_source_paths(tmp_path / "repo")
+
+    assert tmp_path / ".obai" / "settings.json" in paths
+
+
+def _offline_input_fingerprint() -> str:
+    """Fingerprint one fixed case with offline runner inputs."""
+    return run_one.input_fingerprint(
+        case={"id": "T1", "query": "Analyze AAPL"},
+        opik_url="http://offline:5173",
+        opik_project="offline-project",
+        inspect_script=run_one.INSPECT_TRACE_DEFAULT,
+        dependency_digest=None,
+    )
+
+
+def test_input_fingerprint_changes_when_the_hub_settings_file_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hub swap written by the web UI or `obai config` must void the cache key."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-key")
+    settings = tmp_path / ".obai" / "settings.json"
+    settings.parent.mkdir(parents=True)
+
+    absent = _offline_input_fingerprint()
+    settings.write_text('{"hub_model":"gpt-5.6-sol","hub_reasoning_effort":"medium"}')
+    sol = _offline_input_fingerprint()
+    settings.write_text('{"hub_model":"gpt-5.6-terra","hub_reasoning_effort":"medium"}')
+    terra = _offline_input_fingerprint()
+    settings.write_text('{"hub_model":"gpt-5.6-terra","hub_reasoning_effort":"max"}')
+    terra_max = _offline_input_fingerprint()
+
+    assert len({absent, sol, terra, terra_max}) == 4
+
+
+def test_cache_schema_version_bump_invalidates_prior_fingerprints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Keys minted under an older cache contract must not be reusable."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-key")
+
+    first = _offline_input_fingerprint()
+    monkeypatch.setattr(run_one, "CACHE_SCHEMA_VERSION", run_one.CACHE_SCHEMA_VERSION + 1)
+
+    assert _offline_input_fingerprint() != first
+
+
+def test_cache_schema_version_covers_the_hub_settings_binding() -> None:
+    """Pin the bump that invalidated caches minted before settings.json bound.
+
+    The test above only proves the constant participates in the key; it stays
+    green at any value. This pins the value itself, so resolving a conflict on
+    that line back to 3 fails here instead of silently restoring cache hits
+    computed when the hub model was not part of the fingerprint.
+    """
+    assert run_one.CACHE_SCHEMA_VERSION >= 4
+
+
+def test_orchestrator_environment_overrides_are_bound_and_outrank_the_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The gate can still pin the hub by injecting the orchestrator env vars."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-key")
+    settings = tmp_path / ".obai" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"hub_model":"gpt-5.6-sol","hub_reasoning_effort":"medium"}')
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "gpt-5.6-terra")
+    monkeypatch.setenv("ORCHESTRATOR_REASONING_EFFORT", "max")
+
+    binding = run_one.runtime_environment_binding()["public"]
+    pinned = _offline_input_fingerprint()
+    settings.write_text('{"hub_model":"gpt-5.6-terra","hub_reasoning_effort":"max"}')
+
+    assert binding["ORCHESTRATOR_MODEL"] == "gpt-5.6-terra"
+    assert binding["ORCHESTRATOR_REASONING_EFFORT"] == "max"
+    # The pinned environment wins at runtime, but the overridden file is still
+    # bound, so the packet never attests a file state the run did not see.
+    assert _offline_input_fingerprint() != pinned
+
+
 def test_main_submits_and_resolves_the_same_unique_marker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1140,6 +1246,23 @@ def test_async_job_parser_accepts_markdown_label_form() -> None:
     assert run_one.extract_async_job_ids(response) == ["bt_3c133f5d"]
 
 
+def test_async_job_parser_accepts_emphasized_label() -> None:
+    # The crypto backtest emits a bolded label ("- **job_id**: `<id>`"). Markdown
+    # emphasis sits between the label and its colon, which previously broke
+    # extraction and aborted the whole suite with 'job_id_missing'.
+    response = (
+        "Backtest completed on Coinbase BTC-USD daily bars.\n"
+        "- **job_id**: `crypto_bt_285d03572fe9556a`  \n"
+        "- **closed round-trip trade count**: 3\n"
+    )
+    assert run_one.extract_async_job_ids(response) == ["crypto_bt_285d03572fe9556a"]
+
+
+def test_async_job_parser_accepts_emphasis_around_label_and_value() -> None:
+    # The colon may also sit inside the emphasis ("**Job ID:** `<id>`").
+    assert run_one.extract_async_job_ids("**Job ID:** `bt_9f2a10`\n") == ["bt_9f2a10"]
+
+
 def test_async_job_parser_rejects_label_without_value() -> None:
     # A bare label followed by prose (no colon, no next-line value) is not an id.
     assert run_one.extract_async_job_ids("Job ID is running; no id assigned yet") == []
@@ -1417,3 +1540,60 @@ def test_fetch_curated_trace_passes_selected_opik_config(
     )
 
     assert observed[-4:] == ["--url", "http://custom-opik", "--project", "custom-project"]
+
+
+def test_build_packet_treats_a_missing_job_echo_as_judgeable_evidence() -> None:
+    """A poll that ran and answered is product evidence, not a harness fault.
+
+    Exiting 2 here made the case inconclusive_harness and skipped every
+    dependent case behind it, twice, while the product was in fact refusing
+    the follow-up.
+    """
+    packet = run_one.build_packet(
+        case={"id": "T1", "query": "query", "expect_async_job": True},
+        cli=_cli_result("- **job_id**: `crypto_bt_7197be75807dc23e`"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup={
+            "job_id": "crypto_bt_7197be75807dc23e",
+            "status": "job_id_missing",
+            "timed_out": False,
+            "poll_limit_reached": False,
+            "evidence_complete": True,
+            "polls": [{"status": "job_id_missing", "response_job_ids": []}],
+        },
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "completed"
+
+
+def test_build_packet_still_faults_on_a_broken_poll_session() -> None:
+    """Correlation faults remain harness failures; only the echo moved."""
+    packet = run_one.build_packet(
+        case={"id": "T1", "query": "query", "expect_async_job": True},
+        cli=_cli_result("- **job_id**: `crypto_bt_7197be75807dc23e`"),
+        marker="marker",
+        marked_query="marked",
+        session_id="session",
+        trace_id="trace",
+        lookup_attempts=1,
+        curated="evidence",
+        followup={
+            "job_id": "crypto_bt_7197be75807dc23e",
+            "status": "session_id_mismatch",
+            "timed_out": False,
+            "poll_limit_reached": False,
+            "evidence_complete": True,
+            "polls": [{"status": "session_id_mismatch"}],
+        },
+        input_fingerprint="fingerprint",
+        raw_trace_evidence={"trace": {"id": "trace"}, "spans": []},
+    )
+
+    assert packet["harness_status"] == "async_followup_failed"

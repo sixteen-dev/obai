@@ -135,9 +135,10 @@ async def get_earnings_calendar(
     """Get the market-wide earnings calendar for a date range.
 
     Answers cross-company / date-range questions ("who reports next week?")
-    that the per-ticker ``get_earnings`` tool cannot. Returns every company
-    reporting between ``from_date`` and ``to_date``, bounded to
-    ``_CALENDAR_MAX_ROWS`` rows to keep the payload manageable.
+    that the per-ticker ``get_earnings`` tool cannot. Rows are returned in
+    date order and bounded to ``_CALENDAR_MAX_ROWS``; when the range holds
+    more, the earliest dates are kept and ``truncated`` says so, so a partial
+    calendar is never mistaken for the whole market.
 
     Args:
         from_date: Start date in YYYY-MM-DD format (inclusive).
@@ -145,7 +146,8 @@ async def get_earnings_calendar(
         limit: Maximum rows to return (default 100, hard-capped at 250).
 
     Returns:
-        Earnings-calendar records with metadata.
+        Earnings-calendar records in date order, with ``count``,
+        ``total_available`` and ``truncated`` describing what was kept.
 
     Raises:
         ValueError: If dates are malformed or ``from_date`` is after ``to_date``.
@@ -160,12 +162,22 @@ async def get_earnings_calendar(
         settings = get_settings()
         async with FMPClient(settings) as client:
             data = await client.get_earnings_calendar(from_date, to_date)
-        filtered = filter_earnings_calendar(data)[:capped]
+        # Sort before capping. The provider returns rows in no useful order, so
+        # slicing them can drop whole days out of the middle of the window and
+        # still look like a complete answer. Date order makes the cap a
+        # contiguous prefix, which is what a "who reports next" question wants.
+        ordered = sorted(
+            filter_earnings_calendar(data),
+            key=lambda row: (str(row.get("date") or ""), str(row.get("symbol") or "")),
+        )
+        capped_rows = ordered[:capped]
         return {
             "from": from_date,
             "to": to_date,
-            "count": len(filtered),
-            "earnings_calendar": filtered,
+            "count": len(capped_rows),
+            "total_available": len(ordered),
+            "truncated": len(capped_rows) < len(ordered),
+            "earnings_calendar": capped_rows,
         }
     except Exception as e:
         log_error(

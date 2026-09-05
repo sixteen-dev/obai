@@ -118,6 +118,42 @@ check_cmd() {
     fi
 }
 
+# Inspect a failed install log and print the remediation for known root causes.
+# Today the only one we recognise is a Rust/cargo build failure: opik pulls in
+# litellm, whose transitive deps (tokenizers, pydantic-core) fall back to
+# building from source when no wheel matches, and that needs a current rustc.
+diagnose_install_failure() {
+    local log_file="$1"
+
+    echo ""
+    fail "Install output (last 30 lines):"
+    tail -n 30 "$log_file" | sed 's/^/    /'
+    echo ""
+
+    if ! grep -qiE 'cargo|rustc|rust version|maturin|setuptools-rust|error: failed to (compile|run custom build)' "$log_file"; then
+        return 0
+    fi
+
+    warn "This looks like a Rust build failure. A dependency (opik -> litellm ->"
+    warn "tokenizers/pydantic-core) had no matching wheel and fell back to"
+    warn "building from source, which needs a current Rust toolchain."
+    echo ""
+    if command -v rustc &>/dev/null; then
+        info "Installed Rust: $(rustc --version)"
+    else
+        info "Rust is not installed."
+    fi
+    info "Upgrade (or install) Rust, then re-run this script:"
+    if command -v rustup &>/dev/null; then
+        echo "    rustup update stable"
+    elif [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        echo "    brew upgrade rust    # or: brew install rust"
+    else
+        echo "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    fi
+    echo "    obai upgrade         # or: ./setup.sh"
+}
+
 prompt_key() {
     local name="$1"
     local desc="$2"
@@ -314,6 +350,17 @@ else
     ok "Preferences file exists"
 fi
 
+# Deliberately NOT seeding $OBAI_DIR/settings.json (hub model + reasoning
+# effort). HubSettingsStore.load() treats an absent or empty file as "use the
+# shipped defaults", so seeding buys nothing at install time and costs us at
+# upgrade time: setup.sh never overwrites an existing file, so a seeded copy
+# would pin every install to whatever the default was on the day they first
+# ran setup, and a later release that moves the hub default would silently
+# skip them. It would also duplicate the defaults from
+# core_agents/hub_settings.py into a heredoc that no test compares against.
+# The file appears on first write from the web UI settings modal or
+# `obai config set-model` / `set-effort`.
+
 # Record how this checkout was installed so `obai upgrade` can tell a managed
 # one-liner install (OBAI_MANAGED=1, set by install.sh) from a developer's
 # source clone. The CLI never resets/reclones a source checkout.
@@ -455,17 +502,27 @@ step "6/8 Installing OBaI CLI"
 
 info "Installing OBaI as a global tool via uv (editable — source changes take effect immediately)..."
 
+# Keep the install output instead of discarding it — a failure here (e.g. a
+# dependency building from source) is unactionable without the real error.
+# An explicit template rather than `mktemp -t obai-cli-install`: BSD/macOS
+# accepts a bare prefix there, GNU requires three trailing X's and otherwise
+# exits 1, which under `set -e` aborts the install before steps 7 and 8 run.
+INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/obai-cli-install.XXXXXX")"
+trap 'rm -f "$INSTALL_LOG"' EXIT
+
 # Editable install so `obai` always runs from source — no reinstall needed after code changes.
-if uv tool install --reinstall --editable "$OBAI_SRC" 2>/dev/null; then
+if uv tool install --reinstall --editable "$OBAI_SRC" >"$INSTALL_LOG" 2>&1; then
     ok "OBaI CLI installed (editable)"
 else
     # Fallback: non-editable snapshot (requires reinstall after source changes)
     info "Editable install failed, trying snapshot install..."
-    if uv tool install --reinstall --from "$OBAI_SRC" obai 2>/dev/null; then
+    if uv tool install --reinstall --from "$OBAI_SRC" obai >"$INSTALL_LOG" 2>&1; then
         ok "OBaI CLI installed (snapshot — re-run setup after code changes)"
     else
         fail "Could not install OBaI CLI with uv."
-        echo "  Try manually:"
+        diagnose_install_failure "$INSTALL_LOG"
+        echo ""
+        echo "  Or try manually:"
         echo "    uv tool install --editable \"$OBAI_SRC\""
         echo "  Or run from source:"
         echo "    cd \"$OBAI_SRC\" && uv run obai"
@@ -497,8 +554,19 @@ step "7/8 Launching Web UI"
 WEB_PORT=8090
 info "Starting OBaI Web UI on port $WEB_PORT..."
 
-if command -v obai &>/dev/null; then
-    obai web --port "$WEB_PORT" &
+# Prefer the binary step 6 just installed over whatever `obai` PATH resolves
+# to. An activated virtualenv shadows ~/.local/bin, and the repo-root .venv
+# carries older floors than src/obai — launching that one starts the hub
+# against a stale openai SDK, which fails on settings the current code
+# offers. The uv-tool install is editable, so it still runs from source.
+OBAI_BIN="$HOME/.local/bin/obai"
+if [ ! -x "$OBAI_BIN" ]; then
+    OBAI_BIN="$(command -v obai 2>/dev/null || true)"
+fi
+
+if [ -n "$OBAI_BIN" ]; then
+    info "Launching via $OBAI_BIN"
+    "$OBAI_BIN" web --port "$WEB_PORT" &
     WEB_PID=$!
 elif [ -f "$OBAI_SRC/clients/web/server.py" ]; then
     uv run --directory "$OBAI_SRC" obai web --port "$WEB_PORT" &
@@ -602,8 +670,10 @@ echo "  Quick start:"
 echo "    obai status                              # Check server connectivity"
 echo "    obai query \"What is AAPL trading at?\"    # Single query"
 echo "    obai chat                                # Interactive REPL"
-echo "    obai config show                         # View API key status"
+echo "    obai config show                         # Keys + hub model/effort"
 echo "    obai config set-key TAVILY_API_KEY       # Add/update a key"
+echo "    obai config set-model gpt-5.6-terra      # Hub model (restart to apply)"
+echo "    obai config set-effort high              # Hub reasoning effort"
 echo ""
 echo "  MCP Inspector (optional, for MCP server testing):"
 echo "    Docs: https://modelcontextprotocol.io/docs/tools/inspector"

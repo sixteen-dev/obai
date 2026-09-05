@@ -6,6 +6,17 @@ to avoid a scipy dependency.
 
 import math
 
+# The unit each Greek is returned in. Callers must report these rather than
+# assume a convention: theta is annualized here, while chain-snapshot Greeks
+# from market-data providers are conventionally quoted per day.
+GREEK_UNITS: dict[str, str] = {
+    "delta": "change in option price per $1 move in the underlying, per share",
+    "gamma": "change in delta per $1 move in the underlying, per share",
+    "theta": "USD per share per year (divide by 365 for per-calendar-day decay)",
+    "vega": "USD per share per 1 percentage-point change in volatility",
+    "rho": "USD per share per 1 percentage-point change in the risk-free rate",
+}
+
 
 def _norm_cdf(x: float) -> float:
     """Standard normal cumulative distribution function.
@@ -164,8 +175,9 @@ def bs_greeks(
             preserves the original (no-dividend) behavior.
 
     Returns:
-        Dict with keys: delta, gamma, theta, vega, rho.
-        Vega and rho are per 1% move (divided by 100).
+        Dict with keys: delta, gamma, theta, vega, rho. Theta is annualized
+        (per year); vega and rho are per 1% move (divided by 100). See
+        ``GREEK_UNITS`` for the unit strings callers should report.
     """
     option_type = _normalize_option_type(option_type)
     if time <= 0.0 or sigma <= 0.0:

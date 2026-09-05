@@ -267,9 +267,9 @@ def _process_day(  # noqa: PLR0913
 
     # Step 3: Re-check exits so a stop/TP pierced on the entry bar binds that
     # same bar. Freshly-opened lots were not exit-checked in Step 1 (they did
-    # not exist yet). Re-running is idempotent for positions already evaluated
-    # in Step 1 — the bar's low/high and prior-bar exit signal are unchanged,
-    # so only newly-opened lots can close here.
+    # not exist yet). Only newly-opened lots can close here, and for those
+    # _check_position_exit considers price levels alone — the prior bar's exit
+    # signal is what Step 1 already acted on.
     _check_all_exits(
         current_date=current_date,
         symbol_arrays=symbol_arrays,
@@ -381,7 +381,12 @@ def _check_position_exit(
         if hit:
             return "take_profit"
 
-    # Signal-based exit: check previous bar's exit signal
+    # Signal-based exit: check previous bar's exit signal. A lot opened on this
+    # bar was opened BY that same prior bar, so its exit flag has already been
+    # spent and reading it again would close the position on the bar it opened.
+    # Price levels above still bind, which is what the entry-bar recheck is for.
+    if arrays.date_to_idx.get(lot.entry_date) == bar_idx:
+        return ""
     if bar_idx > 0 and arrays.exits[bar_idx - 1]:
         return "signal"
 

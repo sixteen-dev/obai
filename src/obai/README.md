@@ -146,9 +146,9 @@ uv run python test_connection.py
 
 ### Key Components
 
-**Input Guardrail** (gpt-4o-mini): Validates queries before processing. Rejects non-financial questions to save API costs.
+**Input Guardrail** (gpt-5.6-luna): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub** (gpt-5.5): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-5.6-terra, `max` effort): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
 **Specialists** (9 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
@@ -157,7 +157,7 @@ uv run python test_connection.py
 4. **Options Agent** (:8004): Options chains, Greeks, strike selection
 5. **Screener Agent** (:8005): Stock screening, ticker lookup
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
-7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.1 for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
+7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.6-terra for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
 
@@ -171,7 +171,7 @@ When a query needs data from multiple domains, the **Central Hub orchestrates**:
 ```
 User: "What's my portfolio worth? I have AAPL 50%, MSFT 50%"
                     ↓
-            Central Hub (gpt-5.5)
+           Central Hub (gpt-5.6-terra)
             /                  \
    portfolio_analysis      market_data_analysis
    (parse positions)         (get prices)
@@ -191,15 +191,44 @@ Key points:
 ### Models
 
 ```bash
-export ORCHESTRATOR_MODEL=gpt-5.5      # Needs strong reasoning
-export SPECIALIST_MODEL=gpt-5-mini    # Cost-effective for tools
+export ORCHESTRATOR_MODEL=gpt-5.6-terra  # Needs strong reasoning (shipped default)
+export SPECIALIST_MODEL=gpt-5.6-luna     # Cost-effective for tools
 ```
 
 Per-agent overrides:
 ```bash
-export MARKET_DATA_MODEL=gpt-5-mini         # Override for specific agent
-export STRATEGY_MODEL=gpt-5.1               # Strategy default; cheaper than the hub's gpt-5.5 with comparable backtest output
+export MARKET_DATA_MODEL=gpt-5.6-luna       # Override for specific agent
+export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; same model the hub ships with
 ```
+
+### Reasoning Effort
+
+Every agent's effort tier is one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` is in the OpenAI SDK's own type but every `gpt-5.6` model rejects it at request time, so `ReasoningEffort` in `core_agents/config.py` does not include it.)
+
+```bash
+export ORCHESTRATOR_REASONING_EFFORT=high   # Hub (default: medium)
+export SPECIALIST_REASONING_EFFORT=medium   # Specialist default
+export STRATEGY_REASONING_EFFORT=high       # Also CRYPTO_, PREDICTION_MARKETS_
+```
+
+### Hub Settings File (`~/.obai/settings.json`)
+
+The hub's model and reasoning effort — and only those two — are user-settable without touching the environment. `core_agents/hub_settings.py` owns the file; the web UI settings modal and `obai config set-model` / `obai config set-effort` both write it, so the two clients (separate processes, each building its own hub) agree on one source of truth.
+
+```json
+{
+  "hub_model": "gpt-5.6-terra",
+  "hub_reasoning_effort": "max"
+}
+```
+
+`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts stay code-owned.
+
+`AgentConfig.settings_customise_sources` inserts this file **below** the environment, so resolution is init kwargs > env > `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` therefore still win — deliberately, since the eval A/B comparison and the E2E gate pin the hub model by injecting env. Any surface that writes the file must warn when the matching variable is set, or the write looks like a no-op.
+
+An absent or empty file means "use the shipped defaults" (fresh installs and upgrades both land there — no migration). A file that exists but does not parse or validate raises `ValueError`; user-facing callers must report it rather than fall back, so nobody is silently moved to another price tier.
+
+The web server hot-applies a saved change: `PATCH /api/settings` calls `HubBridge.apply_hub_settings`, which mutates `agent.model`, `agent.model_settings.reasoning`, and the compaction threshold on the live hub (the SDK re-resolves both per turn), plus the matching `AgentConfig` fields so `/api/status` stays honest. It never waits on the query lock — `run_query` holds that for a whole streamed answer — so a change that lands mid-answer is queued and applied by the next query, and the payload's `pending_apply` says so. Env-pinned fields are skipped, keeping the precedence above intact. Other clients each hold their own hub in their own process and pick the change up on the next launch.
 
 ### Prompts
 

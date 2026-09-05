@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
+import numpy as np
 import polars as pl
 import pytest
 
 from src.engine.indicators import compute_indicators, get_supported_indicators
-from src.models.strategy import IndicatorConfig
+from src.models.strategy import (
+    Condition,
+    DataConfig,
+    IndicatorConfig,
+    Operand,
+    RuleSet,
+    StrategyDefinition,
+    Universe,
+)
+from src.server import _prepare_symbol_signals
 
 
 class TestComputeIndicators:
@@ -188,6 +198,95 @@ class TestGetSupportedIndicators:
         assert "high" in raw
         assert "low" in raw
         assert "volume" in raw
+
+    def test_chaining_a_prior_indicator_as_source_is_disclosed(self) -> None:
+        """The registry must say `source` accepts an earlier indicator's id.
+
+        Indicators compute in order into one frame, so an indicator can be
+        built on another - realized volatility is STDDEV over a ROC series.
+        Nothing announced that, and an agent asked for exactly that filter
+        declared it unrepresentable, dropped it, and backtested half the
+        requested rule. `second_source` documents the same capability for
+        dual-input indicators; plain `source` never did.
+        """
+        result = get_supported_indicators()
+
+        assert "source_note" in result
+        note = result["source_note"]
+        assert "id" in note
+        assert "order" in note
+
+
+class TestIndicatorChaining:
+    """An indicator may source the column another indicator produced."""
+
+    def _series(self, n: int = 400) -> pl.DataFrame:
+        closes = [100.0 + (i % 17) * 0.5 for i in range(n)]
+        return pl.DataFrame(
+            {
+                "date": [date(2020, 1, 1) + timedelta(days=i) for i in range(n)],
+                "open": closes,
+                "high": [c + 1.0 for c in closes],
+                "low": [c - 1.0 for c in closes],
+                "close": closes,
+                "volume": [1_000_000] * n,
+            }
+        )
+
+    def test_indicator_can_source_an_earlier_indicator(self) -> None:
+        """Realized volatility: STDDEV over a ROC series, no warnings."""
+        result, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+            ],
+        )
+
+        assert warnings == []
+        assert "vol_20d" in result.columns
+        assert result["vol_20d"].drop_nulls().len() > 0
+
+    def test_an_adaptive_reference_chains_three_deep(self) -> None:
+        """A volatility series can carry its own rolling reference level.
+
+        This is what makes a threshold adaptive rather than a tuned constant,
+        and it is the capability whose absence was wrongly assumed.
+        """
+        result, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+                IndicatorConfig(id="vol_ref", type="SMA", params={"length": 100}, source="vol_20d"),
+            ],
+        )
+
+        assert warnings == []
+        assert result["vol_ref"].drop_nulls().len() > 0
+
+    def test_sourcing_an_indicator_declared_later_is_reported(self) -> None:
+        """Order matters, and getting it wrong must not pass silently.
+
+        Compute is a single forward pass, so a forward reference has no column
+        to read. That has to surface as a warning rather than a missing filter
+        the backtest then runs without.
+        """
+        _, warnings = compute_indicators(
+            self._series(),
+            [
+                IndicatorConfig(
+                    id="vol_20d", type="STDDEV", params={"length": 20}, source="ret_1d"
+                ),
+                IndicatorConfig(id="ret_1d", type="ROC", params={"length": 1}, source="close"),
+            ],
+        )
+
+        assert any("vol_20d" in w for w in warnings), warnings
 
 
 class TestVWAPIndicator:
@@ -425,3 +524,120 @@ class TestDualInputIndicators:
         # Correlation between close and its EMA should be high
         valid = result.filter(pl.col("corr_20").is_not_nan() & pl.col("corr_20").is_not_null())
         assert valid["corr_20"].mean() > 0.5  # type: ignore[operator]
+
+
+class TestWarmupBarsAreUndefined:
+    """A warming-up indicator must be undefined, not NaN (guards signal firing)."""
+
+    def test_talib_warmup_is_null_not_nan(self) -> None:
+        """TA-Lib emits NaN, which compares True against a threshold in Polars.
+
+        ADX(14) needs 27 bars before it is finite. Left as NaN, `adx > 25` is
+        True on every one of those bars, so a strategy enters on an indicator
+        that has no value yet. Null propagates through the comparison instead.
+        """
+        n = 60
+        df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 1)] * n,
+                "open": np.linspace(100, 140, n),
+                "high": np.linspace(101, 141, n),
+                "low": np.linspace(99, 139, n),
+                "close": np.linspace(100, 140, n),
+                "volume": [1_000_000] * n,
+            }
+        )
+        config = IndicatorConfig(id="adx", type="ADX", params={"length": 14})
+
+        result, _ = compute_indicators(df, [config])
+
+        assert result["adx"].is_nan().sum() == 0
+        assert result["adx"].is_null().sum() > 0
+        fired = result.select((pl.col("adx") > 25).alias("x"))["x"]
+        assert fired[:27].fill_null(False).sum() == 0
+
+    def test_defined_bars_are_untouched(self) -> None:
+        """Only the warm-up is undefined; real values must survive intact."""
+        n = 60
+        close = np.linspace(100, 140, n)
+        df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 1)] * n,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [1_000_000] * n,
+            }
+        )
+        config = IndicatorConfig(id="sma", type="SMA", params={"length": 20})
+
+        result, _ = compute_indicators(df, [config])
+
+        assert result["sma"].is_null().sum() == 19
+        assert result["sma"][19] == pytest.approx(float(np.mean(close[:20])))
+
+
+class TestUnprimedIndicatorWarning:
+    """A window that opens inside an indicator's lookback must say so."""
+
+    def _frame(self, n: int) -> pl.DataFrame:
+        close = np.linspace(100, 140, n)
+        return pl.DataFrame(
+            {
+                "date": [date(2023, 1, 1) + timedelta(days=i) for i in range(n)],
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [1_000_000] * n,
+            }
+        )
+
+    def test_warns_when_the_window_opens_before_the_indicator_is_primed(self) -> None:
+        """ADX(14) needs 27 bars; a 20-bar pre-roll leaves the window blind."""
+        strategy = StrategyDefinition(
+            name="adx",
+            universe=Universe(symbols=["AAA"]),
+            data_config=DataConfig(start_date="2023-01-21", end_date="2023-03-01"),
+            indicators=[IndicatorConfig(id="adx", type="ADX", params={"length": 14})],
+            entry_rules=RuleSet(
+                conditions=[
+                    Condition(
+                        left=Operand(indicator="adx"),
+                        operator="greater_than",
+                        right=Operand(constant=25.0),
+                    )
+                ],
+                logic="AND",
+            ),
+            exit_rules=RuleSet(conditions=[], logic="AND"),
+        )
+
+        _, warnings = _prepare_symbol_signals(self._frame(60), strategy, "2023-01-21")
+
+        assert any("adx" in w and "no value until bar" in w for w in warnings)
+
+    def test_no_warning_once_the_pre_roll_is_long_enough(self) -> None:
+        """A window opening after the lookback must stay quiet."""
+        strategy = StrategyDefinition(
+            name="sma",
+            universe=Universe(symbols=["AAA"]),
+            data_config=DataConfig(start_date="2023-01-21", end_date="2023-03-01"),
+            indicators=[IndicatorConfig(id="sma", type="SMA", params={"length": 5})],
+            entry_rules=RuleSet(
+                conditions=[
+                    Condition(
+                        left=Operand(indicator="sma"),
+                        operator="greater_than",
+                        right=Operand(constant=1.0),
+                    )
+                ],
+                logic="AND",
+            ),
+            exit_rules=RuleSet(conditions=[], logic="AND"),
+        )
+
+        _, warnings = _prepare_symbol_signals(self._frame(60), strategy, "2023-01-21")
+
+        assert warnings == []

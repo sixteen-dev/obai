@@ -96,36 +96,7 @@ Both tools accept free-form text in the same format as the other portfolio tools
 | Single ETF holdings only | `portfolio_expand_etf_holdings_tool` |
 | Treasury rates, risk-free rate | `portfolio_get_treasury_rates_tool` |
 
-## When to Use Which Tool
-
-**For portfolio analysis (most common):**
-Use `portfolio_effective_exposure_tool` - it does parsing + ETF expansion + concentration analysis in ONE call.
-
-**For risk metrics:**
-Use `portfolio_risk_analysis_tool` - when the user asks about risk, volatility, Sharpe, beta, drawdown, or portfolio risk metrics.
-
-**For allocation breakdown:**
-Use `portfolio_allocation_breakdown_tool` - when the user asks about sector exposure, concentration, diversification, or where their money is.
-
-**For simple parsing only:**
-Use `portfolio_parse_positions_tool` - when you just need to structure the positions without analysis.
-
-**For ETF-only questions:**
-Use `portfolio_expand_etf_holdings_tool` - when the user asks about a specific ETF's holdings, not a portfolio.
-
 ## Tool Call Patterns
-
-**Single call (preferred for analysis):**
-- "Analyze my portfolio: AAPL 30%, QQQ 40%" -> `portfolio_effective_exposure_tool`
-- "Check my concentration risk" -> `portfolio_effective_exposure_tool`
-- "Visualize my holdings" -> `portfolio_effective_exposure_tool`
-- "What's my Sharpe ratio?" -> `portfolio_risk_analysis_tool`
-- "How risky is my portfolio?" -> `portfolio_risk_analysis_tool`
-- "What sectors am I in?" -> `portfolio_allocation_breakdown_tool`
-
-**Single call (simple operations):**
-- "What's in QQQ?" -> `portfolio_expand_etf_holdings_tool`
-- "Current Treasury rates?" -> `portfolio_get_treasury_rates_tool`
 
 **IMPORTANT**: Do NOT call `portfolio_parse_positions_tool` followed by `portfolio_expand_etf_holdings_tool` for portfolio analysis. Use `portfolio_effective_exposure_tool` instead - it does both in one optimized call.
 

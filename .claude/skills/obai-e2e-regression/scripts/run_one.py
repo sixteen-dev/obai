@@ -43,16 +43,6 @@ CLI_TIMEOUT_S = 900.0
 # bounded fetch/retry window so complete evidence is not killed mid-retry.
 INSPECT_TIMEOUT_S = 45.0
 
-ASYNC_JOB_ID_RE = re.compile(
-    # The label may be followed by an inline "id: value" / "id = value" or a
-    # markdown-style label whose value sits on the next line ("Job ID\n<id>").
-    # Requiring at least a colon/equals or a newline keeps prose such as
-    # "Job ID is running" from being mistaken for an id.
-    r"\bjob[_ ]?id\b[ \t]*"
-    r"(?:[:=][ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)`?"
-    r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?)`?",
-    re.IGNORECASE,
-)
 ASYNC_ETA_RE = re.compile(r"Estimated\s*Time:?\s*~?\s*(\d+)\s*seconds?", re.IGNORECASE)
 ASYNC_BUFFER_S = 30
 ASYNC_MAX_WAIT_S = 600
@@ -76,9 +66,13 @@ from preflight import (  # noqa: E402
     normalize_opik_url,
     redact_sensitive_text,
 )
+from judge_packet import ASYNC_JOB_ID_RE  # noqa: E402
 from resolve_trace import TraceLookupError, find_trace_by_marker  # noqa: E402
 
-CACHE_SCHEMA_VERSION = 3
+# 4: bound ~/.obai/settings.json (hub model + reasoning effort) into the
+# runtime source tree. Fingerprints minted under 3 predate that binding and
+# cannot attest which hub ran, so they must not be reused.
+CACHE_SCHEMA_VERSION = 4
 MARKER_TEMPLATE = "[OBaI regression correlation: {marker}. Do not repeat this marker.]"
 ASYNC_MAX_POLLS = 2
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled", "expired", "not_found"}
@@ -90,6 +84,11 @@ ASYNC_HARNESS_FAILURE_STATUSES = {
     "session_id_missing",
     "session_id_mismatch",
 }
+# Every status above ends the poll loop, but only these mean the harness could
+# not obtain trustworthy evidence. A poll that ran, exited 0 and answered
+# without echoing its job ID back is the product's behaviour, and the judge
+# scores it against the case contract instead of discarding the run.
+ASYNC_FOLLOWUP_FAULT_STATUSES = ASYNC_HARNESS_FAILURE_STATUSES - {"job_id_missing"}
 ASYNC_STATUS_RE = re.compile(
     r"\bstatus\b[^a-z0-9_]{0,20}"
     r"(queued|running|pending|in[_ -]?progress|completed|failed|cancelled|expired|not[_ -]?found)\b",
@@ -453,6 +452,13 @@ def _hash_file(path: Path) -> str | None:
 
 
 def _hash_tree(paths: list[Path], *, root: Path) -> str:
+    """Hash named files and source trees into one order-independent digest.
+
+    A named path that does not exist contributes nothing, so an optional
+    config file that is absent hashes the same on every machine. An empty
+    file is not the same input: it still contributes its path marker, so
+    creating one changes the digest.
+    """
     digest = hashlib.sha256()
     files: list[Path] = []
     source_suffixes = {
@@ -561,7 +567,16 @@ def runtime_environment_binding() -> dict[str, dict[str, str]]:
 
 
 def runtime_source_paths(repo_root: Path) -> list[Path]:
-    """Return source/config inputs shared by manifest and per-case fingerprints."""
+    """Return source/config inputs shared by manifest and per-case fingerprints.
+
+    ``~/.obai/settings.json`` carries the user-chosen hub model and reasoning
+    effort, which the web UI and ``obai config`` write without touching the
+    environment. It is bound here so a hub swap cannot produce a byte-identical
+    fingerprint and serve a cached result for a configuration that never ran.
+    An absent file — the normal state on a fresh machine — is skipped by
+    ``_hash_tree`` and is distinct from an empty one, which still folds in its
+    path marker.
+    """
     return [
         repo_root / "src",
         repo_root / "skills",
@@ -571,6 +586,7 @@ def runtime_source_paths(repo_root: Path) -> list[Path]:
         SCRIPT_DIR,
         Path.home() / ".obai" / ".env",
         Path.home() / ".obai" / "preferences.json",
+        Path.home() / ".obai" / "settings.json",
     ]
 
 
@@ -1213,7 +1229,7 @@ def build_packet(
         harness_status = "async_followup_failed"
     elif followup and (
         followup.get("timed_out")
-        or followup.get("status") in ASYNC_HARNESS_FAILURE_STATUSES
+        or followup.get("status") in ASYNC_FOLLOWUP_FAULT_STATUSES
         or followup.get("evidence_complete") is False
     ):
         harness_status = "async_followup_failed"

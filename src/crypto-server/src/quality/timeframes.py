@@ -140,9 +140,17 @@ def compute_coverage(
     returned = len(returned_starts)
     missing = max(0, expected - returned)
     missing_pct = (missing / expected) if expected else 0.0
+    # The close of the last bar counted in ``expected``. Derived from the bar
+    # count rather than from ``end_ts``, which is ``now`` shifted by a step and
+    # so lands mid-bar.
+    evaluated_end = min(
+        requested_end,
+        datetime.fromtimestamp(start_ts + expected * step, tz=UTC),
+    )
     return Coverage(
         start=requested_start.isoformat(),
         end=requested_end.isoformat(),
+        evaluated_end=evaluated_end.isoformat(),
         expected_intervals=expected,
         returned_intervals=returned,
         missing_intervals=missing,

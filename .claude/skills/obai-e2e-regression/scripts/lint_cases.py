@@ -47,6 +47,8 @@ ASSERTION_KEYS = frozenset(
         "manual_assertions",
     }
 )
+LEXICAL_ASSERTION_KIND = "lexical"
+ASSERTION_KINDS = frozenset({"structural", LEXICAL_ASSERTION_KIND})
 RELATIVE_TIME_RE = re.compile(
     r"\b(today|tonight|tomorrow|yesterday|current|currently|latest|now|"
     r"next\s+(?:week|month|quarter|year)|last\s+complete)\b",
@@ -151,7 +153,139 @@ def _parse_iso_date(value: object) -> date | None:
         return None
 
 
-def _validate_assertions(case: dict[str, Any], issues: list[LintIssue], case_id: str) -> None:
+def _validate_text_spec(
+    spec: object,
+    spec_field: str,
+    field: str,
+    issues: list[LintIssue],
+    case_id: str,
+    *,
+    strict: bool,
+) -> None:
+    """Validate the shape of one required_text/forbidden_text mapping spec.
+
+    Args:
+        spec: The candidate spec object taken from the assertion list.
+        spec_field: Dotted field path used to locate the spec in messages.
+        field: Owning assertion field, ``required_text`` or ``forbidden_text``.
+        issues: Accumulator the findings are appended to.
+        case_id: Case the spec belongs to.
+        strict: When true, an undeclared ``kind`` is an error.
+    """
+    if not isinstance(spec, dict):
+        _issue(
+            issues,
+            "error",
+            "invalid-text-assertion",
+            f"{spec_field} must be a string or text/regex mapping",
+            case_id,
+            spec_field,
+        )
+        return
+    allowed = {"text", "regex", "case_sensitive", "kind"}
+    if field == "forbidden_text":
+        # Meaningful only here: required_text is already scored
+        # against the asserting clauses.
+        allowed.add("only_when_asserted")
+    text_value = spec.get("text")
+    regex_value = spec.get("regex")
+    has_one_pattern = (isinstance(text_value, str) and not regex_value) or (
+        isinstance(regex_value, str) and not text_value
+    )
+    if (
+        set(spec) - allowed
+        or not has_one_pattern
+        or ("case_sensitive" in spec and not isinstance(spec["case_sensitive"], bool))
+        or ("only_when_asserted" in spec and not isinstance(spec["only_when_asserted"], bool))
+    ):
+        _issue(
+            issues,
+            "error",
+            "invalid-text-assertion",
+            f"{spec_field} must contain exactly one string text/regex plus any of "
+            f"{sorted(allowed - {'text', 'regex'})}",
+            case_id,
+            spec_field,
+        )
+        return
+    if isinstance(regex_value, str):
+        try:
+            re.compile(regex_value)
+        except re.error as exc:
+            _issue(
+                issues,
+                "error",
+                "invalid-text-assertion-regex",
+                f"{spec_field} regex does not compile: {exc}",
+                case_id,
+                spec_field,
+            )
+    _validate_assertion_kind(spec, spec_field, field, issues, case_id, strict=strict)
+
+
+def _validate_assertion_kind(
+    spec: dict[str, Any],
+    spec_field: str,
+    field: str,
+    issues: list[LintIssue],
+    case_id: str,
+    *,
+    strict: bool,
+) -> None:
+    """Validate the ``kind`` classification of one shape-valid text spec.
+
+    Args:
+        spec: The shape-validated spec mapping.
+        spec_field: Dotted field path used to locate the spec in messages.
+        field: Owning assertion field, ``required_text`` or ``forbidden_text``.
+        issues: Accumulator the findings are appended to.
+        case_id: Case the spec belongs to.
+        strict: When true, an undeclared ``kind`` is an error.
+    """
+    kind = spec.get("kind")
+    if kind is None:
+        if strict:
+            # Absent kind is treated as structural at judging time; --strict is
+            # what keeps new specs from inheriting that default unexamined.
+            _issue(
+                issues,
+                "error",
+                "missing-assertion-kind",
+                f"{spec_field} must declare kind: structural or lexical",
+                case_id,
+                spec_field,
+            )
+        return
+    if kind not in ASSERTION_KINDS:
+        # Exact match, matching the judge: a near-miss spelling is not silently
+        # read as lexical by either side, it is an error here and a hard gate there.
+        _issue(
+            issues,
+            "error",
+            "invalid-assertion-kind",
+            f"{spec_field} kind must be exactly one of {sorted(ASSERTION_KINDS)}",
+            case_id,
+            spec_field,
+        )
+        return
+    if field == "forbidden_text" and kind == LEXICAL_ASSERTION_KIND:
+        # A forbidden_text is a fabrication or safety guard - fabricated numbers,
+        # a false execution claim, out-of-scope content. Marking one lexical
+        # downgrades an auto-fail to a diagnostic line that only a human reviewer
+        # would catch, so the suite never gets to make that trade.
+        _issue(
+            issues,
+            "error",
+            "lexical-forbidden-text",
+            f"{spec_field} must be structural: a forbidden_text is a hard safety gate",
+            case_id,
+            spec_field,
+        )
+
+
+def _validate_assertions(
+    case: dict[str, Any], issues: list[LintIssue], case_id: str, *, strict: bool
+) -> None:
     assertions = case.get("assertions")
     if assertions is None:
         return
@@ -188,52 +322,17 @@ def _validate_assertions(case: dict[str, Any], issues: list[LintIssue], case_id:
             )
         elif isinstance(value, list):
             for index, spec in enumerate(value):
-                spec_field = f"assertions.{field}[{index}]"
+                # Bare string specs carry no kind and are always structural.
                 if isinstance(spec, str):
                     continue
-                if not isinstance(spec, dict):
-                    _issue(
-                        issues,
-                        "error",
-                        "invalid-text-assertion",
-                        f"{spec_field} must be a string or text/regex mapping",
-                        case_id,
-                        spec_field,
-                    )
-                    continue
-                unknown = set(spec) - {"text", "regex", "case_sensitive"}
-                text_value = spec.get("text")
-                regex_value = spec.get("regex")
-                has_one_pattern = (isinstance(text_value, str) and not regex_value) or (
-                    isinstance(regex_value, str) and not text_value
+                _validate_text_spec(
+                    spec,
+                    f"assertions.{field}[{index}]",
+                    field,
+                    issues,
+                    case_id,
+                    strict=strict,
                 )
-                if (
-                    unknown
-                    or not has_one_pattern
-                    or ("case_sensitive" in spec and not isinstance(spec["case_sensitive"], bool))
-                ):
-                    _issue(
-                        issues,
-                        "error",
-                        "invalid-text-assertion",
-                        f"{spec_field} must contain exactly one string text/regex and optional "
-                        "boolean case_sensitive",
-                        case_id,
-                        spec_field,
-                    )
-                    continue
-                if isinstance(regex_value, str):
-                    try:
-                        re.compile(regex_value)
-                    except re.error as exc:
-                        _issue(
-                            issues,
-                            "error",
-                            "invalid-text-assertion-regex",
-                            f"{spec_field} regex does not compile: {exc}",
-                            case_id,
-                            spec_field,
-                        )
     required_evidence = assertions.get("required_evidence")
     if required_evidence is not None and (
         not isinstance(required_evidence, list)
@@ -409,8 +508,15 @@ def _detect_cycles(cases_by_id: dict[str, dict[str, Any]], issues: list[LintIssu
         visit(case_id, [case_id])
 
 
-def lint_suite(raw: object, *, as_of: date | None = None) -> list[LintIssue]:
-    """Return deterministic schema/freshness/cost findings for a parsed suite."""
+def lint_suite(raw: object, *, as_of: date | None = None, strict: bool = False) -> list[LintIssue]:
+    """Return deterministic schema/freshness/cost findings for a parsed suite.
+
+    Args:
+        raw: Parsed suite mapping.
+        as_of: Date the freshness/expiry checks are evaluated against.
+        strict: Authoring-time mode; additionally requires every text assertion
+            mapping to declare an explicit ``kind``.
+    """
     issues: list[LintIssue] = []
     if not isinstance(raw, dict):
         return [LintIssue("error", "invalid-root", "suite root must be a mapping")]
@@ -865,7 +971,7 @@ def lint_suite(raw: object, *, as_of: date | None = None) -> list[LintIssue]:
                     case_id,
                     field,
                 )
-        _validate_assertions(entry, issues, case_id)
+        _validate_assertions(entry, issues, case_id, strict=strict)
         _validate_async_contract(entry, issues, case_id)
 
     for case_id, case in cases_by_id.items():
@@ -1083,7 +1189,11 @@ def main() -> int:
         type=date.fromisoformat,
         help="Override the suite-timezone date (YYYY-MM-DD)",
     )
-    parser.add_argument("--strict", action="store_true", help="Treat warnings as failures")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as failures, and require an explicit kind on every text assertion",
+    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args()
 
@@ -1093,7 +1203,7 @@ def main() -> int:
         print(f"ERROR: cannot load {args.cases}: {exc}", file=sys.stderr)
         return 2
 
-    issues = lint_suite(raw, as_of=args.as_of)
+    issues = lint_suite(raw, as_of=args.as_of, strict=args.strict)
     if args.json_output:
         print(json.dumps({"issues": [issue.to_dict() for issue in issues]}, indent=2))
     else:

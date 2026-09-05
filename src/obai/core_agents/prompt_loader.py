@@ -23,7 +23,7 @@ def load_prompt(agent_name: str, *, commit: str | None = None, **variables: str)
     Args:
         agent_name: Name of agent (e.g., "central_hub_base", "market_data").
         commit: Optional Opik version commit hash for rollback.
-        **variables: Variables to substitute in template (e.g., model="gpt-4o").
+        **variables: Variables to substitute in template (e.g., model="gpt-5.6-sol").
 
     Returns:
         Prompt text with variables substituted.

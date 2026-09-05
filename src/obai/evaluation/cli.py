@@ -245,14 +245,17 @@ def print_tool_breakdown(trace: Trace) -> None:
 
 async def run_query_with_trace(
     query: str,
-    model: str,
+    model: str | None,
     verbose: bool = False,
 ) -> Trace:
     """Run a query and capture full trace.
 
+    The hub always runs on its configured model; ``model`` only labels the
+    captured trace. Pass None to label it with the model that actually ran.
+
     Args:
         query: User query.
-        model: Model to use.
+        model: Model label for the trace, or None to use the hub's own model.
         verbose: Whether to print verbose output.
 
     Returns:
@@ -260,8 +263,6 @@ async def run_query_with_trace(
     """
     # Import agent components
     try:
-        from agents import Runner
-
         from core_agents.central_hub_agent import (
             clear_agent_activity_tracking,
             create_central_hub,
@@ -307,19 +308,15 @@ async def run_query_with_trace(
             console.print("[red]Agent not initialized[/red]")
             raise typer.Exit(1)
 
-        result = Runner.run_streamed(
-            starting_agent=hub.agent,
-            input=query,
-        )
-
-        # Process streaming events
-        async for event in result.stream_events():
+        # Drive the hub through the same entry point the web, CLI and TUI use.
+        # Running hub.agent directly skipped the sandbox run config the hub
+        # builds, and a SandboxAgent without one raises UserError, so no case
+        # scored at all. It also skipped the phase-aware answer assembly,
+        # terminal passthrough and cache behaviour that decide what a user
+        # actually receives -- scoring a different execution path than the one
+        # that ships is the single thing this harness must not do.
+        async for event in hub.run(query):
             capture.process_sdk_event(event)
-
-            # Print progress if verbose
-            if verbose:
-                # We'll print the full trace at the end
-                pass
 
         # Attach raw MCP outputs from specialist inner calls
         capture.set_inner_tool_outputs(get_inner_tool_outputs())
@@ -363,7 +360,7 @@ def query(
     console.print()
 
     # Run query
-    trace = asyncio.run(run_query_with_trace(query_text, model or "gpt-4o", verbose))
+    trace = asyncio.run(run_query_with_trace(query_text, model, verbose))
 
     # Print output based on verbosity
     if verbose:
@@ -1364,7 +1361,7 @@ def evaluate_cmd(
             )
             trace = await run_query_with_trace(
                 query=test_cases[0].query,
-                model=model or "gpt-4o",
+                model=model,
                 verbose=verbose,
             )
             result = await evaluator.evaluate_trace(trace, test_cases[0])
@@ -1518,17 +1515,17 @@ def experiment_cmd(
     so you can compare them side-by-side in the Opik UI.
 
     Examples:
-        # Compare current models vs gpt-5.4 (3 test cases)
-        python -m evaluation experiment --name "v54" --compare gpt-5.4 --limit 3
+        # Compare current models vs a candidate hub model (3 test cases)
+        python -m evaluation experiment --name "cand" --compare gpt-5.6-terra --limit 3
 
         # Compare with both orchestrator and specialist overrides
-        python -m evaluation experiment --name "v54" --compare gpt-5.4,gpt-5.4-mini --smoke
+        python -m evaluation experiment --name "cand" --compare gpt-5.6-terra,gpt-5.6-luna --smoke
 
         # Single experiment (no comparison)
         python -m evaluation experiment --name "baseline" --limit 3
 
         # Smoke test comparison without LLM scorers (cheapest)
-        python -m evaluation experiment --name "quick" --compare gpt-5.4 --smoke --no-builtin
+        python -m evaluation experiment --name "quick" --compare gpt-5.6-terra --smoke --no-builtin
     """
     print_banner()
     console.print()
@@ -1542,7 +1539,7 @@ def experiment_cmd(
         console.print("[red]--ids must contain at least one non-empty test ID[/red]")
         raise typer.Exit(2)
 
-    # Parse --compare: "gpt-5.4" or "gpt-5.4,gpt-5.4-mini"
+    # Parse --compare: "gpt-5.6-terra" or "gpt-5.6-terra,gpt-5.6-luna"
     compare_orchestrator: str | None = None
     compare_specialist: str | None = None
     if compare:

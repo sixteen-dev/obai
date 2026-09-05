@@ -38,7 +38,9 @@ async def research_company_profile(
                 ),
                 search_type="auto",
                 num_results=settings.default_num_results,
-                category="company",
+                # No category: Exa's company index cannot filter by date, and
+                # days_back is this tool's documented parameter. Honouring the
+                # caller's window beats an internal relevance hint.
                 highlight_query=f"{company_name} strategy products market position growth",
                 start_published_date=_days_ago(days_back),
                 exclude_domains=["wikipedia.org"],

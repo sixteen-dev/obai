@@ -11,7 +11,7 @@ from typing import Any
 
 import polars as pl
 
-from ..clients.fmp_client import FMPClient
+from ..clients.fmp_client import FMPClient, price_basis_for
 from ..logging_config import get_logger
 from .store import DataStore
 
@@ -70,7 +70,7 @@ class DataDownloader:
 
         """
         last_mod = self.data_store.get_last_modified(symbol, timeframe=timeframe)
-        if last_mod is None:
+        if last_mod is None or self._basis_is_stale(symbol, timeframe):
             return False
         age = datetime.now(UTC).timestamp() - last_mod
         if age >= (self.freshness_hours * 3600):
@@ -91,6 +91,27 @@ class DataDownloader:
 
         return True
 
+    def _basis_is_stale(self, symbol: str, timeframe: str) -> bool:
+        """Report whether cached rows sit on a different adjustment basis.
+
+        Prices fetched on one basis are not comparable with prices fetched on
+        another, so a cache written before the basis changed has to be
+        refetched rather than extended. Rows predating basis tracking report
+        None, which counts as stale precisely because their basis is unknown.
+
+        Args:
+            symbol: Stock ticker symbol.
+            timeframe: Bar timeframe.
+
+        Returns:
+            True when something is cached and its basis is not the current one.
+
+        """
+        if self.data_store.get_date_range(symbol, timeframe=timeframe) is None:
+            return False
+        stored = self.data_store.get_price_basis(symbol, timeframe=timeframe)
+        return stored != price_basis_for(timeframe)
+
     async def download_symbol(
         self,
         symbol: str,
@@ -110,6 +131,16 @@ class DataDownloader:
             Complete DataFrame for the requested date range.
 
         """
+        if self._basis_is_stale(symbol, timeframe):
+            removed = self.data_store.delete_symbol(symbol, timeframe=timeframe)
+            logger.warning(
+                "price_basis_cache_purged",
+                symbol=symbol,
+                timeframe=timeframe,
+                rows=removed,
+                basis=price_basis_for(timeframe),
+            )
+
         existing = self.data_store.read_ohlcv(symbol, timeframe=timeframe)
         existing_range = self.data_store.get_date_range(symbol, timeframe=timeframe)
         req_start = date.fromisoformat(start_date)
@@ -118,14 +149,17 @@ class DataDownloader:
         fetches, anchor = _plan_cache_fetches(existing, existing_range, req_start, req_end)
 
         # Cache overlaps the request: probe once for a provider re-adjustment
-        # (e.g. a post-cache split) that rebased the whole cached series. On
-        # drift the full range is re-fetched and freshly fetched rows win the
-        # merge, so the overlap is not a stale pre-split / post-split mix.
+        # (e.g. a post-cache split) that rebased the whole cached series. The
+        # rebasing applies to every cached row, not only the ones this request
+        # happens to span, so the refetch covers the union of the cache and the
+        # request and the stale rows are dropped rather than merged -- keeping
+        # them would join two price scales into one series with a fabricated
+        # jump at the seam.
         drift = False
         if anchor is not None and existing is not None:
             drift = await self._detect_adjustment_drift(existing, symbol, timeframe, anchor)
             if drift:
-                fetches = [(start_date, end_date)]
+                fetches = [_full_refresh_span(existing_range, req_start, req_end)]
 
         if not fetches:
             if existing is not None:
@@ -308,6 +342,33 @@ def _to_date(val: date | datetime) -> date:
     return val
 
 
+def _full_refresh_span(
+    existing_range: tuple[date, date] | tuple[datetime, datetime] | None,
+    req_start: date,
+    req_end: date,
+) -> tuple[str, str]:
+    """Return the span to refetch when the provider has re-adjusted the series.
+
+    The rebasing touches every cached row, so refetching only the requested
+    window would leave the rest of the cache on the old scale. The span is the
+    union of the cache and the request.
+
+    Args:
+        existing_range: Cached (start, end) range, or None when absent.
+        req_start: Requested start date (inclusive).
+        req_end: Requested end date (inclusive).
+
+    Returns:
+        An ISO ``(start, end)`` pair covering both the cache and the request.
+
+    """
+    if existing_range is None:
+        return req_start.isoformat(), req_end.isoformat()
+    cached_start = _to_date(existing_range[0])
+    cached_end = _to_date(existing_range[1])
+    return min(cached_start, req_start).isoformat(), max(cached_end, req_end).isoformat()
+
+
 def _plan_cache_fetches(
     existing: pl.DataFrame | None,
     existing_range: tuple[date, date] | tuple[datetime, datetime] | None,
@@ -356,9 +417,9 @@ def _merge_frames(
 ) -> pl.DataFrame:
     """Merge cached and freshly fetched rows, deduplicating by date.
 
-    On adjustment drift the freshly fetched rows are concatenated last and win
-    every date collision (``keep="last"``) so the rebased series replaces the
-    stale cache. Otherwise the original dedup (existing rows retained) is kept.
+    On adjustment drift the freshly fetched rows replace the cache entirely,
+    because every cached row sat on the superseded scale. Otherwise the
+    original dedup (existing rows retained) is kept.
 
     Args:
         existing: Cached OHLCV frame, or None when absent.
@@ -372,7 +433,11 @@ def _merge_frames(
     if existing is None or existing.is_empty():
         return new_df
     if drift:
-        return pl.concat([existing, new_df]).unique(subset=["date"], keep="last")
+        # Every cached row sat on the old scale and the refetch spans the whole
+        # cache, so the fresh rows replace it outright. Keeping a date the
+        # provider no longer returns would leave one bar of the old scale
+        # inside the rebased series.
+        return new_df
     return pl.concat([existing, new_df]).unique(subset=["date"])
 
 

@@ -6,7 +6,7 @@ import asyncio
 import json
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -814,7 +814,13 @@ async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
         risk_free_rate=rate,
         risk_free_rate_source=source,
     )
-    return result.to_dict()
+    # Walk-forward reports pre-roll per fold, and the trimmed frames it receives
+    # no longer show it. The scarcest symbol governs: one unprimed symbol is
+    # what makes a fold's indicators unreliable, not the average across them.
+    return {
+        **result.to_dict(),
+        "warmup_bars": min(exec_result.warmup_bars.values(), default=None),
+    }
 
 
 # --- Internal Helpers ---
@@ -1118,6 +1124,9 @@ class _ExecutionResult:
     benchmark_df: pl.DataFrame | None = None
     symbol_dfs: dict[str, pl.DataFrame] = field(default_factory=dict)
     portfolio_result: PortfolioBacktestResult | None = None
+    # Pre-start bars that primed the indicators, per symbol. Counted before the
+    # warm-up is trimmed away, since nothing downstream can recover it after.
+    warmup_bars: dict[str, int] = field(default_factory=dict)
 
 
 def _forward_fill_nan(arr: np.ndarray[Any, np.dtype[np.float64]]) -> None:
@@ -1281,8 +1290,53 @@ def _prepare_symbol_signals(
     timeframe = strategy.data_config.timeframe
     enriched, warnings = compute_indicators(extended_df, strategy.indicators, timeframe=timeframe)
     trimmed = _trim_warmup(enriched, requested_start)
+    warnings.extend(_unprimed_indicator_warnings(trimmed, strategy.indicators))
     signaled = generate_signals(trimmed, strategy.entry_rules, strategy.exit_rules)
     return signaled, warnings
+
+
+def _unprimed_indicator_warnings(
+    windowed: pl.DataFrame, indicators: list[IndicatorConfig]
+) -> list[str]:
+    """Report indicators still undefined once the requested window has started.
+
+    The pre-roll is sized from the largest declared parameter, but a TA-Lib
+    lookback runs longer than that: ADX(14) needs 27 bars, TEMA(20) needs 57.
+    The window can therefore open before an indicator holds a value, and those
+    bars cannot produce a signal. Measuring the primed frame says so exactly,
+    without this having to model each indicator's lookback formula.
+
+    Args:
+        windowed: Signal frame already trimmed to the requested window.
+        indicators: Strategy indicator configs.
+
+    Returns:
+        One warning per indicator that is undefined on the window's first bar.
+
+    """
+    if windowed.height == 0:
+        return []
+
+    messages: list[str] = []
+    for config in indicators:
+        if config.id not in windowed.columns:
+            continue
+        series = windowed[config.id]
+        if not series.dtype.is_float() or series[0] is not None:
+            continue
+        defined_at = series.is_not_null().arg_true()
+        if defined_at.is_empty():
+            messages.append(
+                f"Indicator '{config.id}' has no value anywhere in the requested "
+                "window, so it cannot generate signals. Widen the date range or "
+                "shorten its lookback."
+            )
+            continue
+        messages.append(
+            f"Indicator '{config.id}' has no value until bar {defined_at[0]} of the "
+            "requested window; no signal can fire before then."
+        )
+    return messages
 
 
 async def _execute_strategy(  # noqa: PLR0915
@@ -1313,6 +1367,9 @@ async def _execute_strategy(  # noqa: PLR0915
     # Warm-up bars prime indicators only. Coverage checks, the benchmark, and
     # the data-quality report all measure the REQUESTED window, so trim here.
     symbol_dfs = {sym: _trim_warmup(df, requested_start) for sym, df in extended_dfs.items()}
+    warmup_bars = {
+        sym: extended_dfs[sym].height - trimmed.height for sym, trimmed in symbol_dfs.items()
+    }
 
     # Check data coverage — warn prominently if FMP returned far less than requested
     data_warnings = _check_data_coverage(
@@ -1372,6 +1429,7 @@ async def _execute_strategy(  # noqa: PLR0915
             warnings=all_warnings,
             benchmark_df=benchmark_df,
             symbol_dfs=symbol_dfs,
+            warmup_bars=warmup_bars,
         )
 
     prepped: dict[str, Any] = {}
@@ -1386,7 +1444,12 @@ async def _execute_strategy(  # noqa: PLR0915
 
     # Route to portfolio backtester if allocation_mode is "portfolio"
     if strategy.position_sizing.allocation_mode == "portfolio":
-        return _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs)
+        # Stamped here rather than threaded through: only this scope ever saw
+        # the untrimmed frames, and portfolio mode has no other use for them.
+        return replace(
+            _run_portfolio_mode(prepped, strategy, all_warnings, benchmark_df, symbol_dfs),
+            warmup_bars=warmup_bars,
+        )
 
     # For multi-symbol independent mode, compute per-symbol spread estimates
     # and run each symbol with its own config (spread_estimates is per-symbol)
@@ -1435,6 +1498,7 @@ async def _execute_strategy(  # noqa: PLR0915
         warnings=all_warnings,
         benchmark_df=benchmark_df,
         symbol_dfs=symbol_dfs,
+        warmup_bars=warmup_bars,
     )
 
 
@@ -1656,6 +1720,38 @@ async def health_check(_request: Request) -> JSONResponse:
             "server": "backtest-server",
             "version": __version__,
         },
+    )
+
+
+@mcp.custom_route("/health/ready", methods=["GET"])
+async def health_check_ready(_request: Request) -> JSONResponse:
+    """Readiness endpoint — 200 once bootstrap() has wired every component.
+
+    Returns:
+        JSONResponse with status 200 when ready, 503 while still initializing.
+
+    """
+    missing = [
+        name
+        for name in (
+            "fmp_client",
+            "db_manager",
+            "data_store",
+            "downloader",
+            "cache",
+            "job_store",
+            "settings",
+        )
+        if getattr(_state, name) is None
+    ]
+    return JSONResponse(
+        {
+            "status": "not_ready" if missing else "ready",
+            "server": "backtest-server",
+            "version": __version__,
+            "missing": missing,
+        },
+        status_code=503 if missing else 200,
     )
 
 

@@ -22,7 +22,7 @@ or reducing its estimate fails lint just as an overrun does.
 | Tier | Cases | Minimum planning estimate | Selection |
 |---|---:|---:|---|
 | `smoke` | 8 | 45 | Explicit cheaper route check |
-| `core` | 21 | 181 | Exact default release gate |
+| `core` | 21 | 189 | Exact default release gate |
 | `live` | 8 | 48 | Explicit provider/freshness canary |
 
 The legacy YAML/CLI field is named `estimated_api_calls`, but it is only a minimum planning estimate for billable model requests, including guardrail, hub, skill-load continuation, and specialist turns. `--max-api-calls` is a **between-case start limit**, not a hard cap: one already-started hub or specialist agent can exceed its estimate before control returns to the runner. The runner counts actual Opik `llm` spans after every case and refuses to start another case when accounting is unavailable or the next estimate would cross the limit. Use an OpenAI project budget/rate limit as the hard external spending backstop.
@@ -54,7 +54,7 @@ Core gate:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-e2e-regression/scripts/run_suite.py \
-  --execute --max-api-calls 181 --run-dir <new-run-dir>
+  --execute --max-api-calls 189 --run-dir <new-run-dir>
 ```
 
 Smoke gate, only when the user asks for smoke/cheaper coverage:
@@ -80,7 +80,9 @@ Execution is serial. `run_suite.py` automatically runs the zero-model-call prefl
 
 Preflight resolves the inherited environment plus the CLI-managed `~/.obai/.env` with the same no-override precedence as `obai`. That effective environment is shared with `obai status` and paid query subprocesses, so Opik/model/MCP settings cannot point the helper and CLI at different services. `OPENAI_API_KEY` may come from either source; an inherited value has precedence. The key is never printed or copied into run artifacts.
 
-Before a paid subprocess can start, the runner writes `<run-dir>/cases.snapshot.yaml` once, binds its SHA-256 and path in the manifest, and passes only that snapshot to `run_one.py`. The manifest also binds the exact runner/preflight paths and bytes, prompt/runtime tree, the content digest of `~/.obai/.env`, effective model/MCP/cache/Opik/base-URL settings, `~/.obai/preferences.json`, and domain-separated digests of active secret settings including the *effective* OpenAI credential (inherited environment first, then `~/.obai/.env`); no secret value is serialized. The snapshot, manifest, runtime, helper bytes, preferences, and credential identity are rechecked before every case, and `run_one.py` rechecks its full input fingerprint before the initial request and each async poll.
+Before a paid subprocess can start, the runner writes `<run-dir>/cases.snapshot.yaml` once, binds its SHA-256 and path in the manifest, and passes only that snapshot to `run_one.py`. The manifest also binds the exact runner/preflight/judge-packet paths and bytes, prompt/runtime tree, the content digest of `~/.obai/.env`, effective model/MCP/cache/Opik/base-URL settings, `~/.obai/preferences.json`, `~/.obai/settings.json`, and domain-separated digests of active secret settings including the *effective* OpenAI credential (inherited environment first, then `~/.obai/.env`); no secret value is serialized. The snapshot, manifest, runtime, helper bytes, preferences, hub settings, and credential identity are rechecked before every case, and `run_one.py` rechecks its full input fingerprint before the initial request and each async poll.
+
+`~/.obai/settings.json` is where the web UI and `obai config` store the user-chosen hub model and reasoning effort, so binding it is what stops a hub swap from producing a byte-identical fingerprint and replaying a cached result for a configuration that never ran. An absent file is the normal state and hashes identically everywhere. Precedence is unchanged: `ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` in the environment still outrank the file, so the gate can pin the hub by injecting those variables, and both the injected value and the file it overrides stay bound in the fingerprint.
 
 Each case receives a cryptographically random 256-bit nonce in an fsynced immutable attempt marker. `run_one.py` will not run from `--id`/`--run-dir` alone: it must validate the execute manifest, snapshot, run ID, marker, and nonce, then atomically consume the nonce in `<run-dir>/claims/` before the first model request. Packets and judgments bind the attempt, claim, manifest, snapshot, and input fingerprints. The old `.agents/.../scripts/run_one.py` entry is deliberately disabled. Never edit, copy, or replace run-directory artifacts.
 
@@ -134,11 +136,31 @@ For `relative` and `live` cases, the manifest records one suite-wide calendar an
 - `inconclusive_provider`, `inconclusive_harness`, `inconclusive_missing_evidence`: no pass claim is allowed.
 - `skipped_dependency`: no paid child call occurred because its parent branch or verdict made it inapplicable.
 
+Every `required_text` / `forbidden_text` spec declares a `kind`. A `structural`
+spec pins a phrasing-independent fact — a ticker, currency code, ISO date,
+identifier, number, or a field name the product contractually emits — and a
+miss is a hard `fail_product`. A `lexical` spec pins an English phrasing of a
+free-form answer; a miss records a `diagnostics` entry and adds an unexecuted
+assertion, so the case routes to `needs_semantic_review` and the offline
+reviewer decides whether the property holds in substance. An absent `kind` is
+read as `structural`, so an unclassified spec keeps the hard-gate behavior;
+`--strict` lint requires the key so the corpus cannot drift back.
+
+This split exists because the deterministic layer cannot tell a wrong answer
+from a differently-worded right one. Across eight runs, 55 of 73 failed checks
+were a correct answer phrased differently than a regex expected, and each fix
+widened one regex until the next run found a new sentence. Never resolve a red
+`lexical` diagnostic by widening its regex — either the reviewer confirms the
+substance and the case passes, or the substance is genuinely missing and the
+review fails it.
+
 Unexpected undeclared financial specialists are listed for semantic review because they can indicate both routing drift and excess spend. Any financial-specialist error span is a failure or provider-inconclusive result, including errors from optional routes. An explicit top-level structured error in a specialist or required-skill output (`isError: true`, `is_error: true`, or exact status `error`/`failed`/`failure`) is treated like `error_info`, including when the output is a bounded JSON-object string; generic `error` keys and prose are not. For async cases, the declared financial specialist and required routing skill must execute successfully on the initial turn and every poll, and errors from any executed turn remain authoritative even though response assertions use the final completed poll. `cost.max_specialist_calls` is enforced separately on every authoritative CLI-turn trace (the initial turn and each async poll): each exact outer financial-specialist span counts, including `allowed_extras`, while nested LLM/provider spans do not. Missing raw spans make these checks evidence-inconclusive rather than falling back to curated or CLI claims.
 
 ## Required offline semantic closeout
 
-Do not rerun a case to judge it. For every `needs_semantic_review` result, read its `packet_path`, the full response, raw trace/spans, parent packets for chains, and every exact string in `unexecuted_assertions`. Recompute material arithmetic and verify timestamps, units, source lineage, premise checks, missing-data handling, and cross-turn identity from captured evidence.
+Do not rerun a case to judge it. Review every result that still carries `unexecuted_assertions`: both `needs_semantic_review` and `fail_product`. A deterministic failure does not cancel a case's remaining assertions, and skipping them lets a second, unrelated defect ship inside a case that is already red. Semantic findings can only add to a deterministic failure, never overturn it.
+
+For each, read its `packet_path`, the full response, raw trace/spans, parent packets for chains, and every exact string in `unexecuted_assertions`. Recompute material arithmetic and verify timestamps, units, source lineage, premise checks, missing-data handling, and cross-turn identity from captured evidence.
 
 Write `<run-dir>/semantic_reviews.json` with this shape. Copy `run_id`, `case_fingerprint`, `packet_sha256`, and assertion strings exactly from the preliminary artifacts. Every assertion needs at least one real packet-field reference; a prose-only evidence string is rejected:
 
@@ -204,5 +226,7 @@ handoff. Do not use `--open` unless the user asks to open the browser. Report se
 ## Maintaining cases
 
 Keep the paid corpus surgical. Each case must protect a distinct routing, quantitative correctness, source-grounding, freshness, safety, or state-handoff invariant. Use `live`/`relative` policy and an explicit timezone/freshness SLA for current requests; use old years only for intentional frozen historical windows with a versioned data contract, oracle, or immutable fixture. Replace unverified market premises with a premise check or conditional branch. Fully specify valuation conventions, costs, timestamps, portfolio constraints, and no-trade/refusal behavior so a real retail investor, quant analyst, or hedge-fund reviewer can tell correct from merely fluent.
+
+Classify every new `required_text` / `forbidden_text` spec as `structural` or `lexical` when you add it — `--strict` lint fails otherwise. Prefer a structural assertion: pin the ticker, the number, the identifier, or the emitted field name rather than the sentence the model wraps around it. Reach for `lexical` only when the property genuinely has no phrasing-independent form, and pair it with a `manual_assertions` entry that states the property in full, because the reviewer, not the regex, is what decides that case.
 
 Move near-duplicates, broad variants, and stochastic repeats to `src/obai/evaluation/test_cases/suite.yaml`; do not increase paid coverage unless it adds a materially new failure mode. In that broader corpus, every financial-data, backtest, portfolio, prediction-market, or research case must declare `live`, `relative`, or `frozen`; only genuinely timeless routing/capability checks may omit the policy. `live` requires a recent explicit as-of/provider timestamp, while `relative` binds interpretation to the trace's evaluation-time anchor without incorrectly treating legitimate historical or future horizon dates as stale quotes. Date scoring is not applicable to a correctly declared no-data/refusal/error outcome.

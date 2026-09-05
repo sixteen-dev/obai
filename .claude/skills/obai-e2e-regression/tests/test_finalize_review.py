@@ -15,15 +15,23 @@ def _stable_test_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key-not-for-api-use")
 
 
-def _preliminary(run_dir: Path) -> dict:
+def _preliminary(
+    run_dir: Path,
+    *,
+    deterministic_failure: bool = False,
+    expected_outcome: str = "success",
+) -> dict:
+    assertions: dict[str, object] = {"manual_assertions": ["verify arithmetic"]}
+    if deterministic_failure:
+        assertions["required_text"] = [{"regex": "phrase the answer never contains"}]
     case = {
         "id": "T1",
         "feature": "semantic arithmetic review",
         "query": "Recompute the captured value.",
         "tier": "core",
         "estimated_api_calls": 1,
-        "expected_outcome": "success",
-        "assertions": {"manual_assertions": ["verify arithmetic"]},
+        "expected_outcome": expected_outcome,
+        "assertions": assertions,
     }
     plan = run_suite.choose_cases([case], max_api_calls=1)
     cases_bytes = yaml.safe_dump(
@@ -107,7 +115,9 @@ def _preliminary(run_dir: Path) -> dict:
         packet_bytes=packet_bytes,
         expected_execution_binding=execution_binding,
     )
-    assert judgment["verdict"] == "needs_semantic_review"
+    expected_verdict = "fail_product" if deterministic_failure else "needs_semantic_review"
+    assert judgment["verdict"] == expected_verdict
+    assert judgment["unexecuted_assertions"]
     (run_dir / "judgments").mkdir()
     (run_dir / "judgments" / "T1.json").write_text(json.dumps(judgment))
     preliminary = {
@@ -132,7 +142,7 @@ def _preliminary(run_dir: Path) -> dict:
         "model_request_accounting_complete": True,
         "abort_reason": None,
         "results": [judgment],
-        "verdict_counts": {"needs_semantic_review": 1},
+        "verdict_counts": {expected_verdict: 1},
         "exit_code": run_suite.EXIT_PRODUCT_FAILURE,
     }
     (run_dir / "results.json").write_text(json.dumps(preliminary))
@@ -142,6 +152,7 @@ def _preliminary(run_dir: Path) -> dict:
 def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
     packet_sha256 = preliminary["results"][0]["packet_sha256"]
     case_fingerprint = preliminary["results"][0]["case_fingerprint"]
+    pending_assertions = preliminary["results"][0]["unexecuted_assertions"]
     return {
         "schema_version": 2,
         "run_id": "run-1",
@@ -153,7 +164,10 @@ def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
                 "summary": "Recomputed against the captured specialist payload.",
                 "assertions": [
                     {
-                        "assertion": "manual_assertions[0]:verify arithmetic",
+                        # Every pending assertion must be decided; finalize_review
+                        # fails closed on a missing one, so derive the list rather
+                        # than hardcoding the manual assertion alone.
+                        "assertion": pending,
                         "status": status,
                         "evidence": {
                             "analysis": "The captured specialist value 12 reconciles to the final value 12.",
@@ -167,6 +181,7 @@ def _reviews(preliminary: dict, *, status: str = "pass") -> dict:
                             ],
                         },
                     }
+                    for pending in pending_assertions
                 ],
             }
         ],
@@ -313,3 +328,56 @@ def test_tampered_manifest_or_cases_snapshot_cannot_finalize(tmp_path: Path, tar
 
     with pytest.raises(ReviewError, match="manifest|snapshot|fingerprint"):
         finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+
+def test_failing_case_still_has_its_semantic_assertions_executed(tmp_path: Path) -> None:
+    """A deterministic failure must not cancel the semantic pass.
+
+    Every fail_product case in the last paid run left its manual assertions
+    unexecuted, so a 365x Greek-unit error went unreported inside a case
+    that was already red for an unrelated text assertion.
+    """
+    preliminary = _preliminary(tmp_path, deterministic_failure=True)
+
+    result = finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+    case = result["results"][0]
+    assert case["verdict"] == "fail_product"
+    assert case["deterministic_verdict"] == "fail_product"
+    assert case["semantic_review"]["assertions"][0]["status"] == "pass"
+
+
+def test_passing_semantic_assertions_cannot_rescue_a_failed_case(tmp_path: Path) -> None:
+    """Review adds findings to a deterministic failure; it never overturns one."""
+    preliminary = _preliminary(tmp_path, deterministic_failure=True)
+
+    result = finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+    assert result["exit_code"] == 1
+
+
+def test_failing_case_without_a_review_fails_closed(tmp_path: Path) -> None:
+    """Pending assertions on a red case are still mandatory work."""
+    preliminary = _preliminary(tmp_path, deterministic_failure=True)
+    reviews = _reviews(preliminary)
+    reviews["reviews"] = []
+
+    with pytest.raises(ReviewError, match="missing semantic review"):
+        finalize_results(preliminary, reviews, run_dir=tmp_path)
+
+
+def test_an_unrecognised_degraded_outcome_finalizes_as_degraded_not_pass(tmp_path: Path) -> None:
+    """A reviewer certifies the branch was taken, not that the case succeeded.
+
+    The judge routes a declared degraded branch it could not recognise from
+    wording into review, carrying observed_outcome "success". Keying the green
+    verdict on that alone let an all-pass review stamp "deterministic and
+    evidence-backed semantic checks passed" on a case contracted for a refusal.
+    """
+    preliminary = _preliminary(tmp_path, expected_outcome="partial_refusal")
+    assert preliminary["results"][0]["observed_outcome"] == "success"
+
+    result = finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+    assert result["results"][0]["verdict"] == "pass_degraded"
+    assert result["exit_code"] == 0

@@ -1,17 +1,26 @@
 """Tests for scenario analysis and position risk profiling."""
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import pytest
 
-from src.engine.pricing import bs_price
+from src.engine.pricing import bs_greeks, bs_price
 from src.engine.scenarios import (
     _payoff_at_expiry,
     position_pnl_scenarios,
     position_risk_profile,
 )
-from src.server import options_compute_greeks_tool
+from src.server import _years_to_expiry, options_compute_greeks_tool
 
 # A comfortably-future expiry so _years_to_expiry stays well above zero.
 _FUTURE_EXPIRY = "2027-01-15"
+
+
+def _expiry_in_days(days: int) -> str:
+    """Expiry date `days` calendar days ahead in US market time (YYYY-MM-DD)."""
+    today = datetime.now(tz=ZoneInfo("America/New_York")).date()
+    return (today + timedelta(days=days)).isoformat()
 
 
 class TestPnlScenarios:
@@ -257,12 +266,10 @@ class TestRiskProfile:
         assert result["max_loss"] == "unlimited"
 
     def test_short_put_finite_loss(self) -> None:
-        """Short put with low strike has finite loss within the scan range.
+        """Short put with a low strike has a finite loss.
 
-        A short put at strike=30 with underlying=100 means the scan range
-        [50, 150] fully captures the payoff. At spot=50 the put is far OTM
-        so the payoff curve has flattened — max_loss is detected as finite
-        (not 'unlimited').
+        The scan runs from a spot of zero, so the whole payoff is captured
+        and the deepest loss is the strike less the premium.
         """
         contract: dict[str, object] = {
             "underlying_price": 100.0,
@@ -276,9 +283,90 @@ class TestRiskProfile:
             "risk_free_rate": 0.045,
         }
         result = position_risk_profile([contract])
-        # Strike=30 is far below the scan floor (50), so max loss is finite
         assert isinstance(result["max_loss"], float)
-        assert result["max_loss"] != "unlimited"
+        assert result["max_loss"] == pytest.approx(-2990.0)
+
+    def test_long_put_profit_is_bounded_by_a_zero_underlying(self) -> None:
+        """A put's upside ends where the underlying does, at a spot of zero.
+
+        The scan used to start at half the spot and treat that arbitrary floor
+        as an open boundary, so any put still sloped there was reported as
+        "unlimited". Nothing can fall below zero, so the true maximum is the
+        strike less the premium.
+        """
+        contract: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "put",
+            "direction": "long",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        result = position_risk_profile([contract])
+        assert result["max_profit"] == pytest.approx(9600.0)
+        assert result["max_loss"] == pytest.approx(-400.0)
+
+    def test_short_put_loss_is_bounded_by_a_zero_underlying(self) -> None:
+        """The mirror case: a short put's loss is capped, never unlimited."""
+        contract: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "put",
+            "direction": "short",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        result = position_risk_profile([contract])
+        assert result["max_loss"] == pytest.approx(-9600.0)
+        assert result["max_profit"] == pytest.approx(400.0)
+
+    def test_long_straddle_keeps_unlimited_upside(self) -> None:
+        """A put leg must not mask the call leg's open-ended upside.
+
+        Scanning down to a spot of zero puts the straddle's global maximum on
+        the put side, so a rule that asked whether the top of the scan held
+        the maximum would report a finite profit for a position that has none.
+        The test that matters is whether the payoff is still climbing there.
+        """
+        call: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "call",
+            "direction": "long",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        put = dict(call, option_type="put")
+        result = position_risk_profile([call, put])
+        assert result["max_profit"] == "unlimited"
+        assert result["max_loss"] == pytest.approx(-800.0)  # exact: both legs at the strike
+
+    def test_short_straddle_keeps_unlimited_downside(self) -> None:
+        """The mirror: a short call leg leaves the loss open-ended."""
+        call: dict[str, object] = {
+            "underlying_price": 100.0,
+            "strike": 100.0,
+            "expiry_years": 0.25,
+            "option_type": "call",
+            "direction": "short",
+            "quantity": 1,
+            "entry_premium": 4.0,
+            "iv": 0.30,
+            "risk_free_rate": 0.045,
+        }
+        put = dict(call, option_type="put")
+        result = position_risk_profile([call, put])
+        assert result["max_loss"] == "unlimited"
+        assert result["max_profit"] == pytest.approx(800.0)  # exact: both legs at the strike
 
     def test_uppercase_call_payoff_matches_greeks(self) -> None:
         """Uppercase 'CALL' legs must compute a CALL payoff, not a put payoff.
@@ -397,3 +485,102 @@ class TestComputeGreeksTool:
         implied = solved["implied_volatility"]
         assert implied != pytest.approx(seed_vol)
         assert implied > seed_vol + 0.05
+
+    async def test_price_and_greeks_use_the_solved_iv_not_the_seed(self) -> None:
+        """The whole payload must describe one volatility: the solved IV.
+
+        Reproduces the captured CORE-OPT-MATH call (spot 100, strike 100,
+        60-day call, r=4%, q=3%, seed 30%, premium $5.50), which published
+        price 4.8968 / delta 0.526987 — the seed-vol numbers — alongside a
+        solved IV of 33.7641%. Priced at the solved IV the payload price is
+        the supplied premium and delta sits above the seed-vol delta.
+        """
+        expiry = _expiry_in_days(60)
+        seed_vol = 0.30
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            volatility=seed_vol,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+            market_price=5.50,
+        )
+        seed_delta = bs_greeks(
+            100.0, 100.0, _years_to_expiry(expiry), 0.04, seed_vol, "call", 0.03
+        )["delta"]
+
+        assert result["price"] == pytest.approx(5.50, abs=1e-3)
+        assert result["greeks"]["delta"] != pytest.approx(seed_delta, abs=1e-5)
+        assert result["greeks"]["delta"] > seed_delta
+        assert result["breakeven"] == pytest.approx(100.0 + result["price"], abs=1e-3)
+
+    async def test_seed_volatility_still_prices_when_no_market_price(self) -> None:
+        """Without a market_price the payload stays at the seed, unchanged."""
+        expiry = _expiry_in_days(60)
+        seed_vol = 0.30
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            volatility=seed_vol,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+        )
+        time_to_expiry = _years_to_expiry(expiry)
+        seed_price = bs_price(100.0, 100.0, time_to_expiry, 0.04, seed_vol, "call", 0.03)
+        seed_delta = bs_greeks(100.0, 100.0, time_to_expiry, 0.04, seed_vol, "call", 0.03)["delta"]
+
+        assert result["price"] == pytest.approx(seed_price, abs=1e-3)
+        assert result["greeks"]["delta"] == pytest.approx(seed_delta, abs=1e-5)
+        assert result["implied_volatility"] == pytest.approx(seed_vol)
+
+    async def test_volatility_used_names_the_pricing_volatility(self) -> None:
+        """volatility_used pins what priced the payload: solved IV, else seed."""
+        expiry = _expiry_in_days(60)
+        seed_vol = 0.30
+        solved = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            volatility=seed_vol,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+            market_price=5.50,
+        )
+        echoed = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            volatility=seed_vol,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+        )
+
+        assert solved["volatility_used"] == solved["implied_volatility"]
+        assert solved["volatility_used"] != pytest.approx(seed_vol)
+        assert echoed["volatility_used"] == pytest.approx(seed_vol)
+
+    async def test_unsolvable_market_price_declares_the_seed_fallback(self) -> None:
+        """An unreachable premium must not be laundered into a solved IV.
+
+        market_price above the no-arbitrage bound leaves the solver with no
+        root, so the payload reports no implied volatility, prices at the
+        seed, and says which happened.
+        """
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=200.0,
+            expiry_date=_expiry_in_days(60),
+            option_type="call",
+            volatility=0.30,
+            market_price=150.0,
+        )
+
+        assert result["implied_volatility"] is None
+        assert result["volatility_used"] == pytest.approx(0.30)
+        assert "iv_solve_error" in result

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.clients.exa_client import ResearchResult
 
@@ -150,3 +152,45 @@ class TestGeneralResearch:
             result = await research_general("global EV adoption rates")
 
         assert result["symbol"] is None
+
+
+class TestCompanyUrlResolutionErrors:
+    """A malformed request must not read as "this company has no competitors"."""
+
+    @pytest.mark.asyncio
+    async def test_permanent_client_error_propagates(self) -> None:
+        """A 400 is a bug in the request, not a blip; retries cannot fix it.
+
+        Swallowing it returned competitor_count 0 on every call, and the tool
+        still reported success, so nothing upstream could tell the difference
+        between a broken request and a company with no comparable peers.
+        """
+        import httpx
+
+        from src.tools.competitive_landscape import _resolve_company_url
+
+        client = MagicMock()
+        request = httpx.Request("POST", "https://api.exa.ai/search")
+        response = httpx.Response(400, request=request)
+        client.search = AsyncMock(
+            side_effect=httpx.HTTPStatusError("bad request", request=request, response=response)
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await _resolve_company_url(client, "Moderna, Inc.")
+
+    @pytest.mark.asyncio
+    async def test_transient_error_still_degrades(self) -> None:
+        """A 503 after retries leaves the rest of the answer usable."""
+        import httpx
+
+        from src.tools.competitive_landscape import _resolve_company_url
+
+        client = MagicMock()
+        request = httpx.Request("POST", "https://api.exa.ai/search")
+        response = httpx.Response(503, request=request)
+        client.search = AsyncMock(
+            side_effect=httpx.HTTPStatusError("unavailable", request=request, response=response)
+        )
+
+        assert await _resolve_company_url(client, "Moderna, Inc.") is None

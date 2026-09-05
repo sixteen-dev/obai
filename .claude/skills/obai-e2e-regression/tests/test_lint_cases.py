@@ -268,9 +268,7 @@ def test_exact_tier_policy_fails_open_downward_changes() -> None:
 def test_canonical_suite_rejects_deleted_core_case() -> None:
     cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
     raw = yaml.safe_load(cases_path.read_text())
-    raw["test_cases"] = [
-        case for case in raw["test_cases"] if case.get("id") != "CORE-FX"
-    ]
+    raw["test_cases"] = [case for case in raw["test_cases"] if case.get("id") != "CORE-FX"]
 
     issues = lint_suite(raw, as_of=date(2026, 7, 16))
 
@@ -292,9 +290,41 @@ def test_canonical_walkforward_asserts_completed_verdict_deliverable() -> None:
 
     regexes = [spec["regex"] for spec in case["assertions"]["required_text"]]
     assert any("verdict" in rx.lower() for rx in regexes)
-    assert any(
-        "accept" in rx and "reject" in rx and "needs" in rx.lower() for rx in regexes
-    )
+    assert any("accept" in rx and "reject" in rx and "needs" in rx.lower() for rx in regexes)
+
+
+def test_canonical_degraded_classifiers_recognize_real_degraded_answers() -> None:
+    """A declared degraded classifier must classify the answer it exists for.
+
+    degraded_outcome_patterns and assertions.required_text are two statements of
+    the same contract in different words, and lint only checks that the pattern
+    compiles. When they drifted apart, CORE-PORT-COVERAGE's ideal answer
+    ("Coverage Insufficient ... not reported") was scored a plain success and
+    hard-failed. These are the real phrasings observed in paid runs.
+    """
+    import re
+
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    raw = yaml.safe_load(cases_path.read_text())
+    by_id = {case["id"]: case for case in raw["test_cases"]}
+
+    observed = {
+        "CORE-PORT-COVERAGE": (
+            "**Coverage Insufficient**\n"
+            "- Priced: AAPL, MSFT, NVDA — 75% coverage\n"
+            "- Unpriced: ZZZZ — 25%\n"
+            "- Volatility, Sharpe, Sortino, and max drawdown: **not reported**\n"
+            "- ZZZZ was neither treated as cash nor renormalized away."
+        ),
+        "CORE-INVALID": (
+            "The exact quote returned no data; I'm verifying symbol validity."
+            "FAKESYM is not a recognized ticker, so no trading price is available. "
+            "No substitution was made."
+        ),
+    }
+    for case_id, response in observed.items():
+        pattern = by_id[case_id]["degraded_outcome_patterns"]["data_unavailable"]
+        assert re.search(pattern, response), f"{case_id} classifier missed its own answer"
 
 
 def test_unknown_assertion_key_is_an_error_not_silently_ignored() -> None:
@@ -348,6 +378,215 @@ def test_frozen_provider_contract_requires_explicit_revision_policy() -> None:
     )
 
     assert "provider-revision-policy-missing" in codes(issues)
+
+
+def test_skill_doc_tier_table_matches_the_case_file() -> None:
+    """The documented planning estimates must equal what cases.yaml sums to.
+
+    `--max-api-calls` is copied from this table, so a stale row makes a paid
+    run abort mid-suite. Nothing cross-checked the two until this test.
+    """
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    cases = yaml.safe_load((root / "cases" / "cases.yaml").read_text())["test_cases"]
+    doc = (root / "SKILL.md").read_text()
+
+    def totals(tier: str) -> tuple[int, int]:
+        rows = [c for c in cases if (c.get("smoke") if tier == "smoke" else c.get("tier") == tier)]
+        return len(rows), sum(c.get("estimated_api_calls", 0) for c in rows)
+
+    for tier in ("smoke", "core", "live"):
+        row = re.search(rf"^\|\s*`{tier}`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|", doc, re.M)
+        assert row is not None, f"SKILL.md has no tier row for {tier}"
+        assert (int(row.group(1)), int(row.group(2))) == totals(tier), (
+            f"SKILL.md {tier} row is stale: documented {row.groups()}, actual {totals(tier)}"
+        )
+
+
+def test_only_when_asserted_is_accepted_on_forbidden_text() -> None:
+    # Scopes a forbidden pattern to the clauses that assert, so refusing the
+    # claim is not scored as making it.
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"forbidden_text": [{"regex": "unlimited", "only_when_asserted": True}]},
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" not in codes(issues)
+
+
+def test_only_when_asserted_is_rejected_on_required_text() -> None:
+    # required_text is already scored against the asserting clauses, so the key
+    # would silently do nothing there.
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"required_text": [{"regex": "JPY", "only_when_asserted": True}]},
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" in codes(issues)
+
+
+def test_only_when_asserted_must_be_boolean() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "forbidden_text": [{"regex": "unlimited", "only_when_asserted": "yes"}]
+                },
+            )
+        )
+    )
+
+    assert "invalid-text-assertion" in codes(issues)
+
+
+def test_assertion_kind_values_are_accepted_on_both_text_fields() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "required_text": [{"regex": "JPY", "kind": "structural"}],
+                    "forbidden_text": [{"regex": "unlimited", "kind": "lexical"}],
+                },
+            )
+        ),
+        strict=True,
+    )
+
+    assert not {
+        "invalid-text-assertion",
+        "invalid-assertion-kind",
+        "missing-assertion-kind",
+    } & codes(issues)
+
+
+def test_bogus_assertion_kind_is_an_error() -> None:
+    issues = lint_suite(
+        _suite(_case("A1", assertions={"required_text": [{"regex": "JPY", "kind": "vibes"}]}))
+    )
+
+    assert "invalid-assertion-kind" in codes(issues)
+
+
+def test_missing_assertion_kind_is_an_error_only_under_strict() -> None:
+    # Fail-closed at runtime (absent kind is structural), fail-loud at authoring
+    # time so the corpus stays classified as cases are added.
+    suite = _suite(_case("A1", assertions={"required_text": [{"regex": "JPY"}]}))
+
+    assert "missing-assertion-kind" not in codes(lint_suite(suite))
+    assert "missing-assertion-kind" in codes(lint_suite(suite, strict=True))
+
+
+def test_bare_string_spec_needs_no_kind_under_strict() -> None:
+    issues = lint_suite(_suite(_case("A1", assertions={"required_text": ["JPY"]})), strict=True)
+
+    assert "missing-assertion-kind" not in codes(issues)
+
+
+def test_canonical_suite_classifies_every_text_assertion_spec() -> None:
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    raw = yaml.safe_load(cases_path.read_text())
+
+    issues = lint_suite(raw, as_of=date(2026, 7, 16), strict=True)
+
+    assert not {"invalid-assertion-kind", "missing-assertion-kind"} & codes(issues)
+
+
+def test_near_miss_kind_spelling_is_rejected_rather_than_read_as_lexical() -> None:
+    # judge_packet._is_lexical_spec matches "lexical" exactly, so anything else
+    # is a hard gate there. The linter has to reject the same spellings, or a
+    # capitalised kind would read as structural at runtime while the author
+    # believed they had marked it lexical.
+    for spelling in ("Lexical", "LEXICAL", " lexical "):
+        issues = lint_suite(
+            _suite(_case("A1", assertions={"required_text": [{"regex": "JPY", "kind": spelling}]}))
+        )
+
+        assert "invalid-assertion-kind" in codes(issues), spelling
+
+
+def test_forbidden_text_may_not_be_downgraded_to_lexical() -> None:
+    # A lexical miss routes to needs_semantic_review instead of failing the run.
+    # That is survivable for a phrasing check and not for "the answer must never
+    # claim it placed an order".
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={"forbidden_text": [{"regex": r"\border placed\b", "kind": "lexical"}]},
+            )
+        )
+    )
+
+    assert "lexical-forbidden-text" in codes(issues)
+
+
+def test_forbidden_text_stays_valid_when_marked_structural() -> None:
+    issues = lint_suite(
+        _suite(
+            _case(
+                "A1",
+                assertions={
+                    "forbidden_text": [{"regex": r"\border placed\b", "kind": "structural"}]
+                },
+            )
+        )
+    )
+
+    assert "lexical-forbidden-text" not in codes(issues)
+
+
+def _canonical_suite() -> dict:
+    cases_path = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+    return yaml.safe_load(cases_path.read_text())
+
+
+def test_canonical_suite_keeps_every_forbidden_text_structural() -> None:
+    issues = lint_suite(_canonical_suite(), as_of=date(2026, 7, 16), strict=True)
+
+    assert "lexical-forbidden-text" not in codes(issues)
+
+
+# Anchors that tie an answer to the subject or fact under test rather than to a
+# choice of words. Missing one is a wrong answer, not a differently phrased one,
+# so none of them may be downgraded to a diagnostic. Pinned by regex so that
+# editing the pattern trips this test and forces the classification to be
+# re-argued rather than inherited.
+_SAFETY_CRITICAL_REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
+    "CORE-INVALID": (r"\bFAKESYM\b",),
+    "CORE-FX": (r"\b(?:JPY|Japanese yen)\b",),
+    "CORE-GUARD-OVERREFUSAL": (r"(?i)\b(?:NVDA|Nvidia)\b",),
+    "CORE-PORT-COVERAGE": (r"\bZZZZ\b",),
+    "CORE-CRYPTO-INSPECT": (r"(?i)\bjob[_ -]?id\b|\bcrypto_bt_[0-9a-f]{6,}\b",),
+    "CORE-PM-ROUTING": (r"(?i)\bprediction markets?\b|\bPolymarket\b",),
+    "CORE-CRYPTO-SCOPE": (r"\bCoinbase\b[^.\n]{0,40}\bspot\b",),
+    "CORE-PREMISE": (r"\bNVDA\b", r"\bSPY\b"),
+    "CORE-RESEARCH": (r"https?://[^\s)]+",),
+}
+
+
+def test_canonical_suite_pins_safety_critical_required_text_as_structural() -> None:
+    by_id = {case["id"]: case for case in _canonical_suite()["test_cases"]}
+
+    for case_id, patterns in _SAFETY_CRITICAL_REQUIRED_TEXT.items():
+        specs = by_id[case_id]["assertions"]["required_text"]
+        kinds = {spec["regex"]: spec.get("kind") for spec in specs if isinstance(spec, dict)}
+        for pattern in patterns:
+            assert pattern in kinds, f"{case_id} no longer asserts {pattern!r}"
+            assert kinds[pattern] == "structural", f"{case_id} downgraded {pattern!r}"
 
 
 def test_text_assertion_regex_is_compiled_during_lint() -> None:
