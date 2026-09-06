@@ -11,6 +11,8 @@ import polars as pl
 import pytest
 
 from src import server
+from src.clients.fmp_client import FMPClient
+from src.config import Settings
 from src.engine.indicators import indicator_stack_versions
 from src.engine.walk_forward import (
     _compute_aggregates,
@@ -1209,3 +1211,83 @@ class TestWalkForwardRiskFreeWindow:
             call.args for call in fmp_client.get_period_risk_free_rate_with_source.await_args_list
         ]
         assert windows == [("2018-01-01", "2024-12-31"), ("2024-07-01", "2024-09-30")]
+
+    async def test_a_range_too_short_for_the_folds_fetches_no_yields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unsatisfiable fold count fails before the run pays for a chunked fetch."""
+        submitted: list[Any] = []
+
+        def capture_job(coro: Any, **_: Any) -> str:
+            submitted.append(coro)
+            return "job-1"
+
+        job_store = AsyncMock()
+        job_store.submit_job = MagicMock(side_effect=capture_job)
+        monkeypatch.setattr(server._state, "job_store", job_store)
+        monkeypatch.setattr(server._state, "settings", None)
+        fmp_client = AsyncMock()
+        monkeypatch.setattr(server._state, "fmp_client", fmp_client)
+        strategy_json = json.dumps(
+            {
+                **_CALLBACK_STRATEGY,
+                "data_config": {"start_date": "2022-01-01", "end_date": "2024-12-31"},
+            }
+        )
+
+        await server.backtest_walk_forward_tool(strategy_json, n_windows=40)
+        outcome = await submitted[0]
+
+        assert outcome["isError"] is True
+        assert "Walk-forward requires" in outcome["error"]["error"]
+        fmp_client.get_period_risk_free_rate_with_source.assert_not_awaited()
+
+    async def test_every_generated_fold_is_served_from_the_one_fetch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The folds the engine generates all sit inside the range fetched up front.
+
+        A real client with a recording transport runs under the real
+        walk-forward engine; the provider sees only the up-front chunks, and
+        the memo holds one series for all six folds.
+        """
+        client = FMPClient(settings=Settings(fmp_api_key="test-key"))
+        calls: list[tuple[str, str]] = []
+
+        async def record(endpoint: str, params: dict[str, str]) -> object:
+            calls.append((params["from"], params["to"]))
+            return [{"date": params["from"], "month3": 4.5}]
+
+        monkeypatch.setattr(client, "_request_with_retry", record)
+        monkeypatch.setattr(server._state, "fmp_client", client)
+        exec_result = server._ExecutionResult(
+            equity_df=pl.DataFrame(
+                {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
+            ),
+            trades=[],
+            warnings=[],
+            warmup_bars={"AAPL": 0},
+        )
+        monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
+        strategy_json = json.dumps(
+            {
+                **_CALLBACK_STRATEGY,
+                "data_config": {"start_date": "2018-01-01", "end_date": "2024-12-31"},
+            }
+        )
+        try:
+            await server._period_risk_free_rate("2018-01-01", "2024-12-31")
+            fetched = len(calls)
+            result = await walk_forward_validate(
+                strategy_json=strategy_json,
+                n_windows=3,
+                run_backtest_fn=server._run_single_backtest,
+            )
+        finally:
+            await client.close()
+
+        assert len(result.windows) == 3
+        assert len(calls) == fetched == 29
+        assert len(client._yield_series) == 1  # noqa: SLF001

@@ -27,9 +27,11 @@ FALLBACK_RISK_FREE_RATE = 0.045  # 3-month T-bill fallback when FMP unavailable
 TREASURY_CHUNK_DAYS = 90
 MAX_RISK_FREE_WINDOW_YEARS = 30
 MAX_TREASURY_CHUNKS = math.ceil(MAX_RISK_FREE_WINDOW_YEARS * 366 / TREASURY_CHUNK_DAYS)
-# Memoized windows per client. A window ending today is refetched on the next
-# UTC day so a partial window does not freeze for the life of the process.
-MAX_RISK_FREE_MEMO_ENTRIES = 64
+# Memoized yield series per client; each is a full daily window, so the bound
+# is small. A window ending today is refetched on the next UTC day so a partial
+# window does not freeze for the life of the process, and an earlier day's
+# series are dropped on the next insert.
+MAX_RISK_FREE_MEMO_ENTRIES = 16
 
 _APIKEY_PATTERN = re.compile(r"apikey=[^&\s]+")
 
@@ -553,9 +555,10 @@ class FMPClient:
         """Fetch the window's daily 3-month yields in chunks and memoize them.
 
         Returns:
-            The dated yields (possibly empty when the provider has none), or
-            None when the window exceeds the chunk cap or the provider fails;
-            a failure is not memoized, so the next lookup retries.
+            The dated yields, or None when the window exceeds the chunk cap or
+            the provider fails. A failure and an empty series are not
+            memoized, so the next lookup retries and an empty answer can never
+            shadow a later, populated series that covers the same days.
 
         """
         span_days = (end - start).days + 1
@@ -582,9 +585,15 @@ class FMPClient:
             )
             return None
 
+        if not series:
+            return series
+        today = _utc_today().isoformat()
+        self._yield_series = {
+            key: kept for key, kept in self._yield_series.items() if key[2] == today
+        }
         if len(self._yield_series) >= MAX_RISK_FREE_MEMO_ENTRIES:
             self._yield_series.pop(next(iter(self._yield_series)))
-        self._yield_series[(start, end, _utc_today().isoformat())] = series
+        self._yield_series[(start, end, today)] = series
         return series
 
     async def _fetch_treasury_chunk(

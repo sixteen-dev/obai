@@ -440,6 +440,7 @@ class TestPeriodRiskFreeRate:
         await client.get_period_risk_free_rate_with_source("2023-06-01", "2023-07-31")
 
         assert recorder.windows[-1] == ("2023-06-01", "2023-07-31")
+        assert len(client._yield_series) == 2  # noqa: SLF001
 
     async def test_a_provider_failure_is_not_memoized(
         self,
@@ -463,6 +464,53 @@ class TestPeriodRiskFreeRate:
 
         assert first == (FALLBACK_RISK_FREE_RATE, "fallback")
         assert second == (pytest.approx(0.045), "treasury_3m_period_mean")
+
+    async def test_an_empty_answer_does_not_shadow_a_later_series(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A glitch that returns nothing must not pin a window to the fallback all day.
+
+        Otherwise a walk-forward fetched afterwards would price the folds
+        inside the glitched span off the constant and their siblings off the
+        Treasury, two rate bases in one fold table.
+        """
+        populated = _RecordingTreasury()
+        glitches = iter([[]])
+
+        async def flaky(endpoint: str, params: dict[str, str]) -> object:
+            glitch = next(glitches, None)
+            if glitch is not None:
+                return glitch
+            return await populated(endpoint, params)
+
+        monkeypatch.setattr(client, "_request_with_retry", flaky)
+        glitched = await client.get_period_risk_free_rate_with_source("2020-01-01", "2020-01-30")
+        await client.get_period_risk_free_rate_with_source("2018-01-01", "2024-12-31")
+
+        fold = await client.get_period_risk_free_rate_with_source("2020-01-01", "2020-01-30")
+
+        assert glitched == (FALLBACK_RISK_FREE_RATE, "fallback")
+        assert fold == (pytest.approx(0.045), "treasury_3m_period_mean")
+
+    async def test_an_earlier_day_is_purged_on_the_next_insert(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Yesterday's series can serve nothing today, so they give up their slots."""
+        recorder = _RecordingTreasury()
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+        monkeypatch.setattr(fmp_client, "_utc_today", lambda: date(2026, 9, 5))
+        await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
+        monkeypatch.setattr(fmp_client, "_utc_today", lambda: date(2026, 9, 6))
+
+        await client.get_period_risk_free_rate_with_source("2023-02-01", "2023-02-28")
+
+        assert list(client._yield_series) == [  # noqa: SLF001
+            (date(2023, 2, 1), date(2023, 2, 28), "2026-09-06")
+        ]
 
     async def test_a_backwards_window_raises(self, client: FMPClient) -> None:
         """An end before its start is a programming error, not a provider failure."""

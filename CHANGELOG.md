@@ -159,7 +159,10 @@ with the old semantics.
   range was not honoured cannot pass today's yield off as the window's. The
   chunk cap admits the longest window the schema accepts (30 years); the
   series memo is bounded and keyed by UTC day, so a window still accruing
-  yields is refreshed daily, and a provider failure is not memoized. A
+  yields is refreshed daily; a provider failure or an empty answer is not
+  memoized, so a glitch cannot pin a span to the fallback for the day. A
+  walk-forward request whose range is too short for its fold count fails
+  before any yield is fetched. A
   provider failure, a window the provider has no yields for, or a range beyond
   the cap still falls back to 4.5% labelled `fallback`.
 

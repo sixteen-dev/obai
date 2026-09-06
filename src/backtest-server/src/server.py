@@ -51,7 +51,7 @@ from .engine.portfolio_backtester import PortfolioBacktestResult, run_portfolio_
 from .engine.session import session_end as _session_end
 from .engine.signals import count_condition_hits, generate_signals
 from .engine.spread import cs_window_for_timeframe, estimate_spread_corwin_schultz
-from .engine.walk_forward import walk_forward_validate
+from .engine.walk_forward import generate_windows, walk_forward_validate
 from .jobs import JobStatus, JobStore
 from .logging_config import configure_logging, get_logger
 from .models.indicator_catalog import INDICATOR_CATALOG, IndicatorSpec, ParamSpec
@@ -776,6 +776,9 @@ def _submit_walk_forward_job(
 
     async def _run() -> dict[str, Any]:
         try:
+            # A range too short for the fold count must fail before any yield is
+            # fetched; the validator repeats this call and reaches the same answer.
+            generate_windows(window_start, window_end, n_windows)
             # Fetch the full range's daily yields once; every fold's window sits
             # inside it, so each fold's own mean is then served without a request.
             await _period_risk_free_rate(window_start, window_end)
