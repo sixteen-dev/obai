@@ -763,8 +763,8 @@ def _submit_walk_forward_job(
     Args:
         strategy_json: Validated strategy JSON string.
         n_windows: Number of walk-forward windows.
-        window_start: First requested date, used for the risk-free rate.
-        window_end: Last requested date, used for the risk-free rate.
+        window_start: First requested date; its yields are fetched up front.
+        window_end: Last requested date; its yields are fetched up front.
 
     Returns:
         Job submission response with job_id and polling hints.
@@ -774,15 +774,15 @@ def _submit_walk_forward_job(
     # Estimate: 2 backtests per window, ~5s each
     estimated = float(n_windows * 2 * 5)
 
-    async def _run_fold(fold_json: str) -> dict[str, Any]:
-        return await _run_single_backtest(fold_json, window_start, window_end)
-
     async def _run() -> dict[str, Any]:
         try:
+            # Fetch the full range's daily yields once; every fold's window sits
+            # inside it, so each fold's own mean is then served without a request.
+            await _period_risk_free_rate(window_start, window_end)
             result = await walk_forward_validate(
                 strategy_json=strategy_json,
                 n_windows=n_windows,
-                run_backtest_fn=_run_fold,
+                run_backtest_fn=_run_single_backtest,
             )
             return result.to_dict()
         except Exception as exc:
@@ -809,23 +809,17 @@ def _submit_walk_forward_job(
     }
 
 
-async def _run_single_backtest(
-    strategy_json: str,
-    window_start: str,
-    window_end: str,
-) -> dict[str, Any]:
+async def _run_single_backtest(strategy_json: str) -> dict[str, Any]:
     """Run a single backtest from a strategy JSON string.
 
     This is the reusable backtest function passed to walk_forward_validate.
     It handles the full pipeline: parse -> download -> indicators -> signals
-    -> backtest -> metrics.
+    -> backtest -> metrics. The fold is scored against the mean yield of its
+    own dates, so its Sharpe is that fold's risk-adjusted number.
 
     Args:
-        strategy_json: JSON string of a strategy definition.
-        window_start: First date of the *requested* range, not of this fold.
-        window_end: Last date of the requested range. Every fold is scored
-            against the same full-range risk-free rate — one memoized fetch
-            for the run — so the folds stay comparable with each other.
+        strategy_json: JSON string of a strategy definition whose dates are
+            this fold's window.
 
     Returns:
         BacktestResult dict.
@@ -833,7 +827,8 @@ async def _run_single_backtest(
     """
     strategy = StrategyDefinition.from_dict(json.loads(strategy_json))
     exec_result = await _execute_strategy(strategy)
-    rate, source = await _period_risk_free_rate(window_start, window_end)
+    data_config = strategy.data_config
+    rate, source = await _period_risk_free_rate(data_config.start_date, data_config.end_date)
     result = compute_metrics(
         equity_df=exec_result.equity_df,
         trades=exec_result.trades,

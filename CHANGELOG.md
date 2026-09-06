@@ -150,13 +150,16 @@ with the old semantics.
   the historical prices did not. The rate is now the mean of the daily
   3-month yields printed inside the requested range — fetched from FMP in
   90-day chunks, because that endpoint truncates a longer request — and a
-  result discloses it as `treasury_3m_period_mean`. Walk-forward scores every
-  fold against the full requested range, so the folds stay comparable and the
-  run still costs one lookup. Rows the provider dates outside the requested
-  chunk are logged and left out of the mean, so a request whose range was not
-  honoured cannot pass today's yield off as the window's. The chunk cap admits
-  the longest window the schema accepts (30 years); the memo is bounded and
-  keyed by UTC day, so a window still accruing yields is refreshed daily. A
+  result discloses it as `treasury_3m_period_mean`. Walk-forward fetches the
+  requested range's daily yields once and scores each fold against the mean
+  of the fold's own dates, so a fold's Sharpe is that fold's number and the
+  run still costs one fetch: any window inside a series fetched that day is
+  served from it without a request. Rows the provider dates outside the
+  requested chunk are logged and left out of the mean, so a request whose
+  range was not honoured cannot pass today's yield off as the window's. The
+  chunk cap admits the longest window the schema accepts (30 years); the
+  series memo is bounded and keyed by UTC day, so a window still accruing
+  yields is refreshed daily, and a provider failure is not memoized. A
   provider failure, a window the provider has no yields for, or a range beyond
   the cap still falls back to 4.5% labelled `fallback`.
 

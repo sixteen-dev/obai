@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -34,25 +34,35 @@ async def client() -> AsyncGenerator[FMPClient, None]:
 class _RecordingTreasury:
     """Stand-in for ``_request_with_retry`` that records params and replays rows."""
 
-    def __init__(self, rows: list[Any] | None = None) -> None:
+    def __init__(self, rows: list[Any] | None = None, *, month_valued: bool = False) -> None:
         """Store the rows every call returns.
 
         Args:
             rows: Response body handed back for each recorded request. When
-                None, each request is answered with one row dated on its own
-                ``from`` day carrying a 4.5 yield, so every chunk is in-window.
+                None, each request is answered with one row per day of its
+                own ``from``..``to`` range carrying a 4.5 yield, so every
+                chunk is in-window.
+            month_valued: Make each generated row's yield its month number,
+                so a sub-window's mean is distinguishable from the whole.
 
         """
         self.rows = rows
+        self.month_valued = month_valued
         self.calls: list[dict[str, str]] = []
 
     async def __call__(self, endpoint: str, params: dict[str, str]) -> object:
         """Record one request and replay the configured rows."""
         assert endpoint == "treasury-rates"
         self.calls.append(dict(params))
-        if self.rows is None:
-            return [{"date": params["from"], "month3": 4.5}]
-        return self.rows
+        if self.rows is not None:
+            return self.rows
+        first = date.fromisoformat(params["from"])
+        last = date.fromisoformat(params["to"])
+        days = [first + timedelta(days=offset) for offset in range((last - first).days + 1)]
+        return [
+            {"date": day.isoformat(), "month3": float(day.month) if self.month_valued else 4.5}
+            for day in days
+        ]
 
     @property
     def windows(self) -> list[tuple[str, str]]:
@@ -390,8 +400,69 @@ class TestPeriodRiskFreeRate:
 
         await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
 
-        assert len(client._rfr_cache) == 2  # noqa: SLF001
+        assert len(client._yield_series) == 2  # noqa: SLF001
         assert len(recorder.calls) == 4
+
+    async def test_a_sub_window_is_served_from_a_covering_series(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A walk-forward fold inside the fetched range costs no request.
+
+        The fold's mean is its own days' mean, not the range's: March alone
+        averages 3.0 while the year averages about 6.5.
+        """
+        recorder = _RecordingTreasury(month_valued=True)
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+        await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-12-31")
+        fetched = len(recorder.calls)
+
+        rate, source = await client.get_period_risk_free_rate_with_source(
+            "2023-03-01",
+            "2023-03-31",
+        )
+
+        assert len(recorder.calls) == fetched
+        assert rate == pytest.approx(0.03)
+        assert source == "treasury_3m_period_mean"
+
+    async def test_a_window_no_series_covers_is_fetched(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A window that spills past every fetched series is its own fetch."""
+        recorder = _RecordingTreasury()
+        monkeypatch.setattr(client, "_request_with_retry", recorder)
+        await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-06-30")
+
+        await client.get_period_risk_free_rate_with_source("2023-06-01", "2023-07-31")
+
+        assert recorder.windows[-1] == ("2023-06-01", "2023-07-31")
+
+    async def test_a_provider_failure_is_not_memoized(
+        self,
+        client: FMPClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An outage falls back for this lookup only; the next one retries."""
+        attempts = 0
+
+        async def flaky(endpoint: str, params: dict[str, str]) -> object:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.HTTPError("treasury outage")
+            return [{"date": params["from"], "month3": 4.5}]
+
+        monkeypatch.setattr(client, "_request_with_retry", flaky)
+        first = await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
+
+        second = await client.get_period_risk_free_rate_with_source("2023-01-01", "2023-01-30")
+
+        assert first == (FALLBACK_RISK_FREE_RATE, "fallback")
+        assert second == (pytest.approx(0.045), "treasury_3m_period_mean")
 
     async def test_a_backwards_window_raises(self, client: FMPClient) -> None:
         """An end before its start is a programming error, not a provider failure."""

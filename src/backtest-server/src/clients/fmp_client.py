@@ -138,7 +138,7 @@ def _month3_by_date(
     rows: list[Any],
     chunk_start: date,
     chunk_end: date,
-) -> dict[str, float]:
+) -> dict[date, float]:
     """Index the 3-month treasury yield of each in-window row by its date.
 
     The provider truncates wide requests to their most recent rows and, with no
@@ -153,13 +153,13 @@ def _month3_by_date(
         chunk_end: Last day the rows were requested for (inclusive).
 
     Returns:
-        Mapping of ISO date to that day's ``month3`` percent value. A row that
+        Mapping of date to that day's ``month3`` percent value. A row that
         is not a dict, carries no parseable date, lies outside the chunk, or
         whose ``month3`` is missing, boolean, non-numeric or non-finite is
         skipped rather than coerced into a number.
 
     """
-    values: dict[str, float] = {}
+    values: dict[date, float] = {}
     outside = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -175,7 +175,7 @@ def _month3_by_date(
             continue
         if not math.isfinite(month3):
             continue
-        values[row_day.isoformat()] = float(month3)
+        values[row_day] = float(month3)
     if outside or not values:
         logger.warning(
             "treasury_chunk_rows_outside_window" if outside else "treasury_chunk_empty",
@@ -236,12 +236,12 @@ class FMPClient:
         """
         self.api_key = settings.fmp_api_key
         self.client = httpx.AsyncClient(timeout=30.0)
-        # The risk-free rate describes a backtest window, so it is memoized per
-        # (start, end, UTC day): walk-forward's ~2N folds share one window and
-        # therefore one lookup, a second window is its own entry, and a window
-        # still accruing yields is looked up afresh each day. The dict is
+        # Daily 3-month yields, memoized per fetched (start, end, UTC day). A
+        # window inside a fetched one is served from that series, so
+        # walk-forward's ~2N folds cost one fetch of the full range; a window
+        # still accruing yields is fetched afresh each day. The dict is
         # bounded; the oldest entry is evicted first.
-        self._rfr_cache: dict[tuple[str, str, str], tuple[float, str]] = {}
+        self._yield_series: dict[tuple[date, date, str], dict[date, float]] = {}
 
     async def __aenter__(self) -> FMPClient:
         """Async context manager entry."""
@@ -499,9 +499,10 @@ class FMPClient:
         Sharpe, Sortino and alpha must not move because today's yield moved
         while the historical prices did not, so the rate is the average of the
         daily 3-month yields printed inside the requested window rather than
-        the latest quote. The result is memoized per window, so walk-forward's
-        ~2N folds share one lookup. Provider failures never raise — a rate
-        lookup must not break a backtest.
+        the latest quote. A window inside one already fetched today is served
+        from that series without a request, so a walk-forward run that fetches
+        its full range once prices every fold off the fold's own days for free.
+        Provider failures never raise — a rate lookup must not break a backtest.
 
         Args:
             start_date: First day of the window (YYYY-MM-DD, inclusive).
@@ -519,23 +520,44 @@ class FMPClient:
 
         """
         start, end = _parse_rate_window(start_date, end_date)
-        key = (start_date, end_date, _utc_today().isoformat())
-        cached = self._rfr_cache.get(key)
-        if cached is not None:
-            return cached
+        series = self._covering_series(start, end)
+        if series is None:
+            series = await self._fetch_yield_series(start, end)
+        if series is None:
+            return FALLBACK_RISK_FREE_RATE, "fallback"
 
-        result = await self._resolve_period_risk_free_rate(start, end)
-        if len(self._rfr_cache) >= MAX_RISK_FREE_MEMO_ENTRIES:
-            self._rfr_cache.pop(next(iter(self._rfr_cache)))
-        self._rfr_cache[key] = result
-        return result
+        in_window = [value for day, value in series.items() if start <= day <= end]
+        if not in_window:
+            logger.warning(
+                "risk_free_rate_fallback",
+                reason="no 3-month yield in the window",
+                start=start.isoformat(),
+                end=end.isoformat(),
+            )
+            return FALLBACK_RISK_FREE_RATE, "fallback"
+        return fmean(in_window) / 100, "treasury_3m_period_mean"
 
-    async def _resolve_period_risk_free_rate(
+    def _covering_series(self, start: date, end: date) -> dict[date, float] | None:
+        """Return a series fetched today whose window contains this one, if any."""
+        today = _utc_today().isoformat()
+        for (fetched_start, fetched_end, fetched_on), series in self._yield_series.items():
+            if fetched_on == today and fetched_start <= start and fetched_end >= end:
+                return series
+        return None
+
+    async def _fetch_yield_series(
         self,
         start: date,
         end: date,
-    ) -> tuple[float, str]:
-        """Average the window's 3-month yields, falling back on any failure."""
+    ) -> dict[date, float] | None:
+        """Fetch the window's daily 3-month yields in chunks and memoize them.
+
+        Returns:
+            The dated yields (possibly empty when the provider has none), or
+            None when the window exceeds the chunk cap or the provider fails;
+            a failure is not memoized, so the next lookup retries.
+
+        """
         span_days = (end - start).days + 1
         chunk_count = math.ceil(span_days / TREASURY_CHUNK_DAYS)
         if chunk_count > MAX_TREASURY_CHUNKS:
@@ -545,31 +567,25 @@ class FMPClient:
                 chunks_required=chunk_count,
                 max_chunks=MAX_TREASURY_CHUNKS,
             )
-            return FALLBACK_RISK_FREE_RATE, "fallback"
+            return None
 
-        by_date: dict[str, float] = {}
+        series: dict[date, float] = {}
         try:
             for chunk_start, chunk_end in _build_date_chunks(start, end, TREASURY_CHUNK_DAYS):
                 rows = await self._fetch_treasury_chunk(chunk_start, chunk_end)
-                by_date.update(_month3_by_date(rows, chunk_start, chunk_end))
+                series.update(_month3_by_date(rows, chunk_start, chunk_end))
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning(
                 "risk_free_rate_fallback",
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            return FALLBACK_RISK_FREE_RATE, "fallback"
+            return None
 
-        if not by_date:
-            logger.warning(
-                "risk_free_rate_fallback",
-                reason="no 3-month yield in the window",
-                start=start.isoformat(),
-                end=end.isoformat(),
-            )
-            return FALLBACK_RISK_FREE_RATE, "fallback"
-
-        return fmean(by_date.values()) / 100, "treasury_3m_period_mean"
+        if len(self._yield_series) >= MAX_RISK_FREE_MEMO_ENTRIES:
+            self._yield_series.pop(next(iter(self._yield_series)))
+        self._yield_series[(start, end, _utc_today().isoformat())] = series
+        return series
 
     async def _fetch_treasury_chunk(
         self,

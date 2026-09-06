@@ -1081,11 +1081,7 @@ class TestWalkForwardCallbackWarnings:
         monkeypatch.setattr(server._state, "fmp_client", fmp_client)
         monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
 
-        response = await server._run_single_backtest(
-            json.dumps(_CALLBACK_STRATEGY),
-            "2024-01-01",
-            "2024-12-31",
-        )
+        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
 
         assert response["warnings"] == exec_result.warnings
 
@@ -1112,28 +1108,24 @@ class TestWalkForwardCallbackWarnings:
         monkeypatch.setattr(server._state, "fmp_client", fmp_client)
         monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
 
-        response = await server._run_single_backtest(
-            json.dumps(_CALLBACK_STRATEGY),
-            "2024-01-01",
-            "2024-12-31",
-        )
+        response = await server._run_single_backtest(json.dumps(_CALLBACK_STRATEGY))
 
         assert response["dependency_versions"] == indicator_stack_versions()
         assert response["price_basis"] == "dividend_adjusted"
 
 
 class TestWalkForwardRiskFreeWindow:
-    """Every fold prices its metrics off the full requested range."""
+    """The run fetches the range's yields once; each fold prices its own window."""
 
-    async def test_the_fold_prices_the_range_it_is_handed_not_its_own_window(
+    async def test_the_fold_prices_its_own_window(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A fold covers months; the risk-free rate covers the whole request.
+        """A fold's Sharpe is that fold's number, so its rate is its own days' mean.
 
-        Folds are run against sub-windows of the request, so reading the rate
-        off each fold's own dates would make one fold's Sharpe incomparable
-        with the next one's and multiply the provider lookups by 2N.
+        The job fetches the full range's yields once up front, and the client
+        serves any window inside a fetched series without a request, so
+        pricing each fold off its own dates costs nothing extra.
         """
         exec_result = server._ExecutionResult(
             equity_df=pl.DataFrame(
@@ -1155,23 +1147,19 @@ class TestWalkForwardRiskFreeWindow:
             "data_config": {"start_date": "2024-07-01", "end_date": "2024-09-30"},
         }
 
-        response = await server._run_single_backtest(
-            json.dumps(fold),
-            "2018-01-01",
-            "2024-12-31",
-        )
+        response = await server._run_single_backtest(json.dumps(fold))
 
         fmp_client.get_period_risk_free_rate_with_source.assert_awaited_once_with(
-            "2018-01-01",
-            "2024-12-31",
+            "2024-07-01",
+            "2024-09-30",
         )
         assert response["risk_free_rate_source"] == "treasury_3m_period_mean"
 
-    async def test_the_job_hands_every_fold_the_requested_range(
+    async def test_the_job_fetches_the_requested_range_before_the_folds_run(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The submitted job binds the strategy's own dates to the callback."""
+        """One full-range lookup up front is what makes every fold's lookup free."""
         captured: dict[str, Any] = {}
         submitted: list[Any] = []
 
@@ -1195,10 +1183,6 @@ class TestWalkForwardRiskFreeWindow:
                 "data_config": {"start_date": "2018-01-01", "end_date": "2024-12-31"},
             }
         )
-        response = await server.backtest_walk_forward_tool(strategy_json, n_windows=3)
-        assert response["job_id"] == "job-1"
-        await submitted[0]
-
         exec_result = server._ExecutionResult(
             equity_df=pl.DataFrame(
                 {"date": [date(2024, 1, 2), date(2024, 1, 3)], "equity": [1000.0, 1000.0]}
@@ -1212,9 +1196,16 @@ class TestWalkForwardRiskFreeWindow:
         monkeypatch.setattr(server._state, "fmp_client", fmp_client)
         monkeypatch.setattr(server, "_execute_strategy", AsyncMock(return_value=exec_result))
 
-        await captured["run_backtest_fn"](json.dumps(_CALLBACK_STRATEGY))
+        response = await server.backtest_walk_forward_tool(strategy_json, n_windows=3)
+        assert response["job_id"] == "job-1"
+        await submitted[0]
+        fold = {
+            **_CALLBACK_STRATEGY,
+            "data_config": {"start_date": "2024-07-01", "end_date": "2024-09-30"},
+        }
+        await captured["run_backtest_fn"](json.dumps(fold))
 
-        fmp_client.get_period_risk_free_rate_with_source.assert_awaited_once_with(
-            "2018-01-01",
-            "2024-12-31",
-        )
+        windows = [
+            call.args for call in fmp_client.get_period_risk_free_rate_with_source.await_args_list
+        ]
+        assert windows == [("2018-01-01", "2024-12-31"), ("2024-07-01", "2024-09-30")]
