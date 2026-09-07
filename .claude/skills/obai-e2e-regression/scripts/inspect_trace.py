@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import sys
@@ -31,6 +32,21 @@ from preflight import normalize_opik_url, redact_sensitive_text
 
 FETCH_MAX_ATTEMPTS = 4
 FETCH_BACKOFF_SECONDS = 0.5
+# The whole process stops retrying once it has spent this long, so the total
+# retry window stays well inside run_one.py's INSPECT_TIMEOUT_S subprocess cap
+# and an exhausted fetch always has time to write its diagnostic before a kill.
+FETCH_RETRY_WINDOW_SECONDS = 20.0
+_PROCESS_START = time.monotonic()
+
+
+def _retry_window_spent() -> bool:
+    """Report whether this process has already spent its whole retry window.
+
+    Returns:
+        True once ``FETCH_RETRY_WINDOW_SECONDS`` have elapsed since import,
+        after which every further failure is reported rather than retried.
+    """
+    return time.monotonic() - _PROCESS_START >= FETCH_RETRY_WINDOW_SECONDS
 
 
 def _is_transient_fetch_error(error: Exception) -> bool:
@@ -46,7 +62,12 @@ def _is_transient_fetch_error(error: Exception) -> bool:
     """
     if isinstance(error, urllib.error.HTTPError):
         return error.code == 429 or error.code >= 500
-    return isinstance(error, (urllib.error.URLError, TimeoutError))
+    # A truncated body and a mid-response reset are the same server blip as a
+    # 500, arriving as an HTTPException and an OSError rather than a status.
+    return isinstance(
+        error,
+        (urllib.error.URLError, TimeoutError, ConnectionResetError, http.client.IncompleteRead),
+    )
 
 
 def _exit_unless_retryable(*, url: str, error: Exception, attempt: int) -> None:
@@ -62,6 +83,22 @@ def _exit_unless_retryable(*, url: str, error: Exception, attempt: int) -> None:
             ``FETCH_MAX_ATTEMPTS`` transient failures have been made.
     """
     if _is_transient_fetch_error(error) and attempt < FETCH_MAX_ATTEMPTS:
+        if _retry_window_spent():
+            sys.stderr.write(
+                redact_sensitive_text(
+                    f"ERROR: gave up on Opik at {url} after {attempt}/{FETCH_MAX_ATTEMPTS} "
+                    f"attempts; the {FETCH_RETRY_WINDOW_SECONDS}s retry window is spent: {error}"
+                )
+                + "\n"
+            )
+            sys.exit(2)
+        # A degrading Opik is worth recording even when the retry rescues it.
+        sys.stderr.write(
+            redact_sensitive_text(
+                f"WARN: Opik attempt {attempt}/{FETCH_MAX_ATTEMPTS} failed, retrying: {error}"
+            )
+            + "\n"
+        )
         return
     sys.stderr.write(
         redact_sensitive_text(
@@ -77,9 +114,10 @@ def fetch(url: str, timeout: float = 5.0) -> dict:
     """Fetch one Opik JSON payload, retrying transient failures.
 
     A single HTTP 500 from Opik used to end a paid regression run, so a
-    transient status, connection error, or timeout is retried with
-    exponential backoff up to ``FETCH_MAX_ATTEMPTS`` attempts. Permanent
-    failures still fail fast on the first attempt.
+    transient status, connection error, truncated body, or timeout is retried
+    with exponential backoff up to ``FETCH_MAX_ATTEMPTS`` attempts, and only
+    while the process-wide ``FETCH_RETRY_WINDOW_SECONDS`` budget lasts.
+    Permanent failures still fail fast on the first attempt.
 
     Args:
         url: Absolute Opik API URL carrying no embedded credentials.
@@ -105,9 +143,12 @@ def fetch(url: str, timeout: float = 5.0) -> dict:
         try:
             with urllib.request.urlopen(url, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:
             _exit_unless_retryable(url=url, error=e, attempt=attempt)
         time.sleep(FETCH_BACKOFF_SECONDS * 2 ** (attempt - 1))
+    # Unreachable: the final attempt's failure always exits inside
+    # _exit_unless_retryable, so the loop cannot fall through. Kept so the
+    # function never implicitly returns None against its dict return type.
     message = "fetch exhausted its attempt loop without returning or exiting"
     raise AssertionError(message)
 
