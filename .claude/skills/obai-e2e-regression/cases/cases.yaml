@@ -315,7 +315,7 @@ test_cases:
         - {regex: "(?i)\\bdividend[- ]?yield\\b|\\bq\\s*[=:]", kind: structural}
         - {regex: "\\b(?:delta|gamma|vega|theta|rho)\\b", kind: structural}
       manual_assertions:
-        - "Using the exact trace time and submitted expiry_date, run the same wall-clock-to-4pm-ET convention and compare solved IV and every returned Greek within the tool's rounding; verify no invented convergence status."
+        - "Using the response's own disclosed time_to_expiry_years and the volatility it reports as used, reproduce the price and every returned Greek within the tool's rounding; check the disclosed time_basis matches the submitted expiry_date under the convention it names; verify no invented convergence status."
 
   - id: CORE-PORT-COVERAGE
     feature: portfolio_unpriceable_weight
