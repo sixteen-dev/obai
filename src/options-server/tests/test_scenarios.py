@@ -11,7 +11,12 @@ from src.engine.scenarios import (
     position_pnl_scenarios,
     position_risk_profile,
 )
-from src.server import _years_to_expiry, options_compute_greeks_tool
+from src.server import (
+    _TIME_BASIS,
+    _years_to_expiry,
+    options_compute_greeks_tool,
+    options_scenario_analysis_tool,
+)
 
 # A comfortably-future expiry so _years_to_expiry stays well above zero.
 _FUTURE_EXPIRY = "2027-01-15"
@@ -584,3 +589,93 @@ class TestComputeGreeksTool:
         assert result["implied_volatility"] is None
         assert result["volatility_used"] == pytest.approx(0.30)
         assert "iv_solve_error" in result
+
+
+class TestDisclosedTimeToExpiry:
+    """The payload must disclose the time input every number was priced from.
+
+    Without it no consumer can reproduce a price, Greek or solved IV after
+    the fact: the time fraction is derived from ``datetime.now()`` inside the
+    tool and the year basis is 365.25 days, not the more common 365.
+    """
+
+    async def test_greeks_payload_discloses_time_to_expiry(self) -> None:
+        """The disclosed years must match a fresh _years_to_expiry call.
+
+        The two calls are separated by real wall-clock time, so allow 1e-6
+        years (~32 seconds) of drift rather than demanding equality.
+        """
+        expiry = _expiry_in_days(60)
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            volatility=0.30,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+        )
+
+        assert abs(result["time_to_expiry_years"] - _years_to_expiry(expiry)) < 1e-6
+
+    async def test_disclosed_time_and_volatility_reproduce_the_price(self) -> None:
+        """Repricing from the disclosed inputs must return the payload price.
+
+        This is the reproducibility contract: disclosed time_to_expiry_years
+        plus volatility_used, re-run through bs_price, lands on the published
+        price within its 4-decimal rounding.
+        """
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_expiry_in_days(60),
+            option_type="call",
+            volatility=0.30,
+            risk_free_rate=0.04,
+            dividend_yield=0.03,
+            market_price=5.50,
+        )
+        reproduced = bs_price(
+            100.0,
+            100.0,
+            result["time_to_expiry_years"],
+            0.04,
+            result["volatility_used"],
+            "call",
+            0.03,
+        )
+
+        assert result["price"] == pytest.approx(reproduced, abs=1e-4)
+
+    async def test_greeks_payload_names_the_365_25_day_basis(self) -> None:
+        """The basis must be stated so no reader silently assumes 365 days."""
+        result = await options_compute_greeks_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=_expiry_in_days(60),
+            option_type="call",
+            volatility=0.30,
+        )
+
+        assert result["time_basis"] == _TIME_BASIS
+        assert "365.25" in result["time_basis"]
+
+    async def test_scenario_payload_discloses_the_same_time_inputs(self) -> None:
+        """The scenario grid is priced off the same clock and must say so.
+
+        Same 1e-6-year tolerance, for the same wall-clock reason.
+        """
+        expiry = _expiry_in_days(60)
+        result = await options_scenario_analysis_tool(
+            underlying_price=100.0,
+            strike=100.0,
+            expiry_date=expiry,
+            option_type="call",
+            direction="long",
+            quantity=1,
+            entry_premium=5.50,
+            implied_volatility=0.30,
+        )
+
+        assert abs(result["time_to_expiry_years"] - _years_to_expiry(expiry)) < 1e-6
+        assert result["time_basis"] == _TIME_BASIS
