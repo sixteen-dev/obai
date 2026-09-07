@@ -525,8 +525,9 @@ _US_MARKET_TZ = ZoneInfo("America/New_York")
 _OPTION_EXPIRY_CUTOFF = dtime(16, 0)  # 4pm ET equity option expiration cutoff
 _HOURS_PER_YEAR = 365.25 * 24
 # Names the convention behind every time_to_expiry so consumers do not have to
-# guess the year length (365.25 days, not 365).
-_TIME_BASIS = "wall_clock_to_1600_america_new_york_over_365.25_day_year"
+# guess the year length (365.25 days, not 365). Derived from the divisor above
+# so changing one can never leave the published label describing the other.
+_TIME_BASIS = f"wall_clock_to_1600_america_new_york_over_{_HOURS_PER_YEAR / 24:g}_day_year"
 
 
 def _years_to_expiry(expiry_date: str) -> float:

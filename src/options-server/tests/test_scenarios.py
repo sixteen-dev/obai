@@ -12,6 +12,7 @@ from src.engine.scenarios import (
     position_risk_profile,
 )
 from src.server import (
+    _HOURS_PER_YEAR,
     _TIME_BASIS,
     _years_to_expiry,
     options_compute_greeks_tool,
@@ -658,6 +659,11 @@ class TestDisclosedTimeToExpiry:
         )
 
         assert result["time_basis"] == _TIME_BASIS
+        # Bind the label to the divisor it describes: a change to
+        # _HOURS_PER_YEAR that left the label alone would publish a
+        # convention the pricing no longer uses, and every other assertion
+        # here would still pass because they all read the same constant.
+        assert f"{_HOURS_PER_YEAR / 24:g}_day_year" in result["time_basis"]
         assert "365.25" in result["time_basis"]
 
     async def test_scenario_payload_discloses_the_same_time_inputs(self) -> None:
