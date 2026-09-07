@@ -206,7 +206,8 @@ test_cases:
         - {regex: "\\b(?:slippage|commission|transaction costs?)\\b", kind: lexical}
         - {regex: "\\b(?:3[- ]month Treasury|risk[- ]free)\\b", kind: lexical}
       manual_assertions:
-        - "Independently recompute return, CAGR, Sharpe, Sortino, drawdown, benchmark, capital reconciliation, and trade count from the frozen fixture."
+        - "Independently recompute return, CAGR, Sharpe, Sortino, drawdown, benchmark, capital reconciliation, and trade count from the frozen fixture. Use the mean 3-month Treasury yield over the backtest window as the risk-free rate, and verify the response discloses that period-mean source rather than the latest yield."
+        - "Verify the disclosed dependency versions report polars-talib 0.1.6 or later."
 
   - id: SMK-GUARD
     feature: off_topic_guardrail
@@ -410,6 +411,7 @@ test_cases:
         - {regex: "(?i)\\b(?:accept(?:ed)?|paper[_ ]trade[ds]?|needs[_ ]more[_ ]research|reject(?:ed)?)\\b", kind: structural}
       manual_assertions:
         - "Verify all five fold boundaries, at least 250 pre-start trading days per test fold, next-open execution, no look-ahead, and strictly separated train/OOS metrics."
+        - "Verify each fold's Sharpe and Sortino use the mean 3-month Treasury yield over that fold's own dates, not one rate for the whole range."
 
   - id: CORE-INVALID
     feature: invalid_symbol_typed_error

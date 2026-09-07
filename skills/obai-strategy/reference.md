@@ -96,12 +96,14 @@ Two optional flags improve backtest realism by modeling execution costs that var
 market conditions instead of using flat rates:
 
 - `volume_scaled_slippage: true` — scales slippage by the square root of order
-  participation rate (order size / bar volume). Large orders in illiquid stocks pay
-  more; small orders in liquid stocks pay less. Base rate is still `slippage_pct`.
+  participation rate (order size / the previous completed bar's volume). Large orders
+  in illiquid stocks pay more; small orders in liquid stocks pay less. Base rate is
+  still `slippage_pct`.
 
 - `estimate_spread: true` — estimates bid-ask spread from high-low price data
-  (Corwin-Schultz method) and applies half-spread cost on each side of every trade.
-  This captures the baseline cost of crossing the spread even for tiny orders.
+  (Corwin-Schultz method) and applies half-spread cost on every entry and on every
+  exit except a take-profit limit fill. This captures the baseline cost of crossing
+  the spread even for tiny orders.
 
 **When to enable:**
 - Default iteration/exploration: leave both `false` (faster, simpler comparison)
