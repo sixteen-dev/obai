@@ -723,6 +723,26 @@ class TestExtractMetrics:
 
         assert result["warnings"] == ["CRITICAL DATA GAP: only 40% coverage"]
 
+    def test_the_risk_free_rate_and_its_source_are_carried_into_the_fold(self) -> None:
+        """A fold's Sharpe is only checkable against the rate it was scored with.
+
+        Each fold is priced off its own window's Treasury mean; dropping the
+        rate here left that claim unobservable in every stored walk-forward
+        result.
+        """
+        result = _extract_metrics(
+            {
+                "performance": {"sharpe_ratio": 1.0},
+                "risk": {},
+                "trading": {},
+                "risk_free_rate": 0.021,
+                "risk_free_rate_source": "treasury_3m_period_mean",
+            }
+        )
+
+        assert result["risk_free_rate"] == 0.021
+        assert result["risk_free_rate_source"] == "treasury_3m_period_mean"
+
 
 class TestFailedWindowHandling:
     """Tests for walk-forward handling of failed backtest windows."""
