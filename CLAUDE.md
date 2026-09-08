@@ -77,10 +77,17 @@ per-service `[tool.mypy]` block and venv apply.
   along with its deps: `.venv/bin/obai` disappears, `import core_agents` starts
   failing, and the E2E gate suite silently loses two preflight tests. After any
   root `uv lock`, restore it with `uv pip install -e src/obai`.
-- **The root openai floor must not sit below `src/obai`'s.** The gate shells
+- **No root dependency floor may sit below `src/obai`'s.** The gate shells
   out to `uv run obai query` from the repo root (`run_one.py`), so the root venv
   runs the same CLI. A lower floor there rejects hub settings the service
   accepts — `max` reasoning effort needs `openai>=2.45.0` and aborted every case.
+  Raising a floor in `src/obai` therefore has a second half: re-run
+  `uv pip install -e src/obai` from the root and confirm the version actually
+  landed. Check `[tool.uv] exclude-newer-package` first — the two manifests keep
+  separate carve-out lists, so a package exempt from the 7-day age gate in
+  `src/obai` may still be capped at the root, which makes the new floor
+  unsatisfiable there and fails the install rather than the run. `opik` needed
+  its root carve-out added for exactly this reason.
 
 ---
 _Every mistake is a rule waiting to be written._
