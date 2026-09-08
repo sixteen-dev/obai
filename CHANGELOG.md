@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-07
+
+Patch: quantitative corrections to the backtest engine and its new indicator
+capability catalog, plus reproducibility fixes across the options,
+prediction-market and tracing stacks.
+
 Two backtest-server batches from the 2026-09-04 audits: quantitative-engine
 corrections (`docs/audits/2026-09-04-sdk-model-and-quantitative-engine-review.md`)
 and the indicator-capability and strategy roadmap
@@ -52,6 +58,16 @@ with the old semantics.
 - **Signal diagnostics** on every result: bars, per-condition and combined
   signal counts, and entries skipped by reason, so a zero-trade run can be
   read as data, indicator, rule or execution limited.
+- **Option Greeks disclose the time they were priced from.** Every number
+  `options_compute_greeks_tool` returns depends on a time to expiry taken
+  from the clock at call time, and the payload never showed it, so no reader
+  could reproduce a price or an implied volatility afterwards. That tool and
+  `options_scenario_analysis_tool` now return `time_to_expiry_years` beside a
+  `time_basis` naming the convention: wall clock to the 4pm New York
+  expiration cutoff over a 365.25-day year, which is not the 365-day year a
+  reader would otherwise assume. The label is derived from the divisor it
+  describes, so the two cannot drift apart. No computed number changed.
+
 - **Provenance:** results carry `dependency_versions` and `price_basis`; a
   frame with unsorted or duplicate timestamps is rejected before indicators
   run; a generic causality suite proves that later bars cannot change earlier
@@ -162,9 +178,10 @@ with the old semantics.
   yields is refreshed daily; a provider failure or an empty answer is not
   memoized, so a glitch cannot pin a span to the fallback for the day. A
   walk-forward request whose range is too short for its fold count fails
-  before any yield is fetched. A
-  provider failure, a window the provider has no yields for, or a range beyond
-  the cap still falls back to 4.5% labelled `fallback`.
+  before any yield is fetched. Each fold's train and test metrics carry the
+  rate and its source, so a fold's Sharpe can be checked against the window it
+  was scored on. A provider failure, a window the provider has no yields for,
+  or a range beyond the cap still falls back to 4.5% labelled `fallback`.
 
 ### Fixed
 
@@ -188,6 +205,15 @@ with the old semantics.
 - `SAR` never computed: the engine passed the close as its acceleration
   argument, so every request dropped it with a warning. It now computes from
   high and low through the catalog binding.
+- **One transient Opik error ended a paid regression run.** The gate's span
+  fetch exited on any transport failure, so a single HTTP 500 aborted a run
+  after nineteen of twenty-one cases while the evidence sat intact on the
+  server. Transient statuses, connection failures, timeouts, truncated bodies
+  and mid-response resets are now retried with bounded backoff, inside a
+  retry window that stays under the caller's subprocess timeout so an
+  exhausted fetch still reports why it stopped. A permanent response still
+  fails on the first attempt.
+
 - **Non-finite and non-numeric strategy inputs are rejected instead of
   silently running.** Validation compared user-supplied numbers with
   inequalities, and JSON admits `NaN`, `Infinity` and `1e400` while Python
@@ -214,6 +240,7 @@ with the old semantics.
 
 ### Package versions
 
+- Product line (root, `obai`, `crypto-server`): `1.6.0 → 1.6.1`.
 - `backtest-server`: `0.1.2 → 0.1.4` (engine version now keys the result cache).
 - `opik`: `2.1.31 → 2.2.53` in `src/obai`, and the root development venv moves
   `2.2.18 → 2.2.53` with it. Every Opik API this repo calls is unchanged across
@@ -973,7 +1000,8 @@ only after beta validation completes; do not move the beta tag.
 - Research agent with Exa semantic search
 - Automated setup/teardown scripts
 
-[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/sixteen-dev/obai/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/sixteen-dev/obai/compare/v1.5.5...v1.6.0
 [1.4.0b1]: https://github.com/sixteen-dev/obai/releases/tag/v1.4.0b1
 [0.9.0]: https://github.com/sixteen-dev/obai/releases/tag/v0.9.0
