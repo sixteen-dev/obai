@@ -203,9 +203,35 @@ with the old semantics.
   a fee above the price would book a negative fill, and `max_positions` must
   be a whole number like the other bar and position counts.
 
+### Security
+
+- **Opik usage analytics stay off.** Opik 2.2.41 turned anonymous usage
+  analytics on by default: a background thread posts feature-usage events and
+  the workspace name to `stats.comet.com`. This deployment is self-hosted, so
+  `init_opik` now sets `OPIK_ANALYTICS_ENABLE=false` before configuring the
+  SDK. It is a `setdefault`, so an explicit environment value still wins, and
+  the SDK already suppresses analytics under pytest.
+
 ### Package versions
 
 - `backtest-server`: `0.1.2 → 0.1.4` (engine version now keys the result cache).
+- `opik`: `2.1.31 → 2.2.53` in `src/obai`, and the root development venv moves
+  `2.2.18 → 2.2.53` with it. Every Opik API this repo calls is unchanged across
+  the minor: the whole `opik/api_objects/prompt/` tree and the
+  `opik/integrations/openai/agents/` bridge are byte-identical between the two
+  releases, and `opik.track`, `flush_tracker` and the `Opik()` constructor keep
+  their signatures. Verified against the running self-hosted backend (2.0.27):
+  `configure(use_local=True, automatic_approvals=True)`, `OpikTracingProcessor`,
+  `get_prompt`, `get_prompt_history`, the deprecated `commit=` selector, and a
+  tracked span through `flush_tracker` all round-trip. The root manifest gains
+  an `opik = "0 days"` `exclude-newer-package` carve-out, matching the one
+  `src/obai` already had — without it the root venv cannot satisfy the new
+  floor, and the E2E gate shells out to `uv run obai query` from the root.
+  Two behaviours to know about, neither triggered here: spans over
+  `OPIK_MAX_PAYLOAD_SIZE_MB` (default 20 MB) are now truncated on send rather
+  than delivered whole, and `evaluate()` defaults to
+  `ErrorTolerance.METRIC_ERRORS`, which aborts on a missing required score
+  argument instead of absorbing it.
 
 ## [1.6.0] - 2026-08-21
 
