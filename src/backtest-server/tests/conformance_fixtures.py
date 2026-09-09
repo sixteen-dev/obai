@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import random
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -291,3 +292,88 @@ def null_safe_round_tail(values: list[Any], tail_size: int = 5) -> list[float | 
         else:
             rounded.append(round(float(value), 10))
     return rounded
+
+
+def random_walk_ohlcv(seed: int, n: int = 120) -> pl.DataFrame:
+    """Build a deterministic daily random-walk OHLCV frame.
+
+    Uses ``random.Random`` rather than numpy so the sequence is identical on
+    every platform and the pinned values in the causality suite stay valid.
+    Draw order is fixed: every close, then the opens, highs, lows and volumes.
+
+    Args:
+        seed: Seed for the pseudo-random generator.
+        n: Number of daily bars to generate.
+
+    Returns:
+        Frame with date, open, high, low, close and volume columns.
+
+    """
+    rng = random.Random(seed)  # noqa: S311 — reproducible fixtures, not cryptography
+    closes = [100.0]
+    for _ in range(n - 1):
+        closes.append(round(closes[-1] * (1 + rng.uniform(-0.03, 0.03)), 4))
+    opens = [round(close * (1 + rng.uniform(-0.01, 0.01)), 4) for close in closes]
+    pairs = list(zip(opens, closes, strict=True))
+    highs = [round(max(o, c) * (1 + rng.uniform(0.0, 0.02)), 4) for o, c in pairs]
+    lows = [round(min(o, c) * (1 - rng.uniform(0.0, 0.02)), 4) for o, c in pairs]
+    volumes = [rng.randint(1000, 5000) for _ in range(n)]
+    return pl.DataFrame(
+        {
+            "date": [date(2024, 1, 2) + timedelta(days=i) for i in range(n)],
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": volumes,
+        }
+    )
+
+
+def _intraday_timestamps(sessions: int, bars: int) -> list[datetime]:
+    """Return naive bar-start timestamps for consecutive intraday sessions."""
+    stamps: list[datetime] = []
+    for session in range(sessions):
+        day = datetime(2024, 1, 2) + timedelta(days=session)
+        opening = day.replace(hour=9, minute=30)
+        stamps.extend(opening + timedelta(minutes=5 * b) for b in range(bars))
+    return stamps
+
+
+def random_walk_intraday(seed: int, sessions: int = 6, bars: int = 10) -> pl.DataFrame:
+    """Build a deterministic 5-minute frame carrying its own entry/exit signals.
+
+    Signals are drawn directly rather than derived from indicators so the
+    intraday causality case exercises session handling, not indicator warm-up.
+    Draw order is fixed: closes, opens, entry flags, exit flags.
+
+    Args:
+        seed: Seed for the pseudo-random generator.
+        sessions: Number of consecutive sessions to generate.
+        bars: Number of 5-minute bars per session.
+
+    Returns:
+        Frame with date, OHLCV and entry_signal/exit_signal columns.
+
+    """
+    rng = random.Random(seed)  # noqa: S311 — reproducible fixtures, not cryptography
+    total = sessions * bars
+    closes = [100.0]
+    for _ in range(total - 1):
+        closes.append(round(closes[-1] * (1 + rng.uniform(-0.01, 0.01)), 4))
+    opens = [round(close * (1 + rng.uniform(-0.003, 0.003)), 4) for close in closes]
+    entries = [rng.random() < 0.15 for _ in range(total)]
+    exits = [rng.random() < 0.10 for _ in range(total)]
+    pairs = list(zip(opens, closes, strict=True))
+    return pl.DataFrame(
+        {
+            "date": _intraday_timestamps(sessions, bars),
+            "open": opens,
+            "high": [round(max(o, c) * 1.002, 4) for o, c in pairs],
+            "low": [round(min(o, c) * 0.998, 4) for o, c in pairs],
+            "close": closes,
+            "volume": [1000] * total,
+            "entry_signal": entries,
+            "exit_signal": exits,
+        }
+    )

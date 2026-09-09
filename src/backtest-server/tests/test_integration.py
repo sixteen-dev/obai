@@ -107,7 +107,15 @@ class TestFullPipeline:
         assert result.max_drawdown_pct <= 0.0
         # All trades should have valid exit reasons
         for trade in trades:
-            assert trade.exit_reason in ("signal", "stop_loss", "take_profit")
+            assert trade.exit_reason in (
+                "signal",
+                "stop_loss",
+                "trailing_stop",
+                "take_profit",
+                "eod_close",
+                "time_stop",
+                "end_of_backtest",
+            )
 
     def test_from_dict_to_backtest(
         self,

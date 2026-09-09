@@ -19,17 +19,117 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 from preflight import normalize_opik_url, redact_sensitive_text
 
+FETCH_MAX_ATTEMPTS = 4
+FETCH_BACKOFF_SECONDS = 0.5
+# The whole process stops retrying once it has spent this long, so the total
+# retry window stays well inside run_one.py's INSPECT_TIMEOUT_S subprocess cap
+# and an exhausted fetch always has time to write its diagnostic before a kill.
+FETCH_RETRY_WINDOW_SECONDS = 20.0
+_PROCESS_START = time.monotonic()
+
+
+def _retry_window_spent() -> bool:
+    """Report whether this process has already spent its whole retry window.
+
+    Returns:
+        True once ``FETCH_RETRY_WINDOW_SECONDS`` have elapsed since import,
+        after which every further failure is reported rather than retried.
+    """
+    return time.monotonic() - _PROCESS_START >= FETCH_RETRY_WINDOW_SECONDS
+
+
+def _is_transient_fetch_error(error: Exception) -> bool:
+    """Report whether an Opik fetch failure is worth another attempt.
+
+    Args:
+        error: The failure raised by a single fetch attempt.
+
+    Returns:
+        True for rate limits, server errors, and connection or timeout
+        failures. False for every other 4xx (a request or auth bug that
+        retrying cannot fix) and for an unparseable 200 body.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    # A truncated body and a mid-response reset are the same server blip as a
+    # 500, arriving as an HTTPException and an OSError rather than a status.
+    return isinstance(
+        error,
+        (urllib.error.URLError, TimeoutError, ConnectionResetError, http.client.IncompleteRead),
+    )
+
+
+def _exit_unless_retryable(*, url: str, error: Exception, attempt: int) -> None:
+    """Return if the caller should retry, otherwise report and exit.
+
+    Args:
+        url: The Opik URL that failed; reported with credentials redacted.
+        error: The failure raised by the attempt.
+        attempt: 1-based number of the attempt that just failed.
+
+    Raises:
+        SystemExit: With code 2 on a permanent failure, or once
+            ``FETCH_MAX_ATTEMPTS`` transient failures have been made.
+    """
+    if _is_transient_fetch_error(error) and attempt < FETCH_MAX_ATTEMPTS:
+        if _retry_window_spent():
+            sys.stderr.write(
+                redact_sensitive_text(
+                    f"ERROR: gave up on Opik at {url} after {attempt}/{FETCH_MAX_ATTEMPTS} "
+                    f"attempts; the {FETCH_RETRY_WINDOW_SECONDS}s retry window is spent: {error}"
+                )
+                + "\n"
+            )
+            sys.exit(2)
+        # A degrading Opik is worth recording even when the retry rescues it.
+        sys.stderr.write(
+            redact_sensitive_text(
+                f"WARN: Opik attempt {attempt}/{FETCH_MAX_ATTEMPTS} failed, retrying: {error}"
+            )
+            + "\n"
+        )
+        return
+    sys.stderr.write(
+        redact_sensitive_text(
+            f"ERROR: failed to reach Opik at {url} "
+            f"after {attempt}/{FETCH_MAX_ATTEMPTS} attempts: {error}"
+        )
+        + "\n"
+    )
+    sys.exit(2)
+
 
 def fetch(url: str, timeout: float = 5.0) -> dict:
+    """Fetch one Opik JSON payload, retrying transient failures.
+
+    A single HTTP 500 from Opik used to end a paid regression run, so a
+    transient status, connection error, truncated body, or timeout is retried
+    with exponential backoff up to ``FETCH_MAX_ATTEMPTS`` attempts, and only
+    while the process-wide ``FETCH_RETRY_WINDOW_SECONDS`` budget lasts.
+    Permanent failures still fail fast on the first attempt.
+
+    Args:
+        url: Absolute Opik API URL carrying no embedded credentials.
+        timeout: Per-attempt socket timeout in seconds.
+
+    Returns:
+        The decoded JSON body.
+
+    Raises:
+        SystemExit: With code 2 on an invalid or credential-bearing URL, on
+            a permanent failure, or once the attempt cap is exhausted.
+    """
     parsed = urllib.parse.urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -39,15 +139,18 @@ def fetch(url: str, timeout: float = 5.0) -> dict:
     ):
         sys.stderr.write("ERROR: refusing an invalid or credential-bearing Opik URL\n")
         raise SystemExit(2)
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except (OSError, ValueError) as e:
-        sys.stderr.write(redact_sensitive_text(f"ERROR: failed to reach Opik at {url}: {e}") + "\n")
-        sys.exit(2)
-    except json.JSONDecodeError as e:
-        sys.stderr.write(redact_sensitive_text(f"ERROR: non-JSON response from {url}: {e}") + "\n")
-        sys.exit(2)
+    for attempt in range(1, FETCH_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            _exit_unless_retryable(url=url, error=e, attempt=attempt)
+        time.sleep(FETCH_BACKOFF_SECONDS * 2 ** (attempt - 1))
+    # Unreachable: the final attempt's failure always exits inside
+    # _exit_unless_retryable, so the loop cannot fall through. Kept so the
+    # function never implicitly returns None against its dict return type.
+    message = "fetch exhausted its attempt loop without returning or exiting"
+    raise AssertionError(message)
 
 
 def fetch_all_spans(

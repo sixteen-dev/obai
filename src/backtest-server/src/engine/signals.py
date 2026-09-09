@@ -5,6 +5,8 @@ Design doc: docs/plans/DUCKDB_INTRADAY_BACKTEST.md, Phase 4.1.
 
 from __future__ import annotations
 
+from typing import Any
+
 import polars as pl
 
 from ..models.strategy import Condition, Operand, RuleSet
@@ -114,13 +116,36 @@ def _build_condition_expr(condition: Condition) -> pl.Expr:
     # current bar is on or past the other side. Using `>=` / `<=` on the
     # current bar catches equality-edge crossings (e.g. RSI exactly touching
     # 30) which the strict-on-both-sides version would silently drop.
+    left_prev = _previous_value(condition.left, left)
+    right_prev = _previous_value(condition.right, right)
     if condition.operator == "crosses_above":
-        return (left.shift(1) < right.shift(1)) & (left >= right)
+        return (left_prev < right_prev) & (left >= right)
     if condition.operator == "crosses_below":
-        return (left.shift(1) > right.shift(1)) & (left <= right)
+        return (left_prev > right_prev) & (left <= right)
 
     msg = f"Unsupported operator: {condition.operator}"
     raise ValueError(msg)
+
+
+def _previous_value(operand: Operand, resolved: pl.Expr) -> pl.Expr:
+    """Return the operand's value on the previous bar.
+
+    A constant or an explicit time is a scalar literal of length one, and
+    shifting that yields null rather than the same threshold, which resolved
+    every crossover against a fixed level to null and then to False. A
+    threshold's previous value is the threshold, so it is not shifted.
+
+    Args:
+        operand: The operand being compared.
+        resolved: That operand's current-bar expression.
+
+    Returns:
+        The expression to compare on the previous bar.
+
+    """
+    if operand.constant is not None or operand.time is not None:
+        return resolved
+    return resolved.shift(1)
 
 
 def _resolve_operand(operand: Operand) -> pl.Expr:
@@ -173,3 +198,73 @@ def _time_str_to_numeric(time_str: str) -> float:
         msg = f"Invalid time format '{time_str}', expected HH:MM"
         raise ValueError(msg)
     return int(parts[0]) + int(parts[1]) / 60.0
+
+
+def count_condition_hits(df: pl.DataFrame, ruleset: RuleSet) -> list[dict[str, Any]]:
+    """Count the bars each condition is true on, in declaration order.
+
+    Counts every predicate on its own, so a rule set whose combination never
+    fires can be read apart: a predicate with zero hits never fires at all,
+    while predicates that all fire mean the combination is what is rare.
+    Crossover predicates count transition bars, matching the signal engine.
+
+    Args:
+        df: Frame with the indicator columns the conditions reference.
+        ruleset: Conditions to count.
+
+    Returns:
+        One ``{"rule": label, "true_bars": count}`` per condition, in
+        declaration order; an empty list for a rule set with no conditions.
+
+    """
+    hits: list[dict[str, Any]] = []
+    for condition in ruleset.conditions:
+        expr = _build_condition_expr(condition).fill_null(value=False)
+        hits.append(
+            {
+                "rule": _condition_label(condition),
+                "true_bars": int(df.select(expr.sum()).item()),
+            }
+        )
+    return hits
+
+
+def _condition_label(condition: Condition) -> str:
+    """Render a condition as the rule text the agent wrote.
+
+    Args:
+        condition: Comparison condition with left, operator, right.
+
+    Returns:
+        "<left> <operator> <right>" using each operand's own label.
+
+    """
+    return (
+        f"{_operand_label(condition.left)} {condition.operator} {_operand_label(condition.right)}"
+    )
+
+
+def _operand_label(operand: Operand) -> str:
+    """Render an operand as the name or value it stands for.
+
+    Args:
+        operand: Indicator reference, constant, or time operand.
+
+    Returns:
+        The column name, the constant's value, "time_of_day", or the HH:MM
+        string.
+
+    Raises:
+        ValueError: If operand has no value set.
+
+    """
+    if operand.indicator is not None:
+        return operand.indicator
+    if operand.constant is not None:
+        return str(operand.constant)
+    if operand.time_of_day is not None:
+        return "time_of_day"
+    if operand.time is not None:
+        return operand.time
+    msg = "Operand must have one of: indicator, constant, time_of_day, time"
+    raise ValueError(msg)

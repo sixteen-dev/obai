@@ -727,12 +727,12 @@ test_cases:
     description: Specific strategy with user-provided date range
 
   - id: E4
-    query: "Backtest a Bollinger-band pullback strategy on GOOGL with a 5% stop loss."
+    query: "Backtest a Bollinger-band pullback strategy on GOOGL with a 5% stop loss and a 10% take-profit. State which exits paid slippage and spread and which did not."
     category: E
     query_type: strategy_direct_with_risk
     date_policy: relative
     expected_tools: [strategy_analysis]
-    description: Specific strategy with explicit risk management
+    description: Specific strategy with explicit risk management; the answer must attribute execution costs by exit type (stop exits pay slippage and spread, take-profit limit fills do not)
 
   # E.2 — Strategy Design (Mode 2: hub resolves only critical inputs, then routes to strategy)
 

@@ -80,6 +80,12 @@ def init_opik() -> bool:
     api_url = f"{opik_url}/api"
     os.environ.setdefault("OPIK_URL_OVERRIDE", api_url)
 
+    # Opik 2.2.41 turned anonymous usage analytics on by default, which posts
+    # feature-usage events and the workspace name to stats.comet.com from a
+    # background thread. This deployment is self-hosted, so it stays that way.
+    # setdefault, not assignment — an explicit OPIK_ANALYTICS_ENABLE still wins.
+    os.environ.setdefault("OPIK_ANALYTICS_ENABLE", "false")
+
     # Fast health check (2s timeout) before calling opik.configure(),
     # which has a ~16s internal timeout when the server is unreachable.
     try:

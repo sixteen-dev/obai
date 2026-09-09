@@ -1,10 +1,69 @@
 from __future__ import annotations
 
+import email.message
+import http.client
+import json
 import urllib.error
+from collections.abc import Callable
 from urllib.parse import parse_qs, urlparse
 
 import inspect_trace
 import pytest
+
+
+class _FakeResponse:
+    """Minimal ``urlopen`` stand-in that yields one JSON body."""
+
+    def __init__(self, body: str) -> None:
+        self._body = body
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body.encode("utf-8")
+
+
+def _http_error(url: str, code: int) -> urllib.error.HTTPError:
+    """Build an ``HTTPError`` with the given status.
+
+    Args:
+        url: URL the synthetic failure is attributed to.
+        code: HTTP status code to report.
+
+    Returns:
+        An ``HTTPError`` usable as a ``urlopen`` side effect.
+    """
+    return urllib.error.HTTPError(url, code, f"synthetic {code}", email.message.Message(), None)
+
+
+def _scripted_urlopen(outcomes: list[object], attempts: list[str]) -> Callable[..., _FakeResponse]:
+    """Return a ``urlopen`` stand-in that replays ``outcomes`` in order.
+
+    Args:
+        outcomes: One entry per allowed attempt. An exception is raised; any
+            other value is JSON-encoded into the response body.
+        attempts: Mutable list the stand-in appends each requested URL to.
+
+    Returns:
+        A callable that replaces ``urllib.request.urlopen``. It fails loudly
+        if the caller attempts more requests than the script allows.
+    """
+
+    def _urlopen(url: str, **_kwargs: object) -> _FakeResponse:
+        attempts.append(url)
+        if len(attempts) > len(outcomes):
+            message = f"fetch made {len(attempts)} attempts; script allows {len(outcomes)}"
+            raise AssertionError(message)
+        outcome = outcomes[len(attempts) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _FakeResponse(json.dumps(outcome))
+
+    return _urlopen
 
 
 def test_fetch_redacts_query_credentials_from_url_errors(
@@ -26,6 +85,211 @@ def test_fetch_redacts_query_credentials_from_url_errors(
     stderr = capsys.readouterr().err
     assert "trace-secret" not in stderr
     assert "safe=yes" in stderr
+
+
+def test_fetch_retries_transient_server_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([_http_error(url, 500), {"total": 29}], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    assert inspect_trace.fetch(url) == {"total": 29}
+    assert len(attempts) == 2
+
+
+def test_fetch_retries_rate_limit_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([_http_error(url, 429), {"total": 29}], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    assert inspect_trace.fetch(url) == {"total": 29}
+    assert len(attempts) == 2
+
+
+def test_fetch_retries_connection_refused_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen(
+            [
+                urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+                {"ok": True},
+            ],
+            attempts,
+        ),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    assert inspect_trace.fetch(url) == {"ok": True}
+    assert len(attempts) == 2
+
+
+def test_fetch_exits_after_bounded_attempts_on_persistent_server_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen(
+            [_http_error(url, 500)] * inspect_trace.FETCH_MAX_ATTEMPTS,
+            attempts,
+        ),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", sleeps.append)
+
+    with pytest.raises(SystemExit) as exc_info:
+        inspect_trace.fetch(url)
+
+    assert exc_info.value.code == 2
+    assert len(attempts) == inspect_trace.FETCH_MAX_ATTEMPTS
+    assert sleeps == [0.5, 1.0, 2.0]
+    stderr = capsys.readouterr().err
+    assert (
+        f"{inspect_trace.FETCH_MAX_ATTEMPTS}/{inspect_trace.FETCH_MAX_ATTEMPTS} attempts" in stderr
+    )
+    assert "500" in stderr
+
+
+def test_fetch_does_not_retry_permanent_not_found(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    url = "http://opik/api/v1/private/traces/missing"
+    attempts: list[str] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([_http_error(url, 404)], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", sleeps.append)
+
+    with pytest.raises(SystemExit) as exc_info:
+        inspect_trace.fetch(url)
+
+    assert exc_info.value.code == 2
+    assert len(attempts) == 1
+    assert sleeps == []
+    assert f"1/{inspect_trace.FETCH_MAX_ATTEMPTS} attempts" in capsys.readouterr().err
+
+
+def test_fetch_redacts_query_credentials_when_retries_are_exhausted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret_url = "http://opik/api?api_key=trace-secret&safe=yes"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen(
+            [urllib.error.URLError(f"upstream echoed {secret_url}")]
+            * inspect_trace.FETCH_MAX_ATTEMPTS,
+            attempts,
+        ),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        inspect_trace.fetch(secret_url)
+
+    assert exc_info.value.code == 2
+    assert len(attempts) == inspect_trace.FETCH_MAX_ATTEMPTS
+    stderr = capsys.readouterr().err
+    assert "trace-secret" not in stderr
+    assert "safe=yes" in stderr
+
+
+def test_fetch_retries_a_truncated_body_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A short read is the same server blip as a 500 and must not kill a paid run."""
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen(
+            [http.client.IncompleteRead(b'{"tot', 91), {"total": 29}],
+            attempts,
+        ),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    assert inspect_trace.fetch(url) == {"total": 29}
+    assert len(attempts) == 2
+
+
+def test_fetch_retries_a_connection_reset_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mid-response reset is transient even though it arrives as an OSError."""
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([ConnectionResetError("peer reset"), {"total": 1}], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+
+    assert inspect_trace.fetch(url) == {"total": 1}
+    assert len(attempts) == 2
+
+
+def test_fetch_stops_retrying_once_the_process_retry_window_is_spent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The retry window keeps a degraded Opik inside run_one's subprocess cap.
+
+    Without it a slow-but-alive server can spend more wall clock retrying than
+    the caller allows, and the process is killed before it can say why.
+    """
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([_http_error(url, 500)], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(inspect_trace, "_retry_window_spent", lambda: True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        inspect_trace.fetch(url)
+
+    assert exc_info.value.code == 2
+    assert len(attempts) == 1
+    assert "retry window is spent" in capsys.readouterr().err
+
+
+def test_fetch_records_a_rescued_attempt_on_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A degrading Opik must leave a trace even when the retry rescues it."""
+    url = "http://opik/api/v1/private/spans?trace_id=t"
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        inspect_trace.urllib.request,
+        "urlopen",
+        _scripted_urlopen([_http_error(url, 503), {"total": 2}], attempts),
+    )
+    monkeypatch.setattr(inspect_trace.time, "sleep", lambda _seconds: None)
+    written: list[str] = []
+    monkeypatch.setattr(inspect_trace.sys.stderr, "write", written.append)
+
+    assert inspect_trace.fetch(url) == {"total": 2}
+    assert any("retrying" in line for line in written)
 
 
 def test_render_rejects_userinfo_without_leaking_credentials() -> None:

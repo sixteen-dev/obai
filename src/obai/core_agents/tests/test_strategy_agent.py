@@ -4,7 +4,10 @@ Tests prompt loading, agent properties, config fields, and hub routing.
 Does NOT require live MCP servers.
 """
 
+import importlib.util
 import os
+import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,143 @@ _WALKFORWARD_REQUEST = (
     "dates, warm-up coverage, trades, return, Sharpe and drawdown; then assess robustness "
     "without mixing train and test metrics."
 )
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+_SKILL_PATH = _REPO_ROOT / "skills" / "obai-strategy" / "SKILL.md"
+_REFERENCE_PATH = _REPO_ROOT / "skills" / "obai-strategy" / "reference.md"
+_CATALOG_PATH = _REPO_ROOT / "src" / "backtest-server" / "src" / "models" / "indicator_catalog.py"
+
+# Placeholder tokens the JSON template must carry for every risk-management and
+# position-sizing field the backtest server serializes.
+_RISK_TEMPLATE_FIELDS = (
+    '"method": "<equal_weight_or_fixed_pct_or_atr_risk>"',
+    '"risk_pct": "<number_or_null>"',
+    '"atr_indicator": "<atr_indicator_id_or_null>"',
+    '"stop_atr_multiple": "<number_or_null>"',
+    '"trailing_stop_pct": "<number_or_null>"',
+    '"trailing_stop_atr_multiple": "<number_or_null>"',
+    '"max_holding_bars": "<integer_or_null>"',
+    '"reentry_cooldown_bars": "<integer_or_null>"',
+)
+
+# Indicator types registered after the capability roadmap's Stage 1, 2 and 4.
+_NEW_INDICATOR_TYPES = (
+    "`NATR`",
+    "`KAMA`",
+    "`PLUS_DI`",
+    "`MINUS_DI`",
+    "`MAX`",
+    "`MIN`",
+    "`DONCHIAN`",
+    "`ZSCORE`",
+    "`RVOL`",
+    "`PERCENTILE_RANK`",
+    "`KELTNER`",
+    "`LAG`",
+    "`RATIO`",
+    "`DIFF`",
+    "`AVWAP`",
+    "`OPENING_RANGE`",
+)
+
+_UPPERCASE_TOKEN_RE = re.compile(r"`([A-Z][A-Z0-9_]*)`")
+
+
+def _read_prompt() -> str:
+    """Read the strategy prompt markdown from disk.
+
+    Reads the file rather than ``load_prompt`` so the pins stay deterministic
+    when a local Opik server is serving a previously synced prompt version.
+
+    Returns:
+        str: The on-disk prompt text.
+    """
+    return _PROMPT_PATH.read_text()
+
+
+def _read_skill() -> str:
+    """Read the standalone obai-strategy skill body.
+
+    Returns:
+        str: The on-disk SKILL.md text.
+    """
+    return _SKILL_PATH.read_text()
+
+
+def _read_reference() -> str:
+    """Read the standalone obai-strategy schema reference.
+
+    Returns:
+        str: The on-disk reference.md text.
+    """
+    return _REFERENCE_PATH.read_text()
+
+
+def _prompt_section(text: str, start_marker: str, end_marker: str) -> str:
+    """Slice the text between two markers.
+
+    Args:
+        text: Markdown to slice.
+        start_marker: Literal that opens the slice.
+        end_marker: Literal that closes it, searched after the start.
+
+    Returns:
+        str: The slice, including the start marker.
+    """
+    start = text.index(start_marker)
+    return text[start : text.index(end_marker, start)]
+
+
+def _reporting_rule(prompt: str) -> str:
+    """Return the single walk-forward reporting bullet.
+
+    Args:
+        prompt: The strategy prompt text.
+
+    Returns:
+        str: The one line that opens the reporting rule.
+    """
+    lines = [line for line in prompt.splitlines() if line.startswith("- **Reporting**: Include")]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def _reference_section(name: str) -> str:
+    """Slice one top-level section out of reference.md.
+
+    Args:
+        name: Heading text without the leading hashes.
+
+    Returns:
+        str: The section body, up to the next top-level heading.
+    """
+    text = _read_reference()
+    start = text.index(f"## {name}")
+    return text[start : text.index("\n## ", start + 1)]
+
+
+def _supported_indicator_types() -> frozenset[str]:
+    """Load the indicator type names the backtest server registers.
+
+    The catalog module is standard-library only by design, so it loads from its
+    path without the backtest server's own dependencies.
+
+    Returns:
+        frozenset[str]: Every registered indicator type name.
+    """
+    spec = importlib.util.spec_from_file_location("obai_indicator_catalog", _CATALOG_PATH)
+    assert spec is not None and spec.loader is not None, _CATALOG_PATH
+    module = importlib.util.module_from_spec(spec)
+    # `dataclasses` resolves annotations through `sys.modules`, so the module has
+    # to be registered before it executes, and removed once it has.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        return frozenset(module.INDICATOR_CATALOG)
+    finally:
+        sys.modules.pop(spec.name, None)
 
 
 @pytest.fixture(autouse=True)
@@ -153,6 +293,355 @@ class TestStrategyPrompt:
         for field_name in ("`execution_config`", "`strategy`", "`fill_timing`", "`warmup_bars`"):
             assert field_name in prompt, field_name
         assert "rather than as zero" in prompt
+
+    def test_walk_forward_reporting_covers_each_folds_warnings(self) -> None:
+        """The reporting rule must send the agent to per-fold `warnings`.
+
+        Fold metrics now carry the window's quality report. A fold that ran on
+        materially insufficient data still produces a consistency score, so the
+        warnings have to be read and surfaced under the existing data-warning
+        rule rather than left in the payload.
+
+        Reads the markdown directly for the same reason as the guard above.
+        """
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+        prompt = prompt_path.read_text()
+
+        reporting = [
+            line for line in prompt.splitlines() if line.startswith("- **Reporting**: Include")
+        ]
+        assert len(reporting) == 1, reporting
+        assert "`warnings`" in reporting[0]
+        assert "Data warnings" in reporting[0]
+
+    def test_total_return_claim_is_scoped_to_daily_backtests(self) -> None:
+        """Only daily bars are dividend-adjusted; intraday bars are raw.
+
+        `price_basis_for` in the backtest server stores daily bars on a
+        dividend-adjusted basis and intraday bars unadjusted, so an unqualified
+        total-return claim overstates intraday results.
+
+        Reads the markdown directly for the same reason as the guard above.
+        """
+        prompt = _read_prompt()
+
+        assert "Daily backtests report total returns" in prompt
+        assert "All reported returns are total returns" not in prompt
+        assert "Intraday timeframes run on unadjusted prices" not in prompt, (
+            "the result now carries `price_basis`, so the basis is read off the run "
+            "instead of being asserted per timeframe"
+        )
+
+    def test_turnover_rate_is_described_as_traded_notional(self) -> None:
+        """`turnover_rate` is traded notional over mean equity, not P&L.
+
+        The portfolio metric sums entry and exit notional; the old wording
+        described absolute trade P&L, which reads as a profitability measure.
+
+        Reads the markdown directly for the same reason as the guard above.
+        """
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
+        prompt = prompt_path.read_text()
+
+        assert "total traded notional (entry plus exit) divided by mean equity" in prompt
+        assert "sum of absolute trade P&L" not in prompt
+
+    def test_hypothesis_step_names_capabilities_and_failure_regime(self) -> None:
+        """A hypothesis has to declare its failure regime and its capabilities.
+
+        "Form a specific hypothesis." left the agent free to propose mechanics
+        the engine cannot run and to skip the falsification question entirely.
+        The step now names both, and points the capability check at the
+        discovery tool instead of memory.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "the regime in which it should fail" in text, label
+            assert "the engine capabilities it needs" in text, label
+
+    def test_backtest_evidence_names_exposure_turnover_drawdown_dates_costs_and_stability(
+        self,
+    ) -> None:
+        """Headline ratios alone hide how a result was produced.
+
+        Regime concentration, time in market, churn, the drawdown window, the
+        cost basis and the parameter neighbourhood are all reportable from
+        fields the server already emits, so the evidence contract names them.
+        """
+        evidence = _prompt_section(
+            _read_prompt(), "#### 3. Backtest Evidence", "#### 4. Iteration Summary"
+        )
+
+        for field_name in (
+            "`yearly_returns`",
+            "`capital_utilization_pct`",
+            "`turnover_rate`",
+            "`max_drawdown_start`",
+            "`max_drawdown_end`",
+            "`fill_model`",
+            "Parameter stability",
+        ):
+            assert field_name in evidence, field_name
+
+    def test_evidence_reads_price_basis_and_dependency_versions_from_the_result(self) -> None:
+        """Provenance is server-owned, so it is read, not asserted.
+
+        The result now carries `price_basis` and `dependency_versions`; both
+        the evidence contract and the walk-forward reporting rule send the
+        agent to them rather than to a remembered basis or library version.
+        """
+        prompt = _read_prompt()
+        evidence = _prompt_section(prompt, "#### 3. Backtest Evidence", "#### 4. Iteration Summary")
+        reporting = _reporting_rule(prompt)
+
+        for field_name in ("`price_basis`", "`dependency_versions`"):
+            assert field_name in evidence, field_name
+            assert field_name in reporting, field_name
+
+    def test_reject_is_a_complete_answer(self) -> None:
+        """Nothing in the contract may push a weak candidate to promotion.
+
+        The nine-section deliverable expects a recommendation, which reads as
+        pressure to promote. `reject` plus the best-tested JSON satisfies it.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "`reject` with the best-tested JSON is a complete answer" in text, label
+
+    def test_benchmark_overlap_is_allowed_for_timing_overlays(self) -> None:
+        """Buy-and-hold of the traded asset is the right timing comparison.
+
+        The old prohibition forbade the only meaningful benchmark for a timing
+        overlay on one asset, and contradicted the server, which deliberately
+        reuses universe data for an overlapping benchmark.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "Never benchmark a strategy against a symbol it already trades" not in text, (
+                label
+            )
+            assert "buy-and-hold of that asset" in text, label
+
+    def test_trade_count_is_not_presented_as_significance(self) -> None:
+        """Consecutive trades in one symbol overlap, so a count is not power.
+
+        A count floor presented as a significance test invites reporting the
+        threshold as met instead of stating the power limitation.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "100+" not in text, label
+            assert "not a significance test" in text, label
+
+    def test_zero_trades_route_to_signal_diagnostics(self) -> None:
+        """Zero trades has several causes with different fixes.
+
+        `signal_diagnostics` separates an unprimed indicator, a predicate that
+        never fires and a signal that fires but is never filled, so the rule
+        reads it before any threshold moves.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "`signal_diagnostics`" in text, label
+            assert "the entry conditions are broken" not in text, label
+
+    def test_walk_forward_reporting_names_the_capped_warmup_preroll(self) -> None:
+        """A capped pre-roll is now reported, so a fold must surface it.
+
+        The warm-up planner truncates at its bar cap and says so in the fold's
+        `warnings`; unstabilized leading bars change how a fold reads.
+        """
+        reporting = _reporting_rule(_read_prompt())
+
+        assert "warm-up pre-roll was capped" in reporting
+
+    def test_intraday_guidelines_scope_relative_volume_to_preceding_bars(self) -> None:
+        """`RVOL` is not a same-time-of-day comparison on intraday bars.
+
+        Its denominator is the preceding bars, so a session-shape effect lands
+        in the value and must not be read as unusual participation.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "`RVOL`" in text, label
+            assert "not the same time of day" in text, label
+
+    def test_signals_skipped_count_covers_more_than_capital(self) -> None:
+        """Cooldown and an undefined ATR also skip a fired entry signal.
+
+        The metric is no longer capital-only, and the per-reason split lives in
+        `signal_diagnostics.entries_skipped_by_reason`.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "could not be filled due to capital constraints" not in text, label
+            assert "`signal_diagnostics.entries_skipped_by_reason` splits them" in text, label
+
+    def test_tool_realism_no_longer_denies_time_and_trailing_stops(self) -> None:
+        """Both mechanics now exist, so listing them as unsupported is wrong.
+
+        `max_holding_bars` and the trailing stop ship in `risk_management`; the
+        old bullets would make the agent drop a rule the engine can run.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "max holding period logic" not in text, label
+            assert "dynamic ATR trailing-stop logic" not in text, label
+
+    def test_json_template_carries_every_risk_and_sizing_field(self) -> None:
+        """The template is the schema the agent copies its field set from.
+
+        A field absent from it is a field the agent never emits, so every new
+        `risk_management` and `position_sizing` key carries a placeholder.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            for placeholder in _RISK_TEMPLATE_FIELDS:
+                assert placeholder in text, f"{label}: {placeholder}"
+
+    def test_field_rules_describe_every_new_risk_and_sizing_field(self) -> None:
+        """A placeholder without a rule is a field used at random.
+
+        One sentence per field states what it does and what it excludes.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "`atr_indicator` names a declared indicator whose `type` is `ATR`" in text, label
+            assert "it is frozen for the trade and excludes `stop_loss_pct`" in text, label
+            assert "equals `risk_pct` of equity at the fill" in text, label
+            assert "ratchets only upward" in text, label
+            assert "counting the entry bar as the first" in text, label
+            assert "blocks a new entry in a symbol for that many bars" in text, label
+
+    def test_supported_indicators_name_every_new_family(self) -> None:
+        """An unlisted type is a capability the agent reports as unsupported.
+
+        The catalog grew by six natives, eight composites and two session
+        anchors; the section names each family with its param names only.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            for indicator_type in _NEW_INDICATOR_TYPES:
+                assert indicator_type in text, f"{label}: {indicator_type}"
+
+    def test_forward_source_reference_is_rejected_not_warned(self) -> None:
+        """A forward `source` no longer degrades to a warning.
+
+        Validation rejects it, so the prompt must not tell the agent the run
+        continues without the indicator.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "is rejected at validation" in text, label
+        assert "is reported as a warning" not in prompt
+
+    def test_discovery_tool_metadata_lists_ranges_and_lookback(self) -> None:
+        """The tool reports more than names and scales now.
+
+        Accepted ranges, defaults and lookback bars are what keep the agent
+        from guessing a parameter the engine then rejects.
+        """
+        prompt = _read_prompt()
+        skill = _read_skill()
+
+        for text, label in ((prompt, "strategy.md"), (skill, "SKILL.md")):
+            assert "accepted ranges" in text, label
+            assert "lookback" in text, label
+
+    def test_benchmark_close_is_available_as_an_operand_and_a_source(self) -> None:
+        """`benchmark_close` is the only cross-series column the engine offers.
+
+        It is a rule operand, an indicator `source`, and a `second_source`, so
+        a benchmark-relative measure stops being "unsupported".
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "`benchmark_close`" in text, label
+            assert "`universe.benchmark` is set" in text, label
+
+    def test_dual_input_default_second_source_is_described_as_high(self) -> None:
+        """The engine defaults `second_source` to the `high` column.
+
+        The prompt claimed it defaults to the indicator's own `source`, which
+        would make BETA and CORREL compare a series with itself.
+        """
+        prompt = _read_prompt()
+        reference = _read_reference()
+
+        for text, label in ((prompt, "strategy.md"), (reference, "reference.md")):
+            assert "defaults to the indicator's `source`" not in text, label
+            assert "default to the `high` column" in text, label
+            assert "`RATIO` and `DIFF` have no default" in text, label
+
+
+class TestStrategySkill:
+    """Test the standalone obai-strategy skill files."""
+
+    def test_reference_templates_carry_no_numbers(self) -> None:
+        """Templates teach rule shapes, never remembered parameter values.
+
+        A number in a template is a market prior the agent copies instead of
+        testing, which is exactly what the prompt-editing rule forbids.
+        """
+        section = _reference_section("Hypothesis templates")
+        headings = [line for line in section.splitlines() if line.startswith("### ")]
+
+        assert len(headings) == 3, headings
+        assert re.search(r"\d", section) is None, section
+        for block in section.split("### ")[1:]:
+            for bullet in (
+                "Hypothesis:",
+                "Entry shape:",
+                "Exit shape:",
+                "Should fail when:",
+                "Requires:",
+            ):
+                assert f"- {bullet}" in block, f"{block.splitlines()[0]}: {bullet}"
+
+    def test_reference_templates_name_only_registered_capabilities(self) -> None:
+        """A template that names an unregistered type sends the agent nowhere.
+
+        Every backticked uppercase token in a `Requires` bullet is a live
+        indicator type, or is explicitly marked as not yet available.
+        """
+        section = _reference_section("Hypothesis templates")
+        supported = _supported_indicator_types()
+        requires = [line for line in section.splitlines() if line.strip().startswith("- Requires:")]
+
+        assert len(requires) == 3, requires
+        for line in requires:
+            for token in _UPPERCASE_TOKEN_RE.findall(line):
+                assert token in supported or "not yet available" in line, token
+
+    def test_skill_routes_readers_to_the_hypothesis_templates(self) -> None:
+        """The templates only help if the skill sends readers to them."""
+        assert "including its hypothesis templates" in _read_skill()
 
 
 class TestStrategyAgentProperties:

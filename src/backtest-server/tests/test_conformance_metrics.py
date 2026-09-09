@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import numpy as np
 import polars as pl
 import pytest
 
-from src.engine.metrics import TRADING_DAYS_PER_YEAR, compute_metrics
+from src.engine.backtester import BacktestConfig, Trade, run_backtest
+from src.engine.metrics import (
+    TRADING_DAYS_PER_YEAR,
+    _compute_trading_stats,
+    _convert_portfolio_trades,
+    compute_metrics,
+)
+from src.engine.portfolio_backtester import PortfolioTradeRecord
+from src.models.strategy import PositionSizing, RiskManagement
 from tests.conformance_fixtures import (
     BENCHMARK_RETURNS,
     METRIC_GOLDEN,
@@ -151,3 +161,85 @@ class TestMetricConformance:
         assert len(PERIOD_RETURNS) == len(BENCHMARK_RETURNS)
         assert len(golden_equity_df()) == len(golden_benchmark_df())
         assert pytest.approx(golden_equity_df()["equity"][0]) == 100_000.0
+
+
+class TestTradeLedgerConformance:
+    """Sign and monetary-basis conventions for derived trade statistics."""
+
+    def test_losing_strategy_reports_a_negative_calmar_ratio(self) -> None:
+        """Calmar is CAGR over the drawdown magnitude, so a losing run stays negative."""
+        equity = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 2), date(2024, 1, 2)],
+                "equity": [1000.0, 900.0],
+            }
+        )
+
+        result = compute_metrics(equity, [], "Falling", ["TST"])
+
+        assert result.cagr_pct < 0
+        assert result.max_drawdown_pct < 0
+        assert result.calmar_ratio < 0
+        assert result.calmar_ratio == pytest.approx(-1.0006)
+
+    def test_zero_drawdown_reports_calmar_as_zero(self) -> None:
+        """A run that never drew down has no denominator, so Calmar is the 0.0 convention."""
+        equity = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 2), date(2024, 1, 2)],
+                "equity": [1000.0, 1100.0],
+            }
+        )
+
+        result = compute_metrics(equity, [], "Rising", ["TST"])
+
+        assert result.max_drawdown_pct == 0.0
+        assert result.calmar_ratio == 0.0
+
+    def test_portfolio_profit_factor_uses_dollar_pnl_not_percent(self) -> None:
+        """A +$20/+10% winner against a -$10/-10% loser is a profit factor of 2, not 1."""
+        records = [
+            PortfolioTradeRecord(
+                "A", "2024-01-02", 10.0, "2024-01-03", 11.0, 20, 10.0, 20.0, "signal", 1
+            ),
+            PortfolioTradeRecord(
+                "B", "2024-01-04", 100.0, "2024-01-05", 90.0, 1, -10.0, -10.0, "signal", 1
+            ),
+        ]
+
+        trades = _convert_portfolio_trades(records)
+
+        assert [t.pnl for t in trades] == [20.0, -10.0]
+        assert _compute_trading_stats(trades).profit_factor == 2.0
+
+    def test_percent_basis_still_applies_when_no_trade_carries_dollar_pnl(self) -> None:
+        """Trades without a dollar PnL keep the percentage basis rather than being dropped."""
+        trades = [
+            Trade("A", "2024-01-02", 10.0, "2024-01-03", 11.0, 10.0, 1, "signal"),
+            Trade("B", "2024-01-04", 100.0, "2024-01-05", 90.0, -10.0, 1, "signal"),
+        ]
+
+        assert all(t.pnl is None for t in trades)
+        assert _compute_trading_stats(trades).profit_factor == 1.0
+
+    def test_single_symbol_trades_carry_dollar_pnl(self) -> None:
+        """The single-symbol engine sizes a notional, so its trades report dollars too."""
+        frame = pl.DataFrame(
+            {
+                "date": [date(2024, 1, 2) + timedelta(days=i) for i in range(4)],
+                "open": [100.0, 100.0, 110.0, 110.0],
+                "high": [100.0, 100.0, 110.0, 110.0],
+                "low": [100.0, 100.0, 110.0, 110.0],
+                "close": [100.0, 100.0, 110.0, 110.0],
+                "volume": [1_000_000] * 4,
+                "entry_signal": [True, False, False, False],
+                "exit_signal": [False, False, True, False],
+            }
+        )
+        sizing = PositionSizing(method="fixed_pct", max_position_pct=50, max_positions=1)
+        config = BacktestConfig(initial_capital=1000, slippage_pct=0, commission_pct=0)
+
+        _equity, trades = run_backtest(frame, sizing, RiskManagement(), config)
+
+        assert len(trades) == 1
+        assert trades[0].pnl == pytest.approx(500.0 * trades[0].return_pct / 100)

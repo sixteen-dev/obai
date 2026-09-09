@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..engine import estimate_sizing
+from ..engine import estimate_sizing, validate_returns
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -50,11 +50,12 @@ def estimate_empirical_kelly(
         guidance instead of fabricated precision.
 
     Raises:
-        ValueError: For both/neither input sources, empty returns, or
-            constraint values outside their valid ranges.
+        ValueError: For both/neither input sources, empty returns, a
+            non-finite return or one below -1.0, or constraint values
+            outside their valid ranges.
 
     """
-    chosen_returns, source_fingerprint = _resolve_returns(
+    chosen_returns, source_fingerprint, upstream_limitations = _resolve_returns(
         monte_carlo_input=monte_carlo_input,
         returns=returns,
     )
@@ -64,6 +65,7 @@ def estimate_empirical_kelly(
             chosen_returns,
             source_fingerprint=source_fingerprint,
             missing_constraints=_missing_names(starting_bankroll, max_drawdown_limit),
+            upstream_limitations=upstream_limitations,
         )
 
     sizing = estimate_sizing(
@@ -95,6 +97,7 @@ def estimate_empirical_kelly(
             "conservative_fraction": sizing.conservative_fraction,
         },
         "limitations": [
+            *upstream_limitations,
             "Kelly assumes returns are independent draws from the observed "
             "distribution — same IID caveat as the Monte Carlo risk tool.",
             "Drawdown-constrained fraction is the largest grid point whose "
@@ -102,11 +105,19 @@ def estimate_empirical_kelly(
             "Conservative fraction is the smaller of haircut-applied half-Kelly "
             "and the drawdown-constrained fraction.",
         ],
-        "quality_flags": ["iid_monte_carlo_assumption"],
+        "quality_flags": _numerical_quality_flags(sizing.estimates.naive_kelly),
     }
 
 
 # -- helpers ------------------------------------------------------------------
+
+
+def _numerical_quality_flags(naive_kelly: float) -> list[str]:
+    """Quality flags for the numerical response; naive Kelly of 0 means no trade."""
+    flags = ["iid_monte_carlo_assumption"]
+    if naive_kelly == 0.0:
+        flags.append("no_positive_edge")
+    return flags
 
 
 def _qualitative_response(
@@ -114,6 +125,7 @@ def _qualitative_response(
     *,
     source_fingerprint: str | None,
     missing_constraints: list[str],
+    upstream_limitations: list[str],
 ) -> dict[str, Any]:
     """No bankroll/drawdown limit → qualitative output per §13.3."""
     return {
@@ -131,6 +143,7 @@ def _qualitative_response(
             "as base-rate evidence, not a guarantee."
         ),
         "limitations": [
+            *upstream_limitations,
             "Numerical sizing is intentionally withheld until risk constraints "
             "are supplied (§13.3).",
         ],
@@ -152,8 +165,12 @@ def _resolve_returns(
     *,
     monte_carlo_input: dict[str, Any] | None,
     returns: list[float] | None,
-) -> tuple[list[float], str | None]:
-    """Pick exactly one source of returns."""
+) -> tuple[list[float], str | None, list[str]]:
+    """Pick exactly one source of returns.
+
+    Also returns the upstream ``limitations`` the §10.5 payload carries
+    (empty for inline returns) so the response can forward them unchanged.
+    """
     if monte_carlo_input is None and returns is None:
         msg = "Provide either monte_carlo_input or returns."
         raise ValueError(msg)
@@ -165,8 +182,14 @@ def _resolve_returns(
         if not isinstance(raw, list) or not raw:
             msg = "monte_carlo_input.returns is missing or empty."
             raise ValueError(msg)
-        return [float(r) for r in raw], monte_carlo_input.get("source_backtest_fingerprint")
+        raw_limits = monte_carlo_input.get("limitations", [])
+        upstream = [str(item) for item in raw_limits] if isinstance(raw_limits, list) else []
+        return (
+            validate_returns(raw),
+            monte_carlo_input.get("source_backtest_fingerprint"),
+            upstream,
+        )
     if not returns:
         msg = "returns list is empty."
         raise ValueError(msg)
-    return [float(r) for r in returns], None
+    return validate_returns(returns), None, []

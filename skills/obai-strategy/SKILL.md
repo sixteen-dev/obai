@@ -13,7 +13,8 @@ survives testing.
 
 **Before composing any strategy JSON, read `reference.md` in this skill
 directory** — it carries the JSON schema, condition operands, supported
-indicators and operators, intraday rules, and portfolio allocation mode.
+indicators and operators, intraday rules, and portfolio allocation mode,
+including its hypothesis templates.
 
 Default initial capital: use the user's `initial_capital` preference
 (`~/.obai/preferences.json`, default 100000) for
@@ -51,7 +52,7 @@ Use this mode when the user provides explicit entry and exit rules to backtest.
 Use this mode when the user asks you to create, design, optimize, or recommend a strategy.
 
 1. Apply the Critical Inputs Gate.
-2. Form a specific hypothesis.
+2. Form a specific hypothesis: name the market behavior the rules exploit, the regime in which it should fail, and the engine capabilities it needs, and confirm those capabilities against `backtest_get_supported_indicators_tool` and the schema before building.
 3. Build a simple baseline strategy JSON that tests that hypothesis.
 4. Use `backtest_run_strategy_tool` on the train range for baseline testing and iteration.
 5. Iterate based on evidence.
@@ -163,8 +164,8 @@ For every completed Mode 1 or Mode 2 response, use this section order:
 - Holding style
 
 #### 3. Backtest Evidence
-- Train-range metrics: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades
-- Final full-period metrics: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades
+- Train-range metrics: Sharpe, Sortino, CAGR, max drawdown with its `max_drawdown_start` and `max_drawdown_end` dates (peak to trough; recovery time is not reported), win rate, profit factor, total trades
+- Final full-period metrics: Sharpe, Sortino, CAGR, max drawdown with its `max_drawdown_start` and `max_drawdown_end` dates (peak to trough; recovery time is not reported), win rate, profit factor, total trades
 - Explicit overfitting assessment
 - Explicit statistical-power assessment when trade count is small
 - **Data warnings**: If the result contains `⚠️ DATA_WARNING` or non-empty `warnings`, surface them verbatim here. Data warnings indicate the backtest ran on materially insufficient data. Adjust the verdict accordingly.
@@ -237,6 +238,7 @@ Do not do any of the following:
 - Omit the final executable JSON block.
 - Return `Missing Inputs` or ask the user to choose between a conceptual design and a backtestable proxy when the universe and objective are already clear.
 - Reject a strategy request solely because the engine cannot represent the objective directly, when a closest executable proxy can be built on the provided universe.
+- Promote a candidate to `paper_trade` or `accept` because the contract expects a recommendation. `reject` with the best-tested JSON is a complete answer; a fluent rationale or a larger indicator catalogue is not evidence of an edge.
 
 ## Critical Rules
 
@@ -267,7 +269,7 @@ Use these defaults only for non-critical fields when the user did not provide th
 - Benchmark:
   - Use the user-specified benchmark if provided.
   - Otherwise use SPY (or the user's `default_benchmark` preference).
-  - Never benchmark a strategy against a symbol it already trades — that measures nothing.
+  - The benchmark answers "compared with what": for a timing overlay on one asset, buy-and-hold of that asset is the right comparison; for a selection strategy across names, a broad index is. Overlap between the benchmark and the universe is not itself an error; state which comparison the benchmark makes.
   - If the strategy is explicitly sector-specific and a natural liquid sector ETF benchmark exists, you may use that instead, but state it explicitly.
 - Position direction:
   - Default to long-only unless the user explicitly requests short or long/short.
@@ -286,8 +288,8 @@ Workflow per iteration: BUILD -> TEST -> ANALYZE -> ADJUST
 ### Iteration 1: Baseline
 - Build the simplest valid strategy that tests the core hypothesis.
 - Run it on the train range.
-- Evaluate: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades.
-- If total trades is zero, the entry conditions are broken. Diagnose why (conditions too tight, contradictory logic, wrong parameter values) and fix before moving to Iteration 2. Do not reject a strategy after a single zero-trade run.
+- Evaluate: Sharpe, Sortino, CAGR, max drawdown, win rate, profit factor, total trades, `signal_diagnostics` (predicate and fill-skip counts).
+- If total trades is zero, read `signal_diagnostics` and `warnings` before changing any threshold: an indicator that never primed, a data gap, a predicate that never fires, and a rule that fires but is never filled are different failures with different fixes. When every predicate fires and their combination never does, the setup may not occur in this window; report that as evidence rather than loosening the rule until it trades. Do not reject a strategy after a single zero-trade run.
 
 ### Iteration 2: One meaningful improvement
 - Add one meaningful confirmation or filter.
@@ -337,8 +339,6 @@ Use `backtest_walk_forward_tool` for robust out-of-sample testing on strategies 
   - custom rebalance engines,
   - portfolio-level circuit breakers,
   - earnings blackout logic,
-  - max holding period logic,
-  - dynamic ATR trailing-stop logic unless the engine truly supports it,
   - universe selection based on future performance.
 - If ideal logic is unsupported, implement the closest valid approximation, state what it captures, state what it misses, and backtest that approximation.
 
@@ -351,7 +351,7 @@ Use `backtest_walk_forward_tool` for robust out-of-sample testing on strategies 
 2. **backtest_get_job_status_tool**
    - Use only for async follow-up after a `job_id` response.
 3. **backtest_get_supported_indicators_tool**
-   - Returns indicator metadata: parameter names, output scale, multi-output fields, source requirements.
+   - Returns indicator metadata: parameter names with their accepted ranges, defaults and whether each is required, output scale, multi-output fields, source requirements, lookback bars at default parameters, and a description.
 4. **backtest_download_data_tool**
    - Usually not needed; `backtest_run_strategy_tool` should be tried first.
    - Accepts optional `timeframe` parameter for intraday data.

@@ -8,7 +8,8 @@ import numpy as np
 import polars as pl
 
 from src.engine.backtester import Trade
-from src.engine.metrics import compute_metrics
+from src.engine.metrics import _compute_yearly_returns, compute_metrics
+from src.models.backtest_result import BacktestResult
 
 
 class TestComputeMetrics:
@@ -217,6 +218,34 @@ class TestComputeMetrics:
         assert len(result.yearly_returns) > 0
         assert "2022" in result.yearly_returns
 
+    def test_new_year_return_is_measured_from_the_prior_year_close(self) -> None:
+        """The jump into the first bar of a year belongs to that year, not to nothing."""
+        eq_df = pl.DataFrame(
+            {
+                "date": [date(2023, 12, 29), date(2024, 1, 2), date(2024, 1, 3)],
+                "equity": [1000.0, 1100.0, 1100.0],
+            }
+        )
+
+        yearly = _compute_yearly_returns(eq_df)
+
+        assert yearly["2024"] == 10.0
+        assert yearly["2023"] == 0.0
+
+    def test_first_year_baseline_is_the_curve_start(self) -> None:
+        """The opening year has no prior close, so it measures from the run's own start."""
+        eq_df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, 3), date(2023, 6, 1), date(2024, 1, 2)],
+                "equity": [1000.0, 1200.0, 1320.0],
+            }
+        )
+
+        yearly = _compute_yearly_returns(eq_df)
+
+        assert yearly["2023"] == 20.0
+        assert yearly["2024"] == 10.0
+
     def test_data_points_tracked(self, equity_df: pl.DataFrame) -> None:
         """data_points_processed should match equity curve length."""
         result = compute_metrics(equity_df, [], "Test", ["X"])
@@ -336,3 +365,15 @@ class TestDataQuality:
         )
 
         assert result.data_quality["coverage_pct"] < 10.0
+
+
+def test_backtest_result_round_trips_provenance(equity_df: pl.DataFrame) -> None:
+    """Provenance must survive the JSON round trip the cache performs."""
+    result = compute_metrics(equity_df, [], "Test", ["X"])
+    result.dependency_versions = {"polars": "1.0.0", "polars_talib": "0.1.5", "talib": "0.4.0"}
+    result.price_basis = "dividend_adjusted"
+
+    restored = BacktestResult.from_dict(result.to_dict())
+
+    assert restored.dependency_versions == result.dependency_versions
+    assert restored.price_basis == result.price_basis

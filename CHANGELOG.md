@@ -6,6 +6,260 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-07
+
+Patch: quantitative corrections to the backtest engine and its new indicator
+capability catalog, plus reproducibility fixes across the options,
+prediction-market and tracing stacks.
+
+Two backtest-server batches from the 2026-09-04 audits: quantitative-engine
+corrections (`docs/audits/2026-09-04-sdk-model-and-quantitative-engine-review.md`)
+and the indicator-capability and strategy roadmap
+(`docs/audits/2026-09-04-indicator-capabilities-and-strategy-roadmap.md`).
+The corrections change reported numbers; the backtest engine version and the
+installed indicator-stack versions are part of the result-cache key from now
+on, so previously cached backtest results are recomputed rather than served
+with the old semantics.
+
+### Added
+
+- **Indicator capability catalog.** One typed definition per indicator
+  (`src/backtest-server/src/models/indicator_catalog.py`) now drives
+  validation, engine dispatch, the warm-up planner and the discovery tool,
+  replacing the allowlists that were spread across the model and engine
+  modules. The discovery tool reports each parameter's kind, default and
+  accepted range, each indicator's lookback in bars and a description.
+  Parameters are type- and range-checked, MACD requires a fast length below
+  its slow length, and an indicator `source` naming an unknown column or a
+  later-declared indicator is rejected at validation instead of computing a
+  warning.
+- **Native indicators** exposed from the installed TA-Lib wrapper: `NATR`
+  (percent units), `KAMA`, `MAX`, `MIN`, `PLUS_DI`, `MINUS_DI`.
+- **Composite indicators** built from existing primitives, all emitting null
+  for warm-up rows and zero denominators: `DONCHIAN` (prior-window channel
+  that excludes the signal bar), `ZSCORE` (population standard deviation),
+  `RVOL` (volume over the mean of the preceding bars), `PERCENTILE_RANK`
+  (trailing rank against prior values with midpoint ties), `KELTNER`
+  (EMA plus or minus an ATR multiple), `LAG`, `RATIO`, `DIFF`. `BBANDS` also
+  emits `percent_b` and `bandwidth` as fractions.
+- **`benchmark_close`** is available as a source and operand on every symbol
+  frame when the universe names a benchmark, aligned by date with nulls where
+  the benchmark has no bar.
+- **Session anchors:** `AVWAP` (anchored at a user-supplied date inside the
+  data window, valid on daily and intraday bars) and `OPENING_RANGE`
+  (intraday-only high and low of the first minutes of each session, undefined
+  until the interval completes).
+- **Trade management:** `atr_risk` position sizing (`risk_pct` of equity at
+  decision time divided by an ATR stop distance), ATR-distance initial stops
+  (`atr_indicator`, `stop_atr_multiple`), percent or ATR trailing stops
+  ratcheted from information through the prior bar, `max_holding_bars` time
+  stops, and `reentry_cooldown_bars`. Each is ordered inside the phased bar
+  in both allocation modes and documented in `docs/conformance.md`.
+- **Signal diagnostics** on every result: bars, per-condition and combined
+  signal counts, and entries skipped by reason, so a zero-trade run can be
+  read as data, indicator, rule or execution limited.
+- **Option Greeks disclose the time they were priced from.** Every number
+  `options_compute_greeks_tool` returns depends on a time to expiry taken
+  from the clock at call time, and the payload never showed it, so no reader
+  could reproduce a price or an implied volatility afterwards. That tool and
+  `options_scenario_analysis_tool` now return `time_to_expiry_years` beside a
+  `time_basis` naming the convention: wall clock to the 4pm New York
+  expiration cutoff over a 365.25-day year, which is not the 365-day year a
+  reader would otherwise assume. The label is derived from the divisor it
+  describes, so the two cannot drift apart. No computed number changed.
+
+- **Provenance:** results carry `dependency_versions` and `price_basis`; a
+  frame with unsorted or duplicate timestamps is rejected before indicators
+  run; a generic causality suite proves that later bars cannot change earlier
+  decisions for every engine path.
+- Strategy prompt and skill gain a small hypothesis-template catalogue that
+  names the server capabilities each template requires, reporting rules for
+  regime dependence, exposure, turnover, drawdown duration, cost sensitivity
+  and parameter stability, and permission to answer that no robust candidate
+  was found.
+
+### Changed
+
+- **Backtest single-symbol mode marks a fixed share count to market.** Each
+  held bar previously applied the asset return to a constant fraction of the
+  prior bar's equity, an uncosted daily rebalance that let a trade with a 0%
+  recorded return leave the equity curve up 12.5%. Equity and trade records now
+  describe the same position; the `conformance.md` statement that single-symbol
+  mode "tracks proportional equity exposure" is rewritten accordingly.
+- **Backtest execution is chronological within a bar.** A signal exit scheduled
+  by the previous bar fills at the open ahead of that bar's stop or target; in
+  portfolio mode intrabar stop/target proceeds no longer fund the same day's
+  opening entries, and opening entries are sized against equity marked at the
+  open rather than the close printed later that day.
+- **Backtest year and train/test slices carry the prior close as their
+  baseline**, so the return into a slice's first bar is no longer dropped. The
+  test-split period now starts on the boundary bar.
+- **Calmar keeps the sign of CAGR** (a losing strategy reports a negative
+  ratio). **Profit factor uses dollar profit and loss** whenever every closed
+  trade carries a realized PnL, which both engines now record.
+- **Both backtest engines close a position still open at the end of the run**
+  (`end_of_backtest` at the last close); a zero-trade result no longer hides an
+  entry. Sync responses now carry `fill_timing` and `fill_model`.
+- **Explicit `allocation_mode: portfolio` is honoured for a one-symbol
+  universe** instead of silently running the independent engine.
+- **Empirical Kelly can return zero.** The grid search compared every candidate
+  against negative-infinity growth and so always picked a positive fraction,
+  even for all-loss or zero-edge samples; zero allocation is now the baseline
+  and the tool flags `no_positive_edge`.
+- **Prediction rule backtests select the earliest observation satisfying the
+  whole entry predicate**, including time-to-resolution bounds, instead of
+  rejecting a market because its first in-band print was too early.
+- **Resolution trades report settlement, not the last quote**: `exit_price` is
+  the 0/1 payout, `exit_ts` the scheduled end date, and holding time runs to
+  that date.
+- **Calibration bucket `low_n` counts distinct markets**, not observations, so
+  one market sampled twenty times is thin evidence.
+- **Holdout blocks report `overlap_market_count`**, and the prediction prompt
+  describes the split as a chronological forward test rather than independent
+  validation when markets overlap.
+- Strategy prompt now reads the price basis and indicator stack off the
+  result (`price_basis`, `dependency_versions`) and states that
+  `turnover_rate` is traded notional, matching the engine; the prediction
+  prompt says the negated YES edge is the NO edge at the reference price only
+  and that executable NO edge must be re-derived from the NO ask.
+- Warm-up pre-roll is planned from each indicator's true lookback along its
+  source chain, with a stabilization allowance for recursive indicators,
+  instead of the largest declared period; the result warns when the cap
+  truncates it.
+- **`polars-talib` 0.1.6.** An indicator whose usable history is shorter than
+  its lookback now returns full-length undefined output instead of a truncated
+  column. On 0.1.5 a MACD over a 30-bar daily window produced no
+  `macd`/`signal`/`hist` columns at all and a `Failed to compute` warning, so
+  the rules referencing it silently went missing; the run now reports only the
+  existing insufficient-data warning and the undefined bars stay non-tradable.
+  That warning now counts the rows on which the indicator's inputs are
+  defined rather than the frame's height, so a lookback starved by leading
+  nulls or by an upstream indicator's warm-up is reported too.
+  Every other indicator value is unchanged, and the native TA-Lib core is still
+  0.4.0.
+- **Stop, trailing-stop and forced-close exits now pay their execution costs.**
+  Slippage and the half-spread previously moved only signal exits against the
+  position, so a stop filled at exactly its level and an `eod_close`,
+  `time_stop` or `end_of_backtest` exit filled at the raw close — the engine
+  charged commission on those liquidations but no price impact. Every exit that
+  crosses the spread now takes the adverse adjustment on its reference price
+  (the stop level or the worse open for stops, that bar's close for the forced
+  exits), including the volume-scaled participation term, so the net returns of
+  stop-heavy and session-closing strategies fall. A `take_profit` is a limit
+  order and is the one exception: it still fills at its level or a better open
+  with neither slippage nor spread, and the published `fill_model` string and
+  `docs/conformance.md` items 6 and 7 say so.
+- **Participation-scaled slippage is sized from the previous bar's volume.**
+  Both engines fed the fill bar's own completed volume into the participation
+  rate, so a fill at bar `t`'s open was priced with information bar `t` had not
+  printed yet — an illiquid day that later traded heavily looked cheap to
+  trade. Entries and every exit reason now measure participation against the
+  last completed bar, and a fill on a frame's first bar, which has no completed
+  bar behind it, falls back to the flat rate. Only runs with
+  `volume_scaled_slippage` enabled are affected. The causality conformance
+  suite gained the counterfactual: bumping one bar's volume must not move any
+  fill priced at or before that bar.
+- **Sharpe, Sortino and alpha are priced off the backtest window's Treasury
+  yield.** The 3-month rate was fetched as "the latest" one and memoized by
+  the date the run happened, so a 2015-2020 backtest was scored against 2026's
+  yield and its risk-adjusted metrics moved whenever the Treasury moved while
+  the historical prices did not. The rate is now the mean of the daily
+  3-month yields printed inside the requested range — fetched from FMP in
+  90-day chunks, because that endpoint truncates a longer request — and a
+  result discloses it as `treasury_3m_period_mean`. Walk-forward fetches the
+  requested range's daily yields once and scores each fold against the mean
+  of the fold's own dates, so a fold's Sharpe is that fold's number and the
+  run still costs one fetch: any window inside a series fetched that day is
+  served from it without a request. Rows the provider dates outside the
+  requested chunk are logged and left out of the mean, so a request whose
+  range was not honoured cannot pass today's yield off as the window's. The
+  chunk cap admits the longest window the schema accepts (30 years); the
+  series memo is bounded and keyed by UTC day, so a window still accruing
+  yields is refreshed daily; a provider failure or an empty answer is not
+  memoized, so a glitch cannot pin a span to the fallback for the day. A
+  walk-forward request whose range is too short for its fold count fails
+  before any yield is fetched. Each fold's train and test metrics carry the
+  rate and its source, so a fold's Sharpe can be checked against the window it
+  was scored on. A provider failure, a window the provider has no yields for,
+  or a range beyond the cap still falls back to 4.5% labelled `fallback`.
+
+### Fixed
+
+- **Async backtest job-status polls were cached by the hub for five minutes.**
+  `backtest_get_job_status_tool` and `crypto_backtest_get_job_status` advertised
+  `idempotentHint: true`, so a second poll returned the cached `running` state
+  even after the job completed. Both now opt out of the result cache.
+- **Unknown or misspelled indicator parameters are rejected at parse time**
+  with the accepted names listed (`{"lenght": 200}` previously ran TA-Lib's
+  30-bar default with no warning). Duplicate indicator ids are rejected too.
+- `close_eod` now applies to a position opened on the session's last bar; it
+  previously survived overnight and closed at the next session's end.
+- Walk-forward folds carry the execution warnings the sync path already
+  reported (critical coverage gaps, indicators with no values).
+- A held symbol with no bar on a portfolio date keeps its last observed mark
+  instead of reverting to its entry price, which invented a drawdown and
+  recovery around the gap.
+- Monte Carlo and Kelly tools forward the `limitations` carried by a
+  `monte_carlo_input` payload and reject non-finite returns or returns below
+  -1.0 instead of sizing from them.
+- `SAR` never computed: the engine passed the close as its acceleration
+  argument, so every request dropped it with a warning. It now computes from
+  high and low through the catalog binding.
+- **One transient Opik error ended a paid regression run.** The gate's span
+  fetch exited on any transport failure, so a single HTTP 500 aborted a run
+  after nineteen of twenty-one cases while the evidence sat intact on the
+  server. Transient statuses, connection failures, timeouts, truncated bodies
+  and mid-response resets are now retried with bounded backoff, inside a
+  retry window that stays under the caller's subprocess timeout so an
+  exhausted fetch still reports why it stopped. A permanent response still
+  fails on the first attempt.
+
+- **Non-finite and non-numeric strategy inputs are rejected instead of
+  silently running.** Validation compared user-supplied numbers with
+  inequalities, and JSON admits `NaN`, `Infinity` and `1e400` while Python
+  reads a boolean as a number, so nothing tripped: a `NaN` slippage,
+  commission or initial capital, an infinite take-profit, a `NaN` position
+  cap or ATR risk budget, and a `NaN` rule constant — which makes every
+  comparison false, so the strategy trades nothing — all validated clean and
+  reached the engine. Execution costs, position sizing, every stop and
+  take-profit distance, and rule constants must now be finite, non-boolean
+  numbers, reported as `<field> must be a finite number; got <value>`; a JSON
+  integer too large for a float is rejected the same way instead of crashing
+  the validator. `slippage_pct` and `commission_pct` are bounded at 100, since
+  a fee above the price would book a negative fill, and `max_positions` must
+  be a whole number like the other bar and position counts.
+
+### Security
+
+- **Opik usage analytics stay off.** Opik 2.2.41 turned anonymous usage
+  analytics on by default: a background thread posts feature-usage events and
+  the workspace name to `stats.comet.com`. This deployment is self-hosted, so
+  `init_opik` now sets `OPIK_ANALYTICS_ENABLE=false` before configuring the
+  SDK. It is a `setdefault`, so an explicit environment value still wins, and
+  the SDK already suppresses analytics under pytest.
+
+### Package versions
+
+- Product line (root, `obai`, `crypto-server`): `1.6.0 → 1.6.1`.
+- `backtest-server`: `0.1.2 → 0.1.4` (engine version now keys the result cache).
+- `opik`: `2.1.31 → 2.2.53` in `src/obai`, and the root development venv moves
+  `2.2.18 → 2.2.53` with it. Every Opik API this repo calls is unchanged across
+  the minor: the whole `opik/api_objects/prompt/` tree and the
+  `opik/integrations/openai/agents/` bridge are byte-identical between the two
+  releases, and `opik.track`, `flush_tracker` and the `Opik()` constructor keep
+  their signatures. Verified against the running self-hosted backend (2.0.27):
+  `configure(use_local=True, automatic_approvals=True)`, `OpikTracingProcessor`,
+  `get_prompt`, `get_prompt_history`, the deprecated `commit=` selector, and a
+  tracked span through `flush_tracker` all round-trip. The root manifest gains
+  an `opik = "0 days"` `exclude-newer-package` carve-out, matching the one
+  `src/obai` already had — without it the root venv cannot satisfy the new
+  floor, and the E2E gate shells out to `uv run obai query` from the root.
+  Two behaviours to know about, neither triggered here: spans over
+  `OPIK_MAX_PAYLOAD_SIZE_MB` (default 20 MB) are now truncated on send rather
+  than delivered whole, and `evaluate()` defaults to
+  `ErrorTolerance.METRIC_ERRORS`, which aborts on a missing required score
+  argument instead of absorbing it.
+
 ## [1.6.0] - 2026-08-21
 
 Minor: user-settable hub model and reasoning effort, with `gpt-5.6-terra` at
@@ -746,7 +1000,8 @@ only after beta validation completes; do not move the beta tag.
 - Research agent with Exa semantic search
 - Automated setup/teardown scripts
 
-[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/sixteen-dev/obai/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/sixteen-dev/obai/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/sixteen-dev/obai/compare/v1.5.5...v1.6.0
 [1.4.0b1]: https://github.com/sixteen-dev/obai/releases/tag/v1.4.0b1
 [0.9.0]: https://github.com/sixteen-dev/obai/releases/tag/v0.9.0

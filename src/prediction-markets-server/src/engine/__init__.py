@@ -37,7 +37,13 @@ from .observations import (
     select_earliest_eligible_observation,
     split_by_entry,
 )
-from .risk import MAX_NUM_PATHS, MonteCarloResult, SamplingMethod, run_monte_carlo
+from .risk import (
+    MAX_NUM_PATHS,
+    MonteCarloResult,
+    SamplingMethod,
+    run_monte_carlo,
+    validate_returns,
+)
 from .risk import result_to_dict as monte_carlo_to_dict
 from .rules import (
     SUPPORTED_EXIT_TYPES,
@@ -118,4 +124,5 @@ __all__ = [
     "estimate_to_dict",
     "monte_carlo_to_dict",
     "run_monte_carlo",
+    "validate_returns",
 ]

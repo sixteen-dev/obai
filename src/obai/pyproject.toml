@@ -19,7 +19,7 @@ exclude = [
 
 [project]
 name = "obai"
-version = "1.6.0"
+version = "1.6.1"
 description = "OBaI - Multi-agent financial research agent (agents + clients bundled)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,7 +36,7 @@ dependencies = [
     "fastmcp>=2.14.3",
     "textual>=3.0.0",
     "typer>=0.12.0",
-    "opik>=2.1.31",
+    "opik>=2.2.53",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "websockets>=14.0",

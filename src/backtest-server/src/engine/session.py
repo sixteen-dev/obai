@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from ..models.strategy import MINUTES_PER_BAR
+
 MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 EARLY_CLOSE_TIME = time(13, 0)
@@ -44,13 +46,6 @@ EARLY_CLOSE_DATES: set[date] = {
     date(2026, 11, 27),
     date(2026, 12, 24),
     # 2027-2030 — extend when needed
-}
-
-# Minutes per bar for each timeframe
-_MINUTES_PER_BAR: dict[str, int] = {
-    "1hour": 60,
-    "15min": 15,
-    "5min": 5,
 }
 
 
@@ -158,7 +153,7 @@ def bars_remaining_in_session(
     close_dt = datetime.combine(ts.date(), close)
     remaining_minutes = (close_dt - ts.replace(tzinfo=None)).total_seconds() / 60
 
-    minutes_per_bar = _MINUTES_PER_BAR.get(timeframe, 5)
+    minutes_per_bar = MINUTES_PER_BAR.get(timeframe, 5)
     return max(0, int(remaining_minutes / minutes_per_bar))
 
 
