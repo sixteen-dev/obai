@@ -10,7 +10,7 @@ Changes to the backtest server schema have downstream dependencies in the Strate
 |---|---|
 | `Operand` fields (indicator, constant, time_of_day, time) | "Condition Operands" table + examples |
 | `SUPPORTED_OPERATORS` | "Supported Operators" list |
-| `SUPPORTED_INDICATORS` / `INDICATOR_REGISTRY` | "Supported Indicators" section + `backtest_get_supported_indicators_tool` output |
+| `INDICATOR_CATALOG` (`models/indicator_catalog.py` — the one place an indicator is registered; `SUPPORTED_INDICATORS`, param names, multi-output suffixes and the engine's dispatch tables are all derived from it) | "Supported Indicators" section + `backtest_get_supported_indicators_tool` output |
 | `SUPPORTED_TIMEFRAMES` / `BARS_PER_DAY` | "Intraday Strategy Guidelines" section |
 | `PositionSizing` fields / `SUPPORTED_SIZING_METHODS` | "Portfolio Allocation Mode" section + JSON template |
 | `RiskManagement` fields | JSON template `risk_management` block |
@@ -28,3 +28,7 @@ Changes to the backtest server schema have downstream dependencies in the Strate
 - `src/obai/core_agents/tests/test_strategy_agent.py` — tests prompt sections and schema fields
 - `src/obai/core_agents/tests/test_strategy_eval_contract.py` — tests output contract
 - `tests/test_strategy_schema.py` — backtest server schema validation tests
+
+## Engine VERSION
+
+`VERSION` is the feature-definition version and it keys the result cache: bump it whenever a custom indicator formula, an alignment rule, or an execution phase changes, or cached numbers computed under the old definition keep being served for an unchanged strategy.

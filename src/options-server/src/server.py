@@ -524,6 +524,10 @@ async def options_get_aggregates_tool(
 _US_MARKET_TZ = ZoneInfo("America/New_York")
 _OPTION_EXPIRY_CUTOFF = dtime(16, 0)  # 4pm ET equity option expiration cutoff
 _HOURS_PER_YEAR = 365.25 * 24
+# Names the convention behind every time_to_expiry so consumers do not have to
+# guess the year length (365.25 days, not 365). Derived from the divisor above
+# so changing one can never leave the published label describing the other.
+_TIME_BASIS = f"wall_clock_to_1600_america_new_york_over_{_HOURS_PER_YEAR / 24:g}_day_year"
 
 
 def _years_to_expiry(expiry_date: str) -> float:
@@ -618,9 +622,12 @@ async def options_compute_greeks_tool(
             volatility. When omitted, everything is computed at the seed.
 
     Returns:
-        Dict with price, greeks, greeks_units, breakeven,
-        implied_volatility, and volatility_used — the volatility every
-        other numeric field was computed from. implied_volatility is the
+        Dict with price, time_to_expiry_years, time_basis, greeks,
+        greeks_units, breakeven, implied_volatility, and volatility_used —
+        the volatility every other numeric field was computed from.
+        time_to_expiry_years is the unrounded time input every number was
+        priced from and time_basis names its convention, so a reader can
+        reproduce the figures. implied_volatility is the
         solved IV when market_price is given, else the seed; it is None
         when the solver fails to converge, in which case volatility_used
         falls back to the seed and an iv_solve_error string says so.
@@ -661,6 +668,8 @@ async def options_compute_greeks_tool(
 
         payload: dict[str, Any] = {
             "price": round(price, 4),
+            "time_to_expiry_years": time_to_expiry,
+            "time_basis": _TIME_BASIS,
             "greeks": {k: round(v, 6) for k, v in greeks.items()},
             "greeks_units": GREEK_UNITS,
             "breakeven": round(be, 4),
@@ -741,9 +750,11 @@ async def options_scenario_analysis_tool(
             grid for time decay. Omit for a single present-time grid.
 
     Returns:
-        Dict with spot_changes, vol_changes, pnl_grid, max_profit, max_loss.
-        When days_forward is given, also includes pnl_grid_by_day (one repriced
-        grid per horizon).
+        Dict with spot_changes, vol_changes, pnl_grid, max_profit, max_loss,
+        plus time_to_expiry_years (the unrounded time input the grid was
+        priced from) and time_basis (its convention), so a reader can
+        reproduce the grid. When days_forward is given, also includes
+        pnl_grid_by_day (one repriced grid per horizon).
     """
     try:
         time_to_expiry = _years_to_expiry(expiry_date)
@@ -763,7 +774,10 @@ async def options_scenario_analysis_tool(
             contract_multiplier=contract_multiplier,
             days_forward=days_forward,
         )
-        return dict(result)
+        payload: dict[str, Any] = dict(result)
+        payload["time_to_expiry_years"] = time_to_expiry
+        payload["time_basis"] = _TIME_BASIS
+        return payload
     except Exception as e:
         log_error(
             logger,

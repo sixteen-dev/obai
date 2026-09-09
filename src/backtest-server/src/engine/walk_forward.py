@@ -250,6 +250,13 @@ def _extract_metrics(result: dict[str, Any]) -> dict[str, Any]:
         # and alarming finding. A backtest that simply did not report its
         # pre-roll must not be made to assert it.
         "warmup_bars": result.get("warmup_bars"),
+        # Coverage gaps and unprimed indicators are what make a fold's numbers
+        # unreliable; aggregates still count the fold, but the reader sees why.
+        "warnings": result.get("warnings", []),
+        # The rate each fold was scored with, so a fold's Sharpe can be checked
+        # against its own window's Treasury mean rather than taken on faith.
+        "risk_free_rate": result.get("risk_free_rate"),
+        "risk_free_rate_source": result.get("risk_free_rate_source"),
     }
 
 

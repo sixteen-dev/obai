@@ -18,8 +18,9 @@ from dataclasses import dataclass
 
 from .risk import run_monte_carlo
 
-# Coarse-then-fine grid keeps the runtime bounded without making the
-# top end of "what fraction is still safe?" depend on a magic step size.
+# Flat 1% grid from 1% to 100%. Zero is deliberately absent: the grid is
+# also fed to the drawdown Monte Carlo, whose position_fraction must be in
+# (0, 1]. The Kelly search adds the zero-allocation candidate itself.
 KELLY_GRID: tuple[float, ...] = tuple(round(i * 0.01, 4) for i in range(1, 101))
 
 # Default Monte Carlo path count for drawdown-constrained sizing — modest
@@ -208,9 +209,15 @@ def _closed_form_kelly(*, win_prob: float, payoff_odds: float) -> KellyEstimates
 
 
 def _grid_search_kelly(returns: list[float]) -> KellyEstimates:
-    """Find the fraction in KELLY_GRID maximising mean log-growth."""
+    """Find the fraction in KELLY_GRID maximising mean log-growth.
+
+    Returns a zero fraction when no grid point beats the zero-allocation
+    candidate — i.e. the sample carries no positive edge to bet on.
+    """
     best_fraction = 0.0
-    best_growth = -math.inf
+    # Log-growth of the zero-allocation candidate: staying in cash is always
+    # feasible, so no grid point wins unless it beats holding nothing.
+    best_growth = 0.0
     for fraction in KELLY_GRID:
         growth = _expected_log_growth(returns, fraction)
         if growth > best_growth:

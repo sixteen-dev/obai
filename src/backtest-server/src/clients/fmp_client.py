@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from statistics import fmean
+from typing import Any
 
 import httpx
 
@@ -18,6 +20,18 @@ logger = get_logger(__name__)
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 1.0
 FALLBACK_RISK_FREE_RATE = 0.045  # 3-month T-bill fallback when FMP unavailable
+# FMP truncates a treasury-rates response at roughly one quarter, so a window
+# is fetched in chunks this size. The chunk cap must admit the longest window
+# the strategy schema accepts (``TIMEFRAME_MAX_YEARS["daily"]``, 30 years) so
+# no valid backtest falls back to the constant; a test pins the two together.
+TREASURY_CHUNK_DAYS = 90
+MAX_RISK_FREE_WINDOW_YEARS = 30
+MAX_TREASURY_CHUNKS = math.ceil(MAX_RISK_FREE_WINDOW_YEARS * 366 / TREASURY_CHUNK_DAYS)
+# Memoized yield series per client; each is a full daily window, so the bound
+# is small. A window ending today is refetched on the next UTC day so a partial
+# window does not freeze for the life of the process, and an earlier day's
+# series are dropped on the next insert.
+MAX_RISK_FREE_MEMO_ENTRIES = 16
 
 _APIKEY_PATTERN = re.compile(r"apikey=[^&\s]+")
 
@@ -96,6 +110,100 @@ def _build_date_chunks(
     return chunks
 
 
+def _parse_rate_window(start_date: str, end_date: str) -> tuple[date, date]:
+    """Parse an inclusive risk-free rate window.
+
+    Args:
+        start_date: Window start in YYYY-MM-DD format.
+        end_date: Window end in YYYY-MM-DD format.
+
+    Returns:
+        Tuple of (start, end) dates.
+
+    Raises:
+        ValueError: If either date is not ISO format or start is after end.
+
+    """
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError as exc:
+        msg = f"risk-free window dates must be ISO YYYY-MM-DD; got {start_date!r}..{end_date!r}"
+        raise ValueError(msg) from exc
+    if start > end:
+        msg = f"risk-free window start_date {start_date} is after end_date {end_date}"
+        raise ValueError(msg)
+    return start, end
+
+
+def _month3_by_date(
+    rows: list[Any],
+    chunk_start: date,
+    chunk_end: date,
+) -> dict[date, float]:
+    """Index the 3-month treasury yield of each in-window row by its date.
+
+    The provider truncates wide requests to their most recent rows and, with no
+    range at all, returns the latest quotes. A row dated outside the requested
+    chunk is therefore evidence the range was not honoured, and letting it into
+    the mean would relabel today's yield as the window's. Such rows are counted
+    and logged, never averaged.
+
+    Args:
+        rows: Treasury-rates rows as the provider returned them.
+        chunk_start: First day the rows were requested for (inclusive).
+        chunk_end: Last day the rows were requested for (inclusive).
+
+    Returns:
+        Mapping of date to that day's ``month3`` percent value. A row that
+        is not a dict, carries no parseable date, lies outside the chunk, or
+        whose ``month3`` is missing, boolean, non-numeric or non-finite is
+        skipped rather than coerced into a number.
+
+    """
+    values: dict[date, float] = {}
+    outside = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_day = _row_date(row.get("date"))
+        month3 = row.get("month3")
+        if row_day is None:
+            continue
+        if not chunk_start <= row_day <= chunk_end:
+            outside += 1
+            continue
+        if isinstance(month3, bool) or not isinstance(month3, int | float):
+            continue
+        if not math.isfinite(month3):
+            continue
+        values[row_day] = float(month3)
+    if outside or not values:
+        logger.warning(
+            "treasury_chunk_rows_outside_window" if outside else "treasury_chunk_empty",
+            chunk_start=chunk_start.isoformat(),
+            chunk_end=chunk_end.isoformat(),
+            rows_outside_window=outside,
+            rows_in_window=len(values),
+        )
+    return values
+
+
+def _row_date(value: object) -> date | None:
+    """Parse a provider row's date, returning None when it is not an ISO date."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _utc_today() -> date:
+    """Return today's UTC date; a seam so tests can move the calendar."""
+    return datetime.now(UTC).date()
+
+
 # The adjustment basis stored prices sit on. Changing the endpoint above must
 # change this value too: a cache written on the old basis is not comparable
 # with rows fetched on the new one, and mixing them fabricates price moves.
@@ -130,10 +238,12 @@ class FMPClient:
         """
         self.api_key = settings.fmp_api_key
         self.client = httpx.AsyncClient(timeout=30.0)
-        # Risk-free rate is a daily figure — memoize per UTC date so walk-forward's
-        # repeated calls hit the API at most once a day and never re-fetch a
-        # stale value indefinitely.
-        self._rfr_cache: dict[str, tuple[float, str]] = {}
+        # Daily 3-month yields, memoized per fetched (start, end, UTC day). A
+        # window inside a fetched one is served from that series, so
+        # walk-forward's ~2N folds cost one fetch of the full range; a window
+        # still accruing yields is fetched afresh each day. The dict is
+        # bounded; the oldest entry is evicted first.
+        self._yield_series: dict[tuple[date, date, str], dict[date, float]] = {}
 
     async def __aenter__(self) -> FMPClient:
         """Async context manager entry."""
@@ -381,60 +491,145 @@ class FMPClient:
         except (httpx.HTTPError, httpx.TimeoutException):
             return False
 
-    async def get_treasury_rates(self) -> dict[str, float] | None:
-        """Fetch the latest US treasury rates for all maturities from FMP.
+    async def get_period_risk_free_rate_with_source(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> tuple[float, str]:
+        """Resolve the mean 3-month treasury rate over a backtest window.
+
+        Sharpe, Sortino and alpha must not move because today's yield moved
+        while the historical prices did not, so the rate is the average of the
+        daily 3-month yields printed inside the requested window rather than
+        the latest quote. A window inside one already fetched today is served
+        from that series without a request, so a walk-forward run that fetches
+        its full range once prices every fold off the fold's own days for free.
+        Provider failures never raise — a rate lookup must not break a backtest.
+
+        Args:
+            start_date: First day of the window (YYYY-MM-DD, inclusive).
+            end_date: Last day of the window (YYYY-MM-DD, inclusive).
 
         Returns:
-            The most recent rates dict (percent values keyed by maturity, e.g.
-            ``month3``) or None when the response is empty or not a list.
+            Tuple of (annual risk-free rate as decimal, source label):
+            ``(mean, "treasury_3m_period_mean")`` on success, or
+            ``(FALLBACK_RISK_FREE_RATE, "fallback")`` when the provider fails,
+            returns no usable yield, or the window exceeds the chunk cap.
 
         Raises:
-            httpx.HTTPError: If the request ultimately fails after retries.
+            ValueError: If a date is not ISO format or start_date is after
+                end_date. That is a caller bug, not a provider failure.
 
         """
-        data = await self._request_with_retry("treasury-rates", {"apikey": self.api_key})
-        if isinstance(data, list) and data:
-            return cast(dict[str, float], data[0])
+        start, end = _parse_rate_window(start_date, end_date)
+        series = self._covering_series(start, end)
+        if series is None:
+            series = await self._fetch_yield_series(start, end)
+        if series is None:
+            return FALLBACK_RISK_FREE_RATE, "fallback"
+
+        in_window = [value for day, value in series.items() if start <= day <= end]
+        if not in_window:
+            logger.warning(
+                "risk_free_rate_fallback",
+                reason="no 3-month yield in the window",
+                start=start.isoformat(),
+                end=end.isoformat(),
+            )
+            return FALLBACK_RISK_FREE_RATE, "fallback"
+        return fmean(in_window) / 100, "treasury_3m_period_mean"
+
+    def _covering_series(self, start: date, end: date) -> dict[date, float] | None:
+        """Return a series fetched today whose window contains this one, if any."""
+        today = _utc_today().isoformat()
+        for (fetched_start, fetched_end, fetched_on), series in self._yield_series.items():
+            if fetched_on == today and fetched_start <= start and fetched_end >= end:
+                return series
         return None
 
-    async def get_risk_free_rate_with_source(self) -> tuple[float, str]:
-        """Resolve the 3-month treasury rate as a decimal, with its source.
-
-        Returns ``(rate, "treasury_3m")`` on success or
-        ``(FALLBACK_RISK_FREE_RATE, "fallback")`` on any failure. The result is
-        memoized per UTC date so repeated backtests (e.g. walk-forward's ~2N
-        calls) never amplify into repeated API hits or a treasury outage. This
-        method never raises — a rate lookup must not break a backtest.
+    async def _fetch_yield_series(
+        self,
+        start: date,
+        end: date,
+    ) -> dict[date, float] | None:
+        """Fetch the window's daily 3-month yields in chunks and memoize them.
 
         Returns:
-            Tuple of (annual risk-free rate as decimal, source label).
+            The dated yields, or None when the window exceeds the chunk cap or
+            the provider fails. A failure and an empty series are not
+            memoized, so the next lookup retries and an empty answer can never
+            shadow a later, populated series that covers the same days.
 
         """
-        cache_key = datetime.now(UTC).date().isoformat()
-        cached = self._rfr_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        span_days = (end - start).days + 1
+        chunk_count = math.ceil(span_days / TREASURY_CHUNK_DAYS)
+        if chunk_count > MAX_TREASURY_CHUNKS:
+            logger.warning(
+                "risk_free_rate_fallback",
+                reason="window exceeds the treasury chunk cap",
+                chunks_required=chunk_count,
+                max_chunks=MAX_TREASURY_CHUNKS,
+            )
+            return None
 
-        result = await self._resolve_risk_free_rate()
-        self._rfr_cache[cache_key] = result
-        return result
-
-    async def _resolve_risk_free_rate(self) -> tuple[float, str]:
-        """Fetch the 3-month treasury rate, falling back on any failure."""
+        series: dict[date, float] = {}
         try:
-            rates = await self.get_treasury_rates()
-            if rates and "month3" in rates:
-                return float(rates["month3"]) / 100, "treasury_3m"
+            for chunk_start, chunk_end in _build_date_chunks(start, end, TREASURY_CHUNK_DAYS):
+                rows = await self._fetch_treasury_chunk(chunk_start, chunk_end)
+                series.update(_month3_by_date(rows, chunk_start, chunk_end))
         except (httpx.HTTPError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning(
                 "risk_free_rate_fallback",
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            return FALLBACK_RISK_FREE_RATE, "fallback"
+            return None
 
-        logger.warning("risk_free_rate_fallback", reason="month3 not in response")
-        return FALLBACK_RISK_FREE_RATE, "fallback"
+        if not series:
+            return series
+        today = _utc_today().isoformat()
+        self._yield_series = {
+            key: kept for key, kept in self._yield_series.items() if key[2] == today
+        }
+        if len(self._yield_series) >= MAX_RISK_FREE_MEMO_ENTRIES:
+            self._yield_series.pop(next(iter(self._yield_series)))
+        self._yield_series[(start, end, today)] = series
+        return series
+
+    async def _fetch_treasury_chunk(
+        self,
+        chunk_start: date,
+        chunk_end: date,
+    ) -> list[Any]:
+        """Fetch one chunk of daily treasury rates.
+
+        Args:
+            chunk_start: First day of the chunk (inclusive).
+            chunk_end: Last day of the chunk (inclusive).
+
+        Returns:
+            The provider's rows, or an empty list when the body is not a list.
+
+        Raises:
+            httpx.HTTPError: If the request ultimately fails after retries.
+
+        """
+        data = await self._request_with_retry(
+            "treasury-rates",
+            {
+                "apikey": self.api_key,
+                "from": chunk_start.isoformat(),
+                "to": chunk_end.isoformat(),
+            },
+        )
+        if not isinstance(data, list):
+            logger.warning(
+                "unexpected_response_type",
+                endpoint="treasury-rates",
+                type=type(data).__name__,
+            )
+            return []
+        return data
 
     async def _request_with_retry(
         self,

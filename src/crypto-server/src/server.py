@@ -337,7 +337,8 @@ async def crypto_backtest_run_strategy(
         "title": "Get Crypto Backtest Job Status",
         "readOnlyHint": True,
         "destructiveHint": False,
-        "idempotentHint": True,
+        # Job state is mutable, so this opts out of the hub result cache.
+        "idempotentHint": False,
         "openWorldHint": False,
     },
 )

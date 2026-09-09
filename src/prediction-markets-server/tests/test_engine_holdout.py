@@ -27,6 +27,13 @@ def _items(n: int, *, distinct: bool = True) -> list[_Item]:
     return [_Item(cid=f"m{i}" if distinct else "m", ts=_at(i)) for i in range(n)]
 
 
+def _straddling_items(n: int) -> list[_Item]:
+    # Each market contributes one early and one late item, straddling _at(50).
+    early = [_Item(cid=f"m{i}", ts=_at(i)) for i in range(n)]
+    late = [_Item(cid=f"m{i}", ts=_at(100 + i)) for i in range(n)]
+    return early + late
+
+
 def _key(i: _Item) -> datetime:
     return i.ts
 
@@ -169,6 +176,36 @@ def test_build_out_of_sample_low_n_false_when_both_halves_have_enough_markets() 
         delta=_delta,
     )
     assert block["low_n"] is False
+
+
+def test_build_out_of_sample_counts_markets_present_in_both_halves() -> None:
+    # The audit fixture: 12 markets, each contributing one observation before
+    # the cutoff and one on/after it, so every market lands in both halves.
+    block = build_out_of_sample(
+        _straddling_items(12),
+        key=_key,
+        market_key=_market,
+        spec=HoldoutSpec(cutoff=_at(50)),
+        aggregate=_count,
+        delta=_delta,
+    )
+    assert block["overlap_market_count"] == 12
+    assert block["train"]["n"] == 12.0
+    assert block["holdout"]["n"] == 12.0
+    assert block["low_n"] is False  # 12 distinct markets per half clears the floor
+
+
+def test_build_out_of_sample_overlap_is_zero_for_disjoint_markets() -> None:
+    # One market per item → a chronological split cannot put a market in both halves.
+    block = build_out_of_sample(
+        _items(LOW_N_FLOOR * 4),
+        key=_key,
+        market_key=_market,
+        spec=HoldoutSpec(fraction=0.3),
+        aggregate=_count,
+        delta=_delta,
+    )
+    assert block["overlap_market_count"] == 0
 
 
 def test_holdout_spec_engaged() -> None:

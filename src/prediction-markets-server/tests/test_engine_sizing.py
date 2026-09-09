@@ -101,3 +101,28 @@ def test_estimate_sizing_rejects_invalid_haircut() -> None:
             max_drawdown_limit=0.3,
             confidence_haircut=1.5,
         )
+
+
+@pytest.mark.parametrize(
+    ("returns", "label"),
+    [
+        ([-1.0] * 20, "all_losses"),
+        ([1.0, -1.0] * 10, "zero_edge_even_money"),
+        ([0.0] * 20, "flat"),
+    ],
+)
+def test_estimate_kelly_grid_search_allocates_nothing_without_positive_edge(
+    returns: list[float], label: str
+) -> None:
+    """Cash must win the grid search when no fraction beats zero log-growth."""
+    est = estimate_kelly(returns=returns)
+    assert est.method == "grid_search"
+    assert est.naive_kelly == 0.0, label
+    assert est.half_kelly == 0.0
+    assert est.capped_kelly == 0.0
+
+
+def test_estimate_kelly_grid_search_still_allocates_on_positive_edge() -> None:
+    """The zero candidate must not shadow a genuinely positive-EV distribution."""
+    est = estimate_kelly(returns=[0.5, -0.3] * 10)
+    assert est.naive_kelly > 0.0

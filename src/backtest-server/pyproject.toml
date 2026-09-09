@@ -1,6 +1,6 @@
 [project]
 name = "backtest-server"
-version = "0.1.2"
+version = "0.1.4"
 description = "MCP server for trading strategy backtesting - indicator computation, signal generation, and performance metrics"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,7 +11,7 @@ dependencies = [
     "structlog>=25.1.0",
     "numpy>=2.0.0",
     "polars>=1.0.0",
-    "polars-talib>=0.1.5",
+    "polars-talib>=0.1.6",
     "duckdb>=1.0.0,<2.0.0",
     "pyarrow>=14.0.0",
 ]

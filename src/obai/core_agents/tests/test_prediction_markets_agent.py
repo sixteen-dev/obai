@@ -38,6 +38,12 @@ class TestPredictionMarketsAgentInitialization:
         skills_dir = Path(__file__).resolve().parents[1] / "hub_skills"
         return (skills_dir / name / "SKILL.md").read_text()
 
+    @staticmethod
+    def _read_direct_skill(name: str) -> str:
+        """Read the repository-level direct-MCP skill markdown."""
+        skills_dir = Path(__file__).resolve().parents[4] / "skills"
+        return (skills_dir / name / "SKILL.md").read_text()
+
     def test_agent_creation(self) -> None:
         """Test agent can be created without errors."""
         agent = PredictionMarketsAgent()
@@ -92,6 +98,38 @@ class TestPredictionMarketsAgentInitialization:
         prompt = self._read_prompt_file("prediction_markets")
         assert "include the tool-provided `market_url`" in prompt
         assert "Use `slug` only as a fallback when `market_url` is absent" in prompt
+
+    def test_out_of_sample_block_is_described_as_a_forward_test(self) -> None:
+        """The holdout is a chronological split, not independent validation.
+
+        Markets entered before the cutoff can resolve after it, so the same
+        market can appear on both sides. The response reports that as
+        `overlap_market_count`; the prompt and the direct-MCP skill must both
+        require it alongside `low_n` and stop calling the split validation.
+        """
+        for text in (
+            self._read_prompt_file("prediction_markets"),
+            self._read_direct_skill("obai-prediction-markets"),
+        ):
+            assert "chronological by entry time" in text
+            assert "quote `out_of_sample.overlap_market_count` and `low_n`" in text
+            assert "never call the holdout independent" in text
+            assert "Treat a result as validated only when" not in text
+
+    def test_no_side_edge_must_be_rederived_from_the_executable_ask(self) -> None:
+        """Negating the YES edge is only valid at the tool's reference price.
+
+        `estimate_market_edge` prices YES off the displayed outcome price, not
+        an order book, so the negated value is not the edge available at the NO
+        token's ask. Prompt and direct-MCP skill must both send the agent back
+        to the snapshot before a Buy NO decision.
+        """
+        for text in (
+            self._read_prompt_file("prediction_markets"),
+            self._read_direct_skill("obai-prediction-markets"),
+        ):
+            assert "gives the NO edge at this tool's reference price" in text
+            assert "re-derive the executable NO edge from the NO token's best ask" in text
 
     def test_hub_prediction_market_skill_has_terminal_relay_rules(self) -> None:
         """Hub skill should preserve prediction-market terminal output."""

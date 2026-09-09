@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+from collections import Counter
+from datetime import date, datetime
 
 import polars as pl
 import pytest
@@ -28,14 +29,16 @@ def _make_signal_df(  # noqa: PLR0913
     highs: list[float] | None = None,
     lows: list[float] | None = None,
     volumes: list[int] | None = None,
+    atr: list[float | None] | None = None,
+    opens: list[float] | None = None,
 ) -> pl.DataFrame:
     """Create a DataFrame with signals for testing."""
     n = len(prices)
     dates = [date(2023, 1, i + 2) for i in range(n)]
-    return pl.DataFrame(
+    df = pl.DataFrame(
         {
             "date": dates,
-            "open": prices,
+            "open": opens if opens else prices,
             "high": highs if highs else [p + 1.0 for p in prices],
             "low": lows if lows else [p - 1.0 for p in prices],
             "close": prices,
@@ -44,6 +47,9 @@ def _make_signal_df(  # noqa: PLR0913
             "exit_signal": exits,
         }
     )
+    if atr is None:
+        return df
+    return df.with_columns(pl.Series("atr", atr, dtype=pl.Float64))
 
 
 class TestRunBacktest:
@@ -225,6 +231,156 @@ class TestEntryBarStopBinds:
         assert trade.exit_price == pytest.approx(95.0)
 
 
+def _make_intraday_df(
+    prices: list[float],
+    entries: list[bool],
+    timestamps: list[datetime],
+) -> pl.DataFrame:
+    """Create an intraday DataFrame with entry signals and no exit signals."""
+    n = len(prices)
+    return pl.DataFrame(
+        {
+            "date": timestamps,
+            "open": prices,
+            "high": [p + 1.0 for p in prices],
+            "low": [p - 1.0 for p in prices],
+            "close": prices,
+            "volume": [1_000_000] * n,
+            "entry_signal": entries,
+            "exit_signal": [False] * n,
+        }
+    )
+
+
+class TestEndOfBacktestCloseOut:
+    """A position still open on the last bar must be reported as a trade."""
+
+    def test_open_position_closes_at_the_final_close(self) -> None:
+        """The run ends with a closed trade priced at the last available close."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 110.0],
+            entries=[True, False, False],
+            exits=[False, False, False],
+        )
+
+        equity, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=50.0),
+            RiskManagement(),
+            BacktestConfig(
+                symbol="OPEN",
+                slippage_pct=0.0,
+                commission_pct=0.0,
+                initial_capital=1000.0,
+            ),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "end_of_backtest"
+        assert trades[0].exit_date == "2023-01-04"
+        assert trades[0].exit_price == pytest.approx(110.0)
+        assert trades[0].return_pct == pytest.approx(10.0)
+        # Closing at the mark leaves the equity curve unchanged.
+        assert equity["equity"][-1] == pytest.approx(1050.0)
+
+
+class TestCloseEod:
+    """close_eod must force-close positions at session end, entry bar included."""
+
+    def test_entry_on_last_bar_of_session_closes_same_session(self) -> None:
+        """A position opened on the session's last bar cannot survive overnight."""
+        df = _make_intraday_df(
+            prices=[100.0, 100.0, 105.0, 110.0],
+            entries=[True, False, False, False],
+            timestamps=[
+                datetime(2024, 1, 2, 15, 50),
+                datetime(2024, 1, 2, 15, 55),
+                datetime(2024, 1, 3, 9, 30),
+                datetime(2024, 1, 3, 15, 55),
+            ],
+        )
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(close_eod=True),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0, timeframe="5min"),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "eod_close"
+        assert trades[0].exit_date == "2024-01-02T15:55:00"
+        assert trades[0].holding_minutes == 0
+
+    def test_entry_on_interior_bar_holds_until_session_end(self) -> None:
+        """An interior-bar entry is not force-closed until the session's last bar."""
+        df = _make_intraday_df(
+            prices=[100.0, 100.0, 105.0],
+            entries=[True, False, False],
+            timestamps=[
+                datetime(2024, 1, 2, 9, 30),
+                datetime(2024, 1, 2, 15, 50),
+                datetime(2024, 1, 2, 15, 55),
+            ],
+        )
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(close_eod=True),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0, timeframe="5min"),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "eod_close"
+        assert trades[0].exit_date == "2024-01-02T15:55:00"
+        assert trades[0].holding_minutes == 5
+
+    def test_daily_bars_close_on_the_entry_bar(self) -> None:
+        """Every daily bar ends a session, so close_eod exits at that day's close."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 105.0, 110.0],
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+        )
+
+        equity, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(close_eod=True),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "eod_close"
+        assert trades[0].entry_date == trades[0].exit_date == "2023-01-03"
+        assert trades[0].holding_days == 0
+        assert equity["equity"].n_unique() == 1  # entered and exited at 100, flat curve
+
+    def test_early_close_session_detected_by_next_bar_date_change(self) -> None:
+        """A short session ends at its last bar, whatever the wall-clock time."""
+        df = _make_intraday_df(
+            prices=[100.0, 100.0, 105.0],
+            entries=[True, False, False],
+            timestamps=[
+                datetime(2024, 7, 3, 12, 55),
+                datetime(2024, 7, 3, 13, 0),
+                datetime(2024, 7, 5, 9, 30),
+            ],
+        )
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(close_eod=True),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0, timeframe="5min"),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "eod_close"
+        assert trades[0].exit_date == "2024-07-03T13:00:00"
+
+
 class TestTradeDataclass:
     """Test Trade serialization."""
 
@@ -395,9 +551,10 @@ class TestVolumeScaledSlippage:
         )
         assert fill < 100.0
 
-    def test_exit_stop_unaffected_by_volume(self) -> None:
-        """Stop loss fills should ignore volume scaling."""
+    def test_exit_stop_at_reference_participation_matches_flat(self) -> None:
+        """A stop order scales with participation like any other liquidation."""
         no_vol = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 0.1)
+        # 500 shares / 50,000 volume = 1% participation = the reference rate.
         with_vol = compute_exit_fill(
             "stop_loss",
             100.0,
@@ -408,7 +565,7 @@ class TestVolumeScaledSlippage:
             order_shares=500.0,
             bar_volume=50_000,
         )
-        assert no_vol == with_vol
+        assert no_vol == pytest.approx(with_vol)
 
     def test_zero_slippage_with_scaling(self) -> None:
         """slippage_pct=0 with volume scaling should produce zero slippage."""
@@ -507,3 +664,638 @@ class TestVolumeScaledBacktest:
         assert len(trades_illiquid) == 1
         # Liquid stock should have higher return (less slippage eaten)
         assert trades_liquid[0].return_pct > trades_illiquid[0].return_pct
+
+
+class TestEntrySkipReasons:
+    """An entry signal that never becomes a fill must say why."""
+
+    def test_entries_that_fire_while_held_are_counted(self) -> None:
+        """Repeat signals during an open position are counted, not discarded."""
+        df = _make_signal_df(
+            prices=[100.0, 100.0, 100.0, 100.0, 100.0],
+            entries=[True, True, True, False, False],
+            exits=[False, False, False, False, False],
+        )
+        skipped: Counter[str] = Counter()
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+            skipped=skipped,
+        )
+
+        assert dict(skipped) == {"in_position": 2}
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "end_of_backtest"
+
+    def test_no_entry_after_skips_are_counted(self) -> None:
+        """Signals blocked by the late-session cutoff are counted, not silent."""
+        df = _make_intraday_df(
+            prices=[100.0, 100.0, 100.0, 100.0],
+            entries=[True, True, False, False],
+            timestamps=[
+                datetime(2024, 1, 2, 15, 25),
+                datetime(2024, 1, 2, 15, 35),
+                datetime(2024, 1, 2, 15, 40),
+                datetime(2024, 1, 2, 15, 45),
+            ],
+        )
+        skipped: Counter[str] = Counter()
+
+        _, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(no_entry_after="15:30"),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0, timeframe="5min"),
+            skipped=skipped,
+        )
+
+        assert skipped["no_entry_after"] == 2
+        assert trades == []
+
+
+_ATR_STOP_PRICES: list[float] = [50.0, 50.0, 52.0, 54.0]
+_ATR_STOP_HIGHS: list[float] = [51.0, 51.0, 53.0, 55.0]
+_ATR_STOP_LOWS: list[float] = [49.0, 49.0, 44.0, 53.0]
+
+
+class TestAtrStop:
+    """A stop placed in the asset's own volatility units."""
+
+    def test_stop_is_frozen_from_the_signal_bars_atr(self) -> None:
+        """The stop uses the ATR that was readable when the signal fired."""
+        df = _make_signal_df(
+            prices=_ATR_STOP_PRICES,
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+            highs=_ATR_STOP_HIGHS,
+            lows=_ATR_STOP_LOWS,
+            atr=[2.5, 3.0, 3.5, 3.5],
+        )
+
+        equity_df, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(atr_indicator="atr", stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        # 50 - 2 * 2.5 from the signal bar; the entry bar's ATR would give 44.0,
+        # which the same bar's low also pierces.
+        assert trades[0].exit_reason == "stop_loss"
+        assert trades[0].entry_date == "2023-01-03"
+        assert trades[0].exit_date == "2023-01-04"
+        assert trades[0].exit_price == 45.0
+        assert trades[0].return_pct == pytest.approx(-10.0)
+        assert equity_df["equity"][-1] == pytest.approx(90_000.0)
+
+    def test_undefined_atr_skips_the_entry(self) -> None:
+        """No stop distance means no position, booked before any cost."""
+        df = _make_signal_df(
+            prices=_ATR_STOP_PRICES,
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+            highs=_ATR_STOP_HIGHS,
+            lows=_ATR_STOP_LOWS,
+            atr=[None, 3.0, 3.5, 3.5],
+        )
+        skipped: Counter[str] = Counter()
+
+        equity_df, trades = run_backtest(
+            df,
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(atr_indicator="atr", stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+            skipped=skipped,
+        )
+
+        assert trades == []
+        assert dict(skipped) == {"atr_undefined": 1}
+        assert equity_df["equity"].to_list() == [100_000.0] * 4
+
+    def test_missing_atr_column_raises(self) -> None:
+        """A silently dropped ATR column must fail the run, not the stop."""
+        df = _make_signal_df(
+            prices=_ATR_STOP_PRICES,
+            entries=[True, False, False, False],
+            exits=[False, False, False, False],
+        )
+
+        with pytest.raises(ValueError, match="atr_14"):
+            run_backtest(
+                df,
+                PositionSizing(max_position_pct=100.0),
+                RiskManagement(atr_indicator="atr_14", stop_atr_multiple=2.0),
+                BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+            )
+
+
+_ATR_RISK_PRICES: list[float] = [50.0, 50.0, 52.0, 54.0]
+
+
+def _atr_risk_df() -> pl.DataFrame:
+    """Entry on bar 1 at 50, signal exit on bar 3 at 54, ATR 2.5 on the signal bar."""
+    return _make_signal_df(
+        prices=_ATR_RISK_PRICES,
+        entries=[True, False, False, False],
+        exits=[False, False, True, False],
+        atr=[2.5, 3.0, 3.5, 3.5],
+    )
+
+
+class TestAtrRiskSizing:
+    """Shares come from the loss the ATR stop would realize, not from notional."""
+
+    def test_shares_come_from_the_signal_bars_atr(self) -> None:
+        """1% of 100k over a 2 x 2.5 stop distance buys 200 shares."""
+        equity_df, trades = run_backtest(
+            _atr_risk_df(),
+            PositionSizing(method="atr_risk", risk_pct=1.0, max_position_pct=20.0),
+            RiskManagement(atr_indicator="atr", stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].entry_price == 50.0
+        assert trades[0].exit_price == 54.0
+        assert trades[0].exit_reason == "signal"
+        assert trades[0].pnl == pytest.approx(800.0)
+        assert equity_df["equity"].to_list() == pytest.approx(
+            [100_000.0, 100_000.0, 100_400.0, 100_800.0]
+        )
+
+    def test_max_position_pct_caps_the_share_count(self) -> None:
+        """The exposure cap binds below the risk budget's 200 shares."""
+        _, trades = run_backtest(
+            _atr_risk_df(),
+            PositionSizing(method="atr_risk", risk_pct=1.0, max_position_pct=5.0),
+            RiskManagement(atr_indicator="atr", stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].pnl == pytest.approx(400.0)
+
+    def test_zero_shares_skips_and_books_nothing(self) -> None:
+        """A budget smaller than one share's risk is a skip, not a rounded-up fill."""
+        skipped: Counter[str] = Counter()
+
+        equity_df, trades = run_backtest(
+            _atr_risk_df(),
+            PositionSizing(method="atr_risk", risk_pct=0.001, max_position_pct=20.0),
+            RiskManagement(atr_indicator="atr", stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+            skipped=skipped,
+        )
+
+        assert trades == []
+        assert dict(skipped) == {"zero_shares": 1}
+        assert equity_df["equity"].to_list() == [100_000.0] * 4
+
+
+_TRAIL_OPENS: list[float] = [100.0, 100.0, 100.0, 110.0]
+_TRAIL_HIGHS: list[float] = [100.0, 100.0, 120.0, 111.0]
+_TRAIL_LOWS: list[float] = [100.0, 100.0, 95.0, 105.0]
+_TRAIL_CLOSES: list[float] = [100.0, 100.0, 118.0, 108.0]
+
+
+def _trailing_df(
+    opens: list[float] | None = None,
+    lows: list[float] | None = None,
+    atr: list[float | None] | None = None,
+) -> pl.DataFrame:
+    """Entry on bar 1 at 100; bar 2 prints the high that ratchets the trail."""
+    return _make_signal_df(
+        prices=_TRAIL_CLOSES,
+        entries=[True, False, False, False],
+        exits=[False, False, False, False],
+        highs=_TRAIL_HIGHS,
+        lows=lows or _TRAIL_LOWS,
+        atr=atr,
+        opens=opens or _TRAIL_OPENS,
+    )
+
+
+class TestTrailingStop:
+    """A stop that ratchets up with the highest high the position has survived."""
+
+    def test_trail_uses_the_previous_bars_high_not_the_current_one(self) -> None:
+        """Bar 2's own high cannot tighten the stop bar 2 is checked against."""
+        equity_df, trades = run_backtest(
+            _trailing_df(),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(trailing_stop_pct=10.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        # Bar 2 (low 95) survives a trail still set at 90 from bar 1's high.
+        assert trades[0].exit_date == "2023-01-05"
+        assert trades[0].exit_reason == "trailing_stop"
+        assert trades[0].exit_price == pytest.approx(108.0)
+        assert trades[0].return_pct == pytest.approx(8.0)
+        assert equity_df["equity"].to_list() == pytest.approx(
+            [100_000.0, 100_000.0, 118_000.0, 108_000.0]
+        )
+
+    def test_gap_through_fills_at_the_open(self) -> None:
+        """An open below the trail is the fill, not the level it skipped."""
+        _, trades = run_backtest(
+            _trailing_df(opens=[100.0, 100.0, 100.0, 100.0]),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(trailing_stop_pct=10.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_reason == "trailing_stop"
+        assert trades[0].exit_price == pytest.approx(100.0)
+
+    def test_atr_distance_ratchets_from_the_completed_bar(self) -> None:
+        """The ATR variant trails by a multiple of the bar that just closed."""
+        _, trades = run_backtest(
+            _trailing_df(atr=[4.0, 4.0, 4.0, 4.0]),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(atr_indicator="atr", trailing_stop_atr_multiple=2.0),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        # 120 - 2 * 4 = 112 after bar 2; bar 3's low 105 pierces it.
+        assert trades[0].exit_date == "2023-01-05"
+        assert trades[0].exit_reason == "trailing_stop"
+        assert trades[0].exit_price == pytest.approx(110.0)
+
+    def test_equal_levels_are_labelled_stop_loss(self) -> None:
+        """A tie belongs to the fixed stop: the trail added nothing."""
+        _, trades = run_backtest(
+            _trailing_df(lows=[100.0, 90.0, 95.0, 105.0], atr=[4.0, 4.0, 4.0, 4.0]),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(
+                atr_indicator="atr",
+                stop_atr_multiple=2.0,
+                trailing_stop_atr_multiple=2.0,
+            ),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_date == "2023-01-03"
+        assert trades[0].exit_reason == "stop_loss"
+        assert trades[0].exit_price == pytest.approx(92.0)
+
+    def test_compute_exit_fill_treats_trailing_like_a_stop(self) -> None:
+        """The trail fills at its level, or at a worse open."""
+        at_level = compute_exit_fill(
+            reason="trailing_stop",
+            open_price=110.0,
+            close_price=108.0,
+            stop_level=108.0,
+            tp_level=None,
+            slippage_pct=0.0,
+        )
+        gapped = compute_exit_fill(
+            reason="trailing_stop",
+            open_price=100.0,
+            close_price=108.0,
+            stop_level=108.0,
+            tp_level=None,
+            slippage_pct=0.0,
+        )
+
+        assert at_level == pytest.approx(108.0)
+        assert gapped == pytest.approx(100.0)
+
+
+_TIME_STOP_PRICES: list[float] = [100.0, 100.0, 103.0, 110.0, 120.0]
+
+
+def _time_stop_df(
+    entries: list[bool] | None = None,
+    exits: list[bool] | None = None,
+    lows: list[float] | None = None,
+) -> pl.DataFrame:
+    """Build the shared time-stop fixture: open == close, entry fills on bar 1."""
+    return _make_signal_df(
+        prices=_TIME_STOP_PRICES,
+        entries=entries or [True, False, False, False, False],
+        exits=exits or [False, False, False, False, False],
+        lows=lows,
+        opens=_TIME_STOP_PRICES,
+    )
+
+
+class TestTimeStop:
+    """A holding-period cap closes the position at the Nth held bar's close."""
+
+    def test_exits_at_the_close_of_the_nth_held_bar(self) -> None:
+        """The entry bar counts as the first bar held."""
+        equity_df, trades = run_backtest(
+            _time_stop_df(),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(max_holding_bars=2),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].entry_date == "2023-01-03"
+        assert trades[0].entry_price == pytest.approx(100.0)
+        assert trades[0].exit_date == "2023-01-04"
+        assert trades[0].exit_price == pytest.approx(103.0)
+        assert trades[0].exit_reason == "time_stop"
+        assert trades[0].holding_days == 1
+        assert trades[0].return_pct == pytest.approx(3.0)
+        assert equity_df["equity"][-1] == pytest.approx(103_000.0)
+
+    def test_one_bar_limit_closes_on_the_entry_bar(self) -> None:
+        """A one-bar cap is spent by the fill itself, so the entry bar closes it."""
+        _, trades = run_backtest(
+            _time_stop_df(),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(max_holding_bars=1),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].entry_date == "2023-01-03"
+        assert trades[0].exit_date == "2023-01-03"
+        assert trades[0].exit_price == pytest.approx(100.0)
+        assert trades[0].return_pct == pytest.approx(0.0)
+        assert trades[0].exit_reason == "time_stop"
+
+    def test_intrabar_stop_outranks_the_time_stop(self) -> None:
+        """A level pierced inside the bar binds before that bar's close does."""
+        _, trades = run_backtest(
+            _time_stop_df(lows=[99.0, 99.0, 90.0, 109.0, 119.0]),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(stop_loss_pct=5.0, max_holding_bars=2),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_date == "2023-01-04"
+        assert trades[0].exit_reason == "stop_loss"
+        assert trades[0].exit_price == pytest.approx(95.0)
+
+    def test_signal_exit_at_the_open_outranks_the_time_stop(self) -> None:
+        """The open is settled before the close, so the signal keeps the label."""
+        _, trades = run_backtest(
+            _time_stop_df(exits=[False, True, False, False, False]),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(max_holding_bars=2),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert len(trades) == 1
+        assert trades[0].exit_date == "2023-01-04"
+        assert trades[0].exit_reason == "signal"
+        assert trades[0].exit_price == pytest.approx(103.0)
+
+
+def _cooldown_df() -> pl.DataFrame:
+    """Build the shared cooldown fixture: exit on bar 2, entries every bar after."""
+    return _make_signal_df(
+        prices=[100.0] * 7,
+        entries=[True, False, True, True, True, False, False],
+        exits=[False, True, False, False, False, False, False],
+    )
+
+
+class TestReentryCooldown:
+    """A symbol is barred from re-entering for a fixed number of bars."""
+
+    def test_entries_within_n_bars_of_an_exit_are_skipped(self) -> None:
+        """The two bars after the exit bar are blocked; the third fills."""
+        skipped: Counter[str] = Counter()
+
+        _, trades = run_backtest(
+            _cooldown_df(),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(reentry_cooldown_bars=2),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+            skipped=skipped,
+        )
+
+        assert [(t.entry_date, t.exit_date, t.exit_reason) for t in trades] == [
+            ("2023-01-03", "2023-01-04", "signal"),
+            ("2023-01-07", "2023-01-08", "end_of_backtest"),
+        ]
+        assert dict(skipped) == {"cooldown": 2}
+
+    def test_without_cooldown_the_engine_reenters_the_next_bar(self) -> None:
+        """Control: the same frame re-enters on the bar after the exit."""
+        _, trades = run_backtest(
+            _cooldown_df(),
+            PositionSizing(max_position_pct=100.0),
+            RiskManagement(),
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+
+        assert [t.entry_date for t in trades] == ["2023-01-03", "2023-01-05"]
+
+
+def _stop_exit_df() -> pl.DataFrame:
+    """Entry on bar 1 at open 100; bar 2 pierces the 5% stop without gapping."""
+    return _make_signal_df(
+        prices=[100.0, 100.0, 90.0],
+        entries=[True, False, False],
+        exits=[False, False, False],
+        highs=[101.0, 101.0, 101.0],
+        lows=[99.0, 99.0, 89.0],
+        opens=[100.0, 100.0, 100.0],
+    )
+
+
+class TestOrderTypeAwareExitCosts:
+    """Every exit that crosses the spread pays slippage; a limit exit does not."""
+
+    def test_stop_fills_below_the_level_by_the_slippage(self) -> None:
+        """A stop-market exit is a real liquidation, so it pays slippage."""
+        fill = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 1.0)
+
+        assert fill == pytest.approx(95.0 * 0.99)
+
+    def test_stop_gapped_through_fills_below_the_worse_open(self) -> None:
+        """The gap-through reference is the open, and it pays slippage too."""
+        fill = compute_exit_fill("stop_loss", 90.0, 99.0, 95.0, None, 1.0)
+
+        assert fill == pytest.approx(90.0 * 0.99)
+
+    def test_trailing_stop_pays_slippage_and_spread(self) -> None:
+        """The trail is a stop-market order and carries the same costs."""
+        fill = compute_exit_fill("trailing_stop", 110.0, 108.0, 108.0, None, 1.0, spread_cost=0.005)
+
+        assert fill == pytest.approx(108.0 * 0.99 - 108.0 * 0.005)
+
+    def test_stop_exit_scales_with_participation(self) -> None:
+        """Volume scaling reaches the stop path, not just the signal path."""
+        flat = compute_exit_fill("stop_loss", 100.0, 99.0, 95.0, None, 0.1)
+        scaled = compute_exit_fill(
+            "stop_loss",
+            100.0,
+            99.0,
+            95.0,
+            None,
+            0.1,
+            order_shares=25_000.0,
+            bar_volume=100_000,
+        )
+
+        assert scaled < flat
+
+    def test_take_profit_limit_pays_no_slippage_or_spread(self) -> None:
+        """A limit order fills at its limit or better, never worse."""
+        at_level = compute_exit_fill(
+            "take_profit", 100.0, 99.0, None, 105.0, 1.0, spread_cost=0.005
+        )
+        gapped = compute_exit_fill("take_profit", 110.0, 99.0, None, 105.0, 1.0, spread_cost=0.005)
+
+        assert at_level == pytest.approx(105.0)
+        assert gapped == pytest.approx(110.0)
+
+    @pytest.mark.parametrize(
+        "reason", ["eod_close", "time_stop", "end_of_backtest", "unknown_reason"]
+    )
+    def test_forced_close_exits_fill_below_the_close(self, reason: str) -> None:
+        """Market-on-close liquidations pay slippage and the half-spread."""
+        fill = compute_exit_fill(reason, 100.0, 99.0, 95.0, 105.0, 1.0, spread_cost=0.005)
+
+        assert fill == pytest.approx(99.0 * 0.99 - 99.0 * 0.005)
+
+    @pytest.mark.parametrize(
+        ("reason", "expected"),
+        [
+            ("signal", 100.0),
+            ("stop_loss", 95.0),
+            ("trailing_stop", 95.0),
+            ("take_profit", 105.0),
+            ("eod_close", 99.0),
+            ("time_stop", 99.0),
+            ("end_of_backtest", 99.0),
+            ("unknown_reason", 99.0),
+        ],
+    )
+    def test_zero_costs_reproduce_the_level_prices(self, reason: str, expected: float) -> None:
+        """Parity pin: with no slippage and no spread every fill is unchanged."""
+        fill = compute_exit_fill(reason, 100.0, 99.0, 95.0, 105.0, 0.0, spread_cost=0.0)
+
+        assert fill == pytest.approx(expected)
+
+    def test_single_symbol_stop_exit_pays_the_slippage(self) -> None:
+        """End-to-end: the stop fill and the final equity both drop.
+
+        With 1% slippage the entry fills at ``100 * 1.01 = 101``, so the 5%
+        stop freezes at ``101 * 0.95 = 95.95`` and the exit fills 1% below it
+        at ``95.95 * 0.99 = 94.9905``. At zero slippage both are unchanged.
+        """
+        sizing = PositionSizing(max_position_pct=100.0)
+        risk = RiskManagement(stop_loss_pct=5.0)
+        free, free_trades = run_backtest(
+            _stop_exit_df(),
+            sizing,
+            risk,
+            BacktestConfig(slippage_pct=0.0, commission_pct=0.0),
+        )
+        costed, costed_trades = run_backtest(
+            _stop_exit_df(),
+            sizing,
+            risk,
+            BacktestConfig(slippage_pct=1.0, commission_pct=0.0),
+        )
+
+        assert free_trades[0].exit_reason == "stop_loss"
+        assert free_trades[0].exit_price == pytest.approx(95.0)
+        assert costed_trades[0].exit_reason == "stop_loss"
+        assert costed_trades[0].exit_price == pytest.approx(94.9905)
+        assert costed["equity"][-1] < free["equity"][-1]
+
+
+_CAUSAL_VOLUMES: list[int] = [20_000, 500_000, 30_000, 500_000]
+
+
+def _causal_volume_df(volumes: list[int], exits: list[bool]) -> pl.DataFrame:
+    """Build a four-bar frame entering on bar 1, with per-bar volumes under test."""
+    return _make_signal_df(
+        prices=[100.0, 100.0, 100.0, 90.0],
+        entries=[True, False, False, False],
+        exits=exits,
+        highs=[101.0, 101.0, 101.0, 101.0],
+        lows=[99.0, 99.0, 99.0, 89.0],
+        volumes=volumes,
+        opens=[100.0, 100.0, 100.0, 100.0],
+    )
+
+
+def _bumped(volumes: list[int], bar: int) -> list[int]:
+    """Return the volume list with one bar's volume multiplied by ten."""
+    bumped = list(volumes)
+    bumped[bar] *= 10
+    return bumped
+
+
+def _causal_trade(volumes: list[int], exits: list[bool], risk: RiskManagement) -> Trade:
+    """Run the volume-scaled engine over the causal frame and return its trade."""
+    _, trades = run_backtest(
+        _causal_volume_df(volumes, exits),
+        PositionSizing(max_position_pct=100.0),
+        risk,
+        BacktestConfig(slippage_pct=0.1, commission_pct=0.0, volume_scaled_slippage=True),
+    )
+    assert len(trades) == 1
+    return trades[0]
+
+
+class TestParticipationUsesThePriorBarsVolume:
+    """A fill at bar ``idx``'s open cannot know bar ``idx``'s completed volume."""
+
+    _SIGNAL_EXITS: list[bool] = [False, True, False, False]
+    _NO_EXITS: list[bool] = [False, False, False, False]
+
+    def test_entry_ignores_its_own_bars_volume(self) -> None:
+        """Bar 1's own volume prints after the entry fills at its open."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.entry_price == pytest.approx(base.entry_price)
+
+    def test_entry_uses_the_previous_bars_volume(self) -> None:
+        """Bar 0 is the last completed bar when the entry is decided."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 0), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.entry_price != pytest.approx(base.entry_price)
+
+    def test_signal_exit_ignores_its_own_bars_volume(self) -> None:
+        """The signal exit fills at bar 2's open, before bar 2's volume exists."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 2), self._SIGNAL_EXITS, RiskManagement())
+
+        assert base.exit_reason == "signal"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_signal_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 1 is the last completed bar when the signal exit is decided."""
+        base = _causal_trade(_CAUSAL_VOLUMES, self._SIGNAL_EXITS, RiskManagement())
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 1), self._SIGNAL_EXITS, RiskManagement())
+
+        assert altered.exit_price != pytest.approx(base.exit_price)
+
+    def test_stop_exit_ignores_its_own_bars_volume(self) -> None:
+        """A stop pierced inside bar 3 cannot size against bar 3's volume."""
+        risk = RiskManagement(stop_loss_pct=5.0)
+        base = _causal_trade(_CAUSAL_VOLUMES, self._NO_EXITS, risk)
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 3), self._NO_EXITS, risk)
+
+        assert base.exit_reason == "stop_loss"
+        assert altered.exit_price == pytest.approx(base.exit_price)
+
+    def test_stop_exit_uses_the_previous_bars_volume(self) -> None:
+        """Bar 2 is the last completed bar when the stop fills on bar 3."""
+        risk = RiskManagement(stop_loss_pct=5.0)
+        base = _causal_trade(_CAUSAL_VOLUMES, self._NO_EXITS, risk)
+        altered = _causal_trade(_bumped(_CAUSAL_VOLUMES, 2), self._NO_EXITS, risk)
+
+        assert altered.exit_price != pytest.approx(base.exit_price)

@@ -7,10 +7,17 @@ import json
 import time
 from pathlib import Path
 
+from .. import __version__ as ENGINE_VERSION
 from ..logging_config import get_logger
 from ..models.backtest_result import BacktestResult
+from .indicators import indicator_stack_versions
 
 logger = get_logger(__name__)
+
+# The indicator stack is part of what a cached number means: a wrapper or
+# native-library upgrade can move a value under an unchanged strategy, so it
+# keys the cache exactly as ENGINE_VERSION does.
+INDICATOR_STACK_VERSIONS: dict[str, str] = indicator_stack_versions()
 
 
 class BacktestCache:
@@ -209,13 +216,19 @@ def build_data_fingerprint(
     """Build a data fingerprint string for cache key generation.
 
     Design doc: Phase 1.6 — renamed from parquet_mtimes to data_mtimes,
-    added timeframe to prevent daily/intraday cache collisions.
+    added timeframe to prevent daily/intraday cache collisions. The engine
+    version and the indicator stack versions are part of the key so a
+    calculation change — in this repo or in the wrapper underneath it —
+    invalidates entries instead of serving pre-change numbers until the TTL
+    expires.
 
     Args:
         symbols: Sorted list of symbols.
         start_date: Start date string.
         end_date: End date string.
-        data_mtimes: Dict of symbol → last refreshed timestamp.
+        data_mtimes: Dict of symbol → last refreshed timestamp. It may name a
+            symbol outside the traded universe — the benchmark's bars shape the
+            result too — and every one of them keys the fingerprint.
         timeframe: Bar timeframe (daily, 1hour, 15min, 5min).
 
     Returns:
@@ -223,13 +236,18 @@ def build_data_fingerprint(
 
     """
     sorted_symbols = sorted(symbols)
+    deps = ";".join(
+        f"{name}={version}" for name, version in sorted(INDICATOR_STACK_VERSIONS.items())
+    )
     parts: list[str] = [
+        f"engine={ENGINE_VERSION}",
+        f"deps={deps}",
         f"timeframe={timeframe}",
         f"symbols={','.join(sorted_symbols)}",
         f"start={start_date}",
         f"end={end_date}",
     ]
-    for sym in sorted_symbols:
+    for sym in sorted(set(sorted_symbols) | set(data_mtimes)):
         mtime = data_mtimes.get(sym, 0.0)
         parts.append(f"{sym}={mtime:.0f}")
     return "|".join(parts)

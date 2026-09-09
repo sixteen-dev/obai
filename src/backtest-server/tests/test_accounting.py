@@ -198,3 +198,37 @@ class TestAllocateFixedPct:
         # 10% of $100k = $10k, at $100/share = 100 shares
         assert shares == 100
         assert cost == 10_000.0
+
+
+class TestAtrRiskShares:
+    """Test atr_risk allocation: shares come from a budgeted loss, then caps."""
+
+    def _allocate(
+        self,
+        cash: float,
+        max_position_pct: float,
+        commission_pct: float = 0.0,
+    ) -> int:
+        """Allocate one $50 signal against a $1000 budget over a $5 stop distance."""
+        result = allocate_capital(
+            cash=cash,
+            total_equity=100_000.0,
+            signals=[("AAPL", 50.0, 1)],
+            method="atr_risk",
+            max_position_pct=max_position_pct,
+            max_positions=5,
+            current_position_count=0,
+            commission_pct=commission_pct,
+            risk_budget=1_000.0,
+            stop_distances={"AAPL": 5.0},
+        )
+        return result[0][1] if result else 0
+
+    def test_budget_over_distance_floors_and_caps(self) -> None:
+        """The budget sets the share count; exposure and cash only reduce it."""
+        # 1000 / 5 = 200 shares; the 20% exposure cap ($20k) is not binding.
+        assert self._allocate(cash=100_000.0, max_position_pct=20.0) == 200
+        # 5% of equity is $5k, which buys 100 shares at $50.
+        assert self._allocate(cash=100_000.0, max_position_pct=5.0) == 100
+        # $2020 at $50 plus 1% commission ($50.50 each) buys 40.
+        assert self._allocate(cash=2_020.0, max_position_pct=20.0, commission_pct=1.0) == 40

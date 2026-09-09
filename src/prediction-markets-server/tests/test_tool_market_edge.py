@@ -121,6 +121,13 @@ async def test_market_edge_explicit_price_reports_yes_side_base_rate(fixtures) -
     assert result["low_n"] is True
     assert any("not a forecast for this specific market" in lim for lim in result["limitations"])
     assert any("edge_no = -edge_yes" in lim for lim in result["limitations"])
+    # The negation is only the NO edge at this tool's reference price; the
+    # executable NO edge has to come from the NO token's own best ask.
+    assert any("reference price" in lim for lim in result["limitations"])
+    assert any(
+        "NO token's best ask" in lim and "market-state snapshot" in lim
+        for lim in result["limitations"]
+    )
 
 
 @pytest.mark.asyncio
