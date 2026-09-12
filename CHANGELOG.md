@@ -6,6 +6,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-12
+
+Minor: AutoTrader becomes safe to schedule. Paper orders now submit exactly once
+per intent across crashes, timeouts and concurrent jobs; signals are evaluated
+in code from verified completed bars instead of from prose; and every specialist
+skill routes through MCP directly, so the bundle runs on a host that has no OBaI
+CLI. A standalone MCP/paper-trading setup reference ships with it.
+
+### Added
+
+- **Submit-once execution** (`skills/autotrader/lib/execution.py`). Every order
+  is bound to a stable `client_order_id`, serialized behind a POSIX file lock,
+  and recorded in a durable intent under `AUTOTRADER_STATE_DIR` that is fsynced
+  and atomically renamed into place *before* the POST. A repeated intent returns
+  the broker's current order instead of submitting again; a crash or timeout
+  leaves the ID blocked for reconciliation rather than replayed. The SDK's
+  automatic POST replay is disabled, and `AlpacaClient` now fails loudly if the
+  private attribute it sets is ever renamed upstream.
+- **`submission_state` on every order failure.** `not_submitted` means no order
+  exists — including a broker verdict; `unknown` means an order may exist and
+  must be reconciled by its client order ID. Both order scripts emit the same
+  payload on stdout, so a caller reading one stream cannot miss it. A broker 4xx
+  is a verdict, so it releases the intent instead of wedging that ID forever.
+- **`scripts.evaluate_signals`** evaluates entry/exit predicates from a verified
+  completed-bar snapshot with the equity engine's crossover semantics, and
+  refuses anything outside the live adapter's narrow capability set. Its input
+  contract is `skills/autotrader/signal-input.md`.
+- **`--reduce-only`** on `execute_trade`, rejecting any order that would grow or
+  reverse the position, so a stale quantity cannot flip a long into a short.
+  `close_position` applies it implicitly.
+- **New risk gates:** `MAX_POSITIONS` (held plus pending symbols), a
+  pending-order duplicate check per symbol, conservative notional and cash
+  reservations for outstanding orders, and fail-closed validation of account,
+  position and order state. Pure reductions stay eligible after the entry
+  circuit breakers so a protective exit is never blocked by a daily limit.
+- **`skills/obai-hub/setup.md`** and **`skills/autotrader/setup-prompt.md`**:
+  standalone installation, MCP registration (including the OpenClaw
+  `mcp.servers` shape), provider credentials, scheduled-job layout and the
+  acceptance gates a host must pass before paper execution is enabled.
+- **Skill/server drift guard** (`test_mcp_skill_contracts.py`): every tool each
+  MCP server registers must be named in its specialist skill. The guard
+  cross-checks that it recognized every registration form, so a new form cannot
+  make it vacuous.
+
+### Changed
+
+- **Specialist skills route through MCP directly.** `obai-hub` no longer assumes
+  the OBaI CLI or a shared host for the server ports, error handling allows one
+  bounded transport retry on read-only calls instead of forbidding all retries,
+  and durable task state (job IDs, artifact IDs, tested JSON) is required before
+  yielding on a pending job. `autotrader` drops its `obai query` wrapper.
+- **AutoTrader's daily routine** reconciles against the broker rather than its
+  own memory: `get_portfolio` now returns open and recent orders with truncation
+  flags, holdings change only on confirmed fills, a closed market still permits
+  reconciliation, and `dry_run` defaults to true until a host's validation gates
+  pass.
+- Skill documentation corrections verified against server code: the movers
+  `index` literal is `nasdaq100`, the earnings calendar is a capped page with
+  truncation flags, `dividend_more_than` filters `lastAnnualDividend` in dollars
+  rather than a yield, `greeks_units` exists on `options_compute_greeks_tool`
+  only (position risk profiles report per-position Greeks with no units field),
+  research results can carry a `future` freshness value, and the prediction
+  market leaderboard takes `time_period`/`order_by`, not `period`.
+
+### Fixed
+
+- **The live signal helper rejected every real strategy.** It gated indicator
+  parameters on `period`, while the backtest indicator catalog — and therefore
+  every frozen strategy JSON — names the lookback `length`. Indicator types are
+  now also matched case-insensitively, as the engine does.
+- **Protective stops no longer double-count exposure.** A resting sell against a
+  held long is already inside `long_market_value`, so reserving its full
+  notional again made the 90% exposure gate unreachable past roughly 45% true
+  exposure — the exact configuration `context.md` requires. Pending orders are
+  now netted against the position they reduce, and an order that adds no
+  exposure needs no price, so a pending market exit no longer halts entries on
+  every other symbol.
+- **A parameter error could masquerade as an uncertain submission.** The order
+  request is validated against the SDK before the durable marker is written, so
+  only a failure that could have reached the broker reports `unknown`.
+- **A failed reconciliation lookup reported `not_submitted`** while an intent was
+  unresolved on disk, which is the opposite of the true state.
+- `AUTOTRADER_STATE_DIR` must now be absolute: a relative value silently gave
+  each working directory its own lock, voiding mutual exclusion between jobs.
+  The default state directory is also gitignored, so routine git commands can no
+  longer destroy intents the skill forbids deleting.
+- A pending-order price of zero no longer discards a usable limit or stop price.
+
 ## [1.6.1] - 2026-09-07
 
 Patch: quantitative corrections to the backtest engine and its new indicator
