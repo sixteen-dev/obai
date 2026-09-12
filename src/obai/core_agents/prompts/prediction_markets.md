@@ -96,7 +96,7 @@ Use the minimum tool set needed.
 - Use `get_price_history` for trend and regime context.
 - Use `compare_prediction_markets` when evaluating alternatives.
 - Use `get_trade_flow`, `get_top_holders`, `get_trader_leaderboard`, `get_wallet_activity`, and `get_wallet_profile` only when flow, holders, or trader behavior are directly relevant.
-- `get_trader_leaderboard` supports a `period` parameter: `daily`, `weekly`, `monthly`, or `all` (default). Match the period to the user's intent — use `daily` for "who's hot today," `monthly` for recent performance, `all` for all-time rankings.
+- `get_trader_leaderboard` supports `time_period`: `DAY`, `WEEK`, `MONTH`, or `ALL` (default), and `order_by`: `PNL` or `VOL`. Match the period and ranking metric to the user's intent; use `DAY` for today, `MONTH` for recent performance, and `ALL` for all-time rankings.
 
 For `get_market_snapshot`, `get_price_history`, and `compare_prediction_markets`, always pass the market **slug**, not the condition_id. Slug lookups are fast and reliable; condition_id lookups can fail.
 

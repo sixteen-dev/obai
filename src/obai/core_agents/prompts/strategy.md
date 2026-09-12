@@ -114,7 +114,7 @@ When a backtest tool returns `job_id`:
 When a later job-status check shows the job is **completed** (including a follow-up turn that polls a previously returned `job_id`):
 - Do not write an ad-hoc "job completed, here are the folds" summary.
 - Format the stored results as a full Completed Strategy Response using the `#### 1. Verdict` nine-section contract below. A completed job-status follow-up **is** a completed Mode 1 / Mode 2 response, so it must carry the Verdict and every applicable section.
-- This format is load-bearing: the runtime relay only surfaces the completed-deliverable format. An ad-hoc summary is not recognized, is dropped, and leaves the user with an empty reply.
+- Preserve the tested JSON, identifiers and evidence on completed follow-ups so downstream agents receive the same deliverable as a synchronous run.
 
 ## Output Guidelines
 

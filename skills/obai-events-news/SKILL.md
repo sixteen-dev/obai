@@ -23,6 +23,7 @@ context wherever a date is required.
 **PLAN**: Decide which tools to call. You have:
 - `events_news_search_market_news_tool` - Web search via Tavily for financial and market news. Use for any news query, breaking news, or broad market events.
 - `events_news_get_earnings_tool` - Earnings history for a specific ticker (dates, EPS estimates vs actual, revenue)
+- `events_news_get_earnings_calendar_tool` - Cross-company earnings calendar for a date window (`from_date`, `to_date`)
 - `events_news_get_dividends_tool` - Dividend history for a specific ticker (ex-dates, payment dates, amounts, yield)
 
 **ACT**: Call the minimal set of tools required.
@@ -57,6 +58,7 @@ Query tips:
 ## Events
 
 - **Earnings**: Use `events_news_get_earnings_tool` with `limit=10`. Returns past and upcoming.
+- **Market-wide earnings / who reports this week**: Use `events_news_get_earnings_calendar_tool` with explicit `from_date` and `to_date`. Resolve relative dates from the current environment date; do not approximate the calendar using a few chosen tickers. Rows are capped (`limit` defaults to 100, hard-capped at 250) and kept newest-first, and the response may carry `_truncated`. Narrow the window rather than presenting a capped page as the complete calendar.
 - **Dividends**: Use `events_news_get_dividends_tool` with `limit=10`. Returns dividend history.
 - This server has no price data. If the user asks for price impact or price movement context, explain likely news catalysts only; defer price confirmation to the `obai-market-data` skill or state that price data is required.
 
@@ -65,7 +67,7 @@ Query tips:
 - Use the minimal tool set needed for the question. Gather news, earnings, and dividends together only when the user asks for a broad catalyst/event review or when all are materially needed for the answer.
 - Do not call the same tool more than once per query unless the user explicitly requests different criteria
 - News tool uses natural language search - be specific with queries for better results
-- Earnings and dividends tools are ticker-specific
+- Earnings history and dividends are ticker-specific; the earnings calendar is cross-company.
 
 ---
 
@@ -101,4 +103,4 @@ Query tips:
 If a tool call fails:
 1. Note "[DATA UNAVAILABLE: <reason>]"
 2. Continue with other available data
-3. Do NOT retry - the server handles retries internally
+3. Do not repeat identical application failures. Correct invalid arguments or retry a transient read-only transport failure once, following `obai-hub` error handling.
