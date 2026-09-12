@@ -133,3 +133,6 @@ runs/
 # Local working directory for analysis scripts; never part of a change.
 scratchpad/
 .claude/skills/obai-e2e-regression/**/__pycache__/
+
+# AutoTrader durable order intents — broker state, never committed.
+skills/autotrader/memory/execution/
