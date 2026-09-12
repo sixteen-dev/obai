@@ -31,6 +31,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
 _SKILL_PATH = _REPO_ROOT / "skills" / "obai-strategy" / "SKILL.md"
 _REFERENCE_PATH = _REPO_ROOT / "skills" / "obai-strategy" / "reference.md"
+
+# The prohibition on reducing a completed follow-up to a status summary, in each
+# surface's own wording. Whitespace is collapsed before matching, so re-wrapping
+# a paragraph is fine but dropping the rule is not.
+_ASYNC_COMPLETION_PINS: dict[Path, tuple[str, ...]] = {
+    _PROMPT_PATH: (
+        'Do not write an ad-hoc "job completed, here are the folds" summary.',
+        "Format the stored results as a full Completed Strategy Response",
+        "completed job-status follow-up",
+    ),
+    _SKILL_PATH: (
+        "deliver the full Completed Strategy Response",
+        "Do not reduce that follow-up to a diagnostic status summary",
+    ),
+}
 _CATALOG_PATH = _REPO_ROOT / "src" / "backtest-server" / "src" / "models" / "indicator_catalog.py"
 
 # Placeholder tokens the JSON template must carry for every risk-management and
@@ -97,6 +112,18 @@ def _read_reference() -> str:
         str: The on-disk reference.md text.
     """
     return _REFERENCE_PATH.read_text()
+
+
+def _collapse(text: str) -> str:
+    """Collapse whitespace so a pin survives re-wrapping but not deletion.
+
+    Args:
+        text: Markdown or a literal to normalize.
+
+    Returns:
+        str: The text with every whitespace run reduced to one space.
+    """
+    return " ".join(text.split())
 
 
 def _prompt_section(text: str, start_marker: str, end_marker: str) -> str:
@@ -234,25 +261,29 @@ class TestStrategyPrompt:
         assert '"drops below X"' in prompt and "`less_than`" in prompt
         assert "Threshold rule (load-bearing)" in prompt
 
-    def test_prompt_completed_async_poll_uses_full_deliverable(self) -> None:
+    @pytest.mark.parametrize("document", [_PROMPT_PATH, _SKILL_PATH], ids=["cli", "skill"])
+    def test_prompt_completed_async_poll_uses_full_deliverable(self, document: Path) -> None:
         """Completed async poll must use the full Completed Strategy Response.
 
-        The `#### 1. Verdict` nine-section deliverable is required, not an
-        ad-hoc summary.
-
         Regression guard for the 1.6.0 deterministic-relay change: the runtime
-        relay only recognizes the completed-deliverable format. An ad-hoc
-        "job completed, here are the folds" summary is not detected, so it is
-        dropped and the hub emits nothing (empty UI reply).
+        relay only recognizes the completed-deliverable format, so an ad-hoc
+        "job completed, here are the folds" summary is not detected, is dropped,
+        and the hub emits nothing (empty UI reply). Both surfaces must therefore
+        carry the deliverable requirement *and* the prohibition on reducing a
+        completed follow-up to a status summary — each in its own wording.
 
-        Reads the prompt markdown directly (not ``load_prompt``) so the guard
-        stays deterministic even when a local Opik server is serving a
-        previously synced prompt version.
+        Reads the markdown directly (not ``load_prompt``) so the guard stays
+        deterministic even when a local Opik server is serving a previously
+        synced prompt version.
         """
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
-        prompt = prompt_path.read_text()
-        assert "completed job-status follow-up" in prompt
-        assert "Format the stored results as a full Completed Strategy Response" in prompt
+        async_rules = _collapse(
+            _prompt_section(document.read_text(), "## Async Handling", "## Output Guidelines")
+        )
+        assert "Completed Strategy Response" in async_rules
+        assert "Mode 1" in async_rules and "Mode 2" in async_rules
+        assert "JSON" in async_rules
+        for pin in _ASYNC_COMPLETION_PINS[document]:
+            assert _collapse(pin) in async_rules, pin
 
     def test_unsupported_claims_must_be_checked_against_the_registry(self) -> None:
         """A wrong "unsupported" call silently backtests less than was asked.
@@ -276,7 +307,10 @@ class TestStrategyPrompt:
         # not only where the claim is made, so it is present while building too.
         assert "the `id` of any indicator declared before it" in prompt
 
-    def test_walk_forward_reporting_names_every_stored_provenance_field(self) -> None:
+    @pytest.mark.parametrize("document", [_PROMPT_PATH, _SKILL_PATH], ids=["cli", "skill"])
+    def test_walk_forward_reporting_names_every_stored_provenance_field(
+        self, document: Path
+    ) -> None:
         """The prompt must claim the fields the job payload now carries.
 
         The payload gained `strategy`, `fill_timing`, and per-fold
@@ -287,14 +321,14 @@ class TestStrategyPrompt:
 
         Reads the markdown directly for the same reason as the guard above.
         """
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
-        prompt = prompt_path.read_text()
+        prompt = document.read_text()
 
         for field_name in ("`execution_config`", "`strategy`", "`fill_timing`", "`warmup_bars`"):
             assert field_name in prompt, field_name
-        assert "rather than as zero" in prompt
+        assert re.search(r"unreported rather than (?:as )?zero", prompt)
 
-    def test_walk_forward_reporting_covers_each_folds_warnings(self) -> None:
+    @pytest.mark.parametrize("document", [_PROMPT_PATH, _SKILL_PATH], ids=["cli", "skill"])
+    def test_walk_forward_reporting_covers_each_folds_warnings(self, document: Path) -> None:
         """The reporting rule must send the agent to per-fold `warnings`.
 
         Fold metrics now carry the window's quality report. A fold that ran on
@@ -304,15 +338,14 @@ class TestStrategyPrompt:
 
         Reads the markdown directly for the same reason as the guard above.
         """
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "strategy.md"
-        prompt = prompt_path.read_text()
+        prompt = document.read_text()
 
         reporting = [
             line for line in prompt.splitlines() if line.startswith("- **Reporting**: Include")
         ]
         assert len(reporting) == 1, reporting
         assert "`warnings`" in reporting[0]
-        assert "Data warnings" in reporting[0]
+        assert "each fold" in reporting[0]
 
     def test_total_return_claim_is_scoped_to_daily_backtests(self) -> None:
         """Only daily bars are dividend-adjusted; intraday bars are raw.
@@ -361,8 +394,10 @@ class TestStrategyPrompt:
             assert "the regime in which it should fail" in text, label
             assert "the engine capabilities it needs" in text, label
 
+    @pytest.mark.parametrize("document", [_PROMPT_PATH, _SKILL_PATH], ids=["cli", "skill"])
     def test_backtest_evidence_names_exposure_turnover_drawdown_dates_costs_and_stability(
         self,
+        document: Path,
     ) -> None:
         """Headline ratios alone hide how a result was produced.
 
@@ -371,7 +406,7 @@ class TestStrategyPrompt:
         fields the server already emits, so the evidence contract names them.
         """
         evidence = _prompt_section(
-            _read_prompt(), "#### 3. Backtest Evidence", "#### 4. Iteration Summary"
+            document.read_text(), "#### 3. Backtest Evidence", "#### 4. Iteration Summary"
         )
 
         for field_name in (
@@ -385,14 +420,18 @@ class TestStrategyPrompt:
         ):
             assert field_name in evidence, field_name
 
-    def test_evidence_reads_price_basis_and_dependency_versions_from_the_result(self) -> None:
+    @pytest.mark.parametrize("document", [_PROMPT_PATH, _SKILL_PATH], ids=["cli", "skill"])
+    def test_evidence_reads_price_basis_and_dependency_versions_from_the_result(
+        self,
+        document: Path,
+    ) -> None:
         """Provenance is server-owned, so it is read, not asserted.
 
         The result now carries `price_basis` and `dependency_versions`; both
         the evidence contract and the walk-forward reporting rule send the
         agent to them rather than to a remembered basis or library version.
         """
-        prompt = _read_prompt()
+        prompt = document.read_text()
         evidence = _prompt_section(prompt, "#### 3. Backtest Evidence", "#### 4. Iteration Summary")
         reporting = _reporting_rule(prompt)
 

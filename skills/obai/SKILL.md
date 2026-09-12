@@ -1,6 +1,6 @@
 ---
 name: obai
-description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, portfolio risk, screening, dividends, SEC filings, insider trades, backtesting strategies, commodity or futures prices, company deep dives, competitive positioning, management quality, product sentiment, thematic research, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
+description: "Use the installed OBaI CLI for financial research, market data, portfolio analysis, strategy backtests, and requested health/evaluation commands. Run obai query with JSON output and a persistent session for related questions. Use when the user requests the CLI or only the obai binary is available; use obai-hub instead for direct MCP access without the CLI."
 ---
 
 # OBaI CLI — Agent Execution Guide

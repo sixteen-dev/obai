@@ -125,9 +125,15 @@ When a backtest tool returns `job_id`:
 - Return a status response with: job_id, estimated time, what remains pending, what the user should ask next.
 - Do not speculate about final metrics while the job is still running.
 
+Persist the exact `job_id`, submitted strategy and execution/data configs
+in the host's durable task state before yielding. When a later status check
+completes prior Mode 1 / Mode 2 work, deliver the full Completed Strategy Response
+below, including the tested JSON and handoff metadata. Do not reduce that
+follow-up to a diagnostic status summary or rerun the backtest.
+
 ## Output Guidelines
 
-The output requirements below are strict. Treat this section as the response contract for humans and downstream agents.
+Treat the required evidence, tested JSON and identifiers below as the response contract for humans and downstream agents. Use the section order by default; an explicit user format may change presentation while retaining those facts and artifacts.
 
 ### Output Contract: Missing Inputs
 
@@ -164,10 +170,16 @@ For every completed Mode 1 or Mode 2 response, use this section order:
 - Holding style
 
 #### 3. Backtest Evidence
+- Read `price_basis` and `dependency_versions` from the result, not memory. Dividend-adjusted daily returns already reinvest dividends; do not add dividend yield again. Disclose when a different basis excludes dividends.
 - Train-range metrics: Sharpe, Sortino, CAGR, max drawdown with its `max_drawdown_start` and `max_drawdown_end` dates (peak to trough; recovery time is not reported), win rate, profit factor, total trades
 - Final full-period metrics: Sharpe, Sortino, CAGR, max drawdown with its `max_drawdown_start` and `max_drawdown_end` dates (peak to trough; recovery time is not reported), win rate, profit factor, total trades
 - Explicit overfitting assessment
 - Explicit statistical-power assessment when trade count is small
+- Regime dependence: use `yearly_returns` to identify years carrying the result and losing years.
+- Exposure: report `capital_utilization_pct` and `position_count_avg` in portfolio mode; time in market is unreported in independent mode, not estimated.
+- Turnover: use `turnover_rate` in portfolio mode, otherwise trades per year from `total_trades` and the actual window, with `avg_holding_days`.
+- Cost sensitivity: preserve `slippage_pct`, `commission_pct`, realistic-cost flags and `fill_model`. Explain any verdict change between flat and realistic costs; take-profit limit exits exclude slippage/spread in this model and can understate costs.
+- Parameter stability: report the metric range across tested nearby variants, or say sensitivity was not tested. Do not infer stability from the best variant alone.
 - **Data warnings**: If the result contains `⚠️ DATA_WARNING` or non-empty `warnings`, surface them verbatim here. Data warnings indicate the backtest ran on materially insufficient data. Adjust the verdict accordingly.
 
 #### 4. Iteration Summary
@@ -321,7 +333,7 @@ Use `backtest_walk_forward_tool` for robust out-of-sample testing on strategies 
   - Consistency score < 60% suggests overfitting. The strategy does not reliably produce positive risk-adjusted returns out-of-sample.
   - Degradation > 0.5 indicates significant train/test decay. The strategy's in-sample performance does not hold out-of-sample.
   - High std_test_sharpe relative to mean_test_sharpe indicates unstable performance across different market regimes.
-- **Reporting**: Include walk-forward metrics in the Backtest Evidence section when available. Surface consistency_score and degradation prominently.
+- **Reporting**: Include walk-forward metrics in Backtest Evidence, especially `consistency_score` and degradation. Preserve returned `execution_config`, `strategy`, `fill_timing`, `price_basis`, `dependency_versions`, and each fold's `warmup_bars`, `warnings` and risk-free-rate disclosures. Missing metadata is unreported rather than zero; do not infer a fold's assumptions from another fold or hide its warnings in an aggregate.
 
 ## Data-Split Discipline
 
