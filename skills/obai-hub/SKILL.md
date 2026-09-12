@@ -1,6 +1,6 @@
 ---
 name: obai-hub
-description: "Central router for OBaI's MCP servers. Trigger this skill whenever the user asks a financial-markets question and the OBaI MCP servers (localhost ports 8001-8010) are available: stock prices, quotes, technicals, fundamentals, valuation, SEC filings, insider trades, earnings, dividends, news catalysts, options chains and Greeks, stock screening, portfolio analysis, ETF holdings, treasury rates, trading-strategy design and backtesting, qualitative company research, Polymarket prediction markets, or Coinbase spot crypto. This skill maps the question to the right OBaI specialist skill and MCP server, then enforces grounding and synthesis rules. Read the matching specialist skill before calling that server's tools."
+description: "Route financial research, market data, portfolio analysis, and equity, prediction-market or crypto backtests directly to OBaI MCP servers and specialist skills. Use when MCP access is available or being configured, without requiring the OBaI CLI. Does not place broker orders; authorized Alpaca paper execution belongs to autotrader."
 ---
 
 # OBaI Hub — Route, Ground, Synthesize
@@ -18,12 +18,15 @@ use the CLI skill when only the `obai` binary is available.
 
 ## Connecting to the servers
 
-All ten servers run locally via Docker Compose (`docker compose up -d` from
-the repo root) using FastMCP streamable-http transport. Ports are fixed.
+All ten servers can run via Docker Compose (`docker compose up -d` from
+the repo root) using FastMCP Streamable HTTP. The bundled URLs assume the
+agent and exposed server ports share a host; resolve reachable URLs for
+containers or remote agents. For installation or scheduled trading, read
+[setup.md](setup.md), including provider credentials and runtime checks.
 
-Register them from the bundled config: copy `mcp-config.json` (next to this
-file) into the project's `.mcp.json`, or add servers individually, e.g. for
-Claude Code:
+For Claude-compatible hosts, merge the bundled `mcp-config.json` entries
+into the project's `.mcp.json`, preserving existing servers. OpenClaw uses
+`mcp.servers` instead; see the setup reference. For Claude Code:
 
 ```bash
 claude mcp add --transport http obai-market-data http://localhost:8002/mcp
@@ -70,22 +73,32 @@ Boundary calls that are easy to get wrong:
 ## Hard rules
 
 1. Use MCP tools for live, time-sensitive, numeric, or market-state financial
-   claims — tool data is fresh; your training data is not.
+   claims. Verify returned timestamps and coverage; a successful tool call
+   does not by itself prove its data is current.
 2. You may answer definitions or general finance concepts without tools, but
    state when no live data was used if the distinction matters. When unsure
    whether a claim needs live data, fetch it rather than answer from memory.
 3. Do not speculate from training data for current market conditions. For
    forward-looking or hypothetical questions, gather evidence from the
    servers first and frame the answer around what the data supports.
-4. Do not describe plans to the user. Call tools and answer directly.
-5. Ask at most one concise clarification, only when missing information
-   materially changes the task and cannot be resolved by a tool.
+4. Proceed within the user's authorized task. A skill's workflow and output
+   style are defaults; explicit user constraints take precedence. Reviewing
+   a strategy does not authorize orders, recurring jobs, or storage pruning.
+5. Resolve missing inputs from tools and saved task state first. Ask a concise
+   question only for a remaining material ambiguity. Do not ask again for
+   an already authorized action; explain the specific blocker if one remains.
 6. Use the minimal tool set needed to answer the user. Call independent
    servers in parallel; sequence only when one result feeds the next.
 7. Never silently drop a tool result that materially affects the answer — if
    a tool returned data you cannot use, surface it as a gap rather than omit it.
 8. Default to a smart non-expert reader: explain jargon briefly. Match the
    user's level when they use advanced terms.
+
+Specialist THINK/PLAN/REFLECT labels describe internal workflow, not text to
+narrate. Load only relevant specialists. Delegate only when the host/user
+allows it, preserving the exact request, constraints, identifiers and tool
+evidence. Match the user's output format while retaining required facts,
+units, caveats and executable artifacts; brevity must not remove these.
 
 ## Pre-routing invariants
 
@@ -135,12 +148,10 @@ When combining evidence from several servers, include at least one concrete
 takeaway per domain used, lead with the facts that drive the conclusion, and
 do not dump every number.
 
-Output structure — use the smallest that fully answers:
-
-- Short lookup: direct answer + one caveat if needed.
-- Ordinary analysis: `Answer`, `Key Evidence`, `Risks or Gaps`, `Bottom Line`.
-- Broad analysis: `Summary`, `What Supports It`, `What Works Against It`,
-  `Data Gaps`, `Bottom Line`.
+Use the smallest structure that fully answers: a direct lookup, or a
+conclusion supported by evidence and material risks/gaps for analysis.
+Do not force headings, bullet counts or a second conclusion onto a short
+answer. Specialist formats are defaults for their domain artifacts.
 
 Numeric style: keep each number next to the conclusion it supports and pair
 it with a short implication; never let an adjective replace the number.
@@ -159,11 +170,28 @@ them with narration about your own routing, tool errors, or retries.
 
 ## Error handling
 
-For a failed or empty tool result: note the unavailable data once, continue
-with available verified data, and state how the gap limits the answer. Do
-not retry failed calls — the servers handle retries internally. If a ticker
-lookup returns no data, check for symbol typos via `obai-screening` before
-failing.
+For a failed or empty tool result, note the unavailable data once and how
+it limits the answer. Do not repeat identical application errors or empty
+results. Correct invalid arguments when the schema or error identifies a
+fix. For transient transport failures on read-only calls, reconnect and
+retry at most once, respecting any Retry-After delay. Server provider
+retries do not cover the host's MCP connection. An uncertain job or order
+submission requires reconciliation by its existing identifier, not a blind
+retry. Check symbol typos via `obai-screening` when a lookup returns no data.
+
+## Durable task state
+
+Before yielding on a pending job or handing off a task, persist the exact
+request, constraints, tested JSON, tool-result provenance, `job_id`,
+`artifact_id`/fingerprint and next action in host-managed task storage scoped
+to that conversation/job. Reload it on follow-ups; fetch final server state
+by ID rather than inventing identifiers or rerunning work. Preferences are
+not a job ledger. MCP connection recovery, scheduling and durable storage
+must be supplied by the host; loading this Markdown does not implement them.
+
+Before delivery, check numeric claims against the relevant tool outputs and
+research URLs against the URLs actually retrieved for this task. A host
+requiring CLI-equivalent enforcement should perform these checks in code.
 
 ## User preferences
 

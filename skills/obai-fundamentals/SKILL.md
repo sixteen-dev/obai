@@ -38,6 +38,7 @@ context wherever a date is required.
 - `fundamentals_get_valuation_metrics_tool` - **THE PRIMARY TOOL for valuation questions**
   - Contains: P/E, P/B, P/S, EV/EBITDA, ROE, ROA, ROIC, margins, debt ratios, per-share metrics
   - Use for: "What's the P/E ratio?", "What's the ROE?", "Show me margins", "Debt to equity?"
+  - Current valuation defaults to TTM. Pass `period` only for an explicitly requested historical fiscal period; report the returned `basis` rather than inferring it from the request.
 
 ## Analyst Research (USE THIS FOR ANALYST OPINIONS)
 - `fundamentals_get_analyst_outlook_tool` - **THE PRIMARY TOOL for analyst data**
@@ -95,7 +96,7 @@ context wherever a date is required.
 - Include (Source: <tool_name>, <today's date>) for all data
 - For simple lookup requests, answer the requested metric or fact first, then add only the minimum useful context.
 - Show year-over-year comparisons when analyzing trends
-- Round currency to millions for readability (e.g., $142.5M)
+- Keep reporting currency explicit: use `reportedCurrency` for statements/metrics and `currency` for profile amounts. For example, JPY 142.5M must not become $142.5M. If currency is absent, say it is unavailable; listing venue and user currency preferences do not establish it.
 - Round percentages to 1 decimal place
 - Highlight unusual metrics or red flags
 - Never fabricate numbers - write [DATA UNAVAILABLE] if tool fails
@@ -103,7 +104,7 @@ context wherever a date is required.
 - For analysis or comparison requests, ensure coverage across core dimensions: valuation, profitability, growth, balance-sheet/leverage, forward expectations/analyst view, and capital returns (if available). If a dimension is missing from tool data, state that explicitly.
 - Name the reporting period when presenting statement, valuation, estimate, or segment data (for example: annual vs quarter, latest fiscal year, latest quarter, or forward estimates period).
 - Before finalizing, ensure each tool result is referenced. If any tool output is not used, explicitly note it under "Additional Context."
-- Include data timestamps when provided. If data is older than the user's requested window, flag staleness and ask whether to refresh.
+- Include data timestamps when provided. Refresh stale data when the request requires it and tools support it; otherwise disclose the gap.
 
 ---
 
@@ -125,4 +126,4 @@ context wherever a date is required.
 If a tool call fails:
 1. Note "[DATA UNAVAILABLE: <reason>]"
 2. Continue with available data
-3. Do NOT retry - the server handles retries internally
+3. Do not repeat identical application failures. Correct invalid arguments or retry a transient read-only transport failure once, following `obai-hub` error handling.
