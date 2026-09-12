@@ -2,10 +2,13 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from alpaca.common.exceptions import APIError
+from alpaca.trading.enums import OrderSide, OrderStatus, OrderType, PositionSide, TimeInForce
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fake Alpaca SDK objects (mimic the real attribute access patterns)
@@ -25,15 +28,16 @@ class FakeAccount:
     last_equity: str = "99800.00"
     daytrade_count: int = 0
     pattern_day_trader: bool = False
+    id: str = "paper-account-123"
 
 
 @dataclass
 class FakePosition:
-    """Mimics alpaca Position — returns strings like the real API."""
+    """Mimics alpaca Position — strings for numerics, enums for side."""
 
     symbol: str = "AAPL"
     qty: str = "25"
-    side: str = "long"
+    side: Any = PositionSide.LONG
     avg_entry_price: str = "195.20"
     current_price: str = "205.80"
     market_value: str = "5145.00"
@@ -46,21 +50,27 @@ class FakePosition:
 
 @dataclass
 class FakeOrder:
-    """Mimics alpaca Order — returns strings like the real API."""
+    """Mimics alpaca Order — strings for numerics, enums for the coded fields.
+
+    The real SDK returns ``OrderSide``/``OrderType``/``OrderStatus``/
+    ``TimeInForce`` members here, which is what ``_status_value`` exists to
+    normalise, so the defaults use enums to exercise that path.
+    """
 
     id: str = "order-uuid-123"
     symbol: str = "AAPL"
-    side: str = "buy"
+    side: Any = OrderSide.BUY
     qty: str = "10"
     filled_qty: str = "10"
-    type: str = "market"
-    status: str = "accepted"
+    type: Any = OrderType.MARKET
+    status: Any = OrderStatus.ACCEPTED
     limit_price: str | None = None
     stop_price: str | None = None
     filled_avg_price: str | None = "205.50"
-    time_in_force: str = "day"
+    time_in_force: Any = TimeInForce.DAY
     submitted_at: str = "2026-03-21T10:05:00Z"
     filled_at: str | None = "2026-03-21T10:05:01Z"
+    client_order_id: str | None = None
 
 
 @dataclass
@@ -81,7 +91,7 @@ def make_filled_order(symbol: str = "AAPL", side: str = "buy", qty: str = "10") 
         side=side,
         qty=qty,
         filled_qty=qty,
-        status="filled",
+        status=OrderStatus.FILLED,
         filled_at=datetime.now(tz=timezone.utc).isoformat(),
     )
 
@@ -92,10 +102,24 @@ def make_filled_order(symbol: str = "AAPL", side: str = "buy", qty: str = "10") 
 
 
 @pytest.fixture()
-def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def mock_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Set required environment variables for Alpaca client."""
     monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("AUTOTRADER_STATE_DIR", str(tmp_path / "execution"))
+
+
+def api_error(status_code: int, message: str) -> APIError:
+    """Build an APIError carrying a real HTTP status, as the SDK does."""
+    return APIError(
+        f'{{"message":"{message}"}}',
+        MagicMock(response=MagicMock(status_code=status_code)),
+    )
+
+
+def missing_order_error() -> APIError:
+    """Only a real HTTP 404 is an absent client ID, never an auth/network error."""
+    return api_error(404, "order not found")
 
 
 @pytest.fixture()
@@ -118,6 +142,7 @@ def mock_trading_client() -> MagicMock:
     client.get_open_position.return_value = FakePosition()
     client.get_clock.return_value = FakeClock()
     client.get_orders.return_value = []
+    client.get_order_by_client_id.side_effect = missing_order_error()
     client.submit_order.return_value = FakeOrder()
     client.close_position.return_value = FakeOrder(side="sell", symbol="AAPL")
     client.cancel_order_by_id.return_value = None
