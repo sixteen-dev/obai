@@ -116,8 +116,9 @@ services:
     depends_on:
       opik-zookeeper:
         condition: service_healthy
-    mem_limit: 4g
-    memswap_limit: 4g
+    mem_limit: 6g
+    memswap_limit: 6g
+    cpus: 4
     networks:
       - opik-network
     restart: unless-stopped

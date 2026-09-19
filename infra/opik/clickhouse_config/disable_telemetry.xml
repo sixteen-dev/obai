@@ -1,0 +1,30 @@
+<clickhouse>
+    <!-- Already off in 25.3, but newer releases enable crash reports to
+         crash.clickhouse.com by default, so pin it for future image bumps. -->
+    <send_crash_reports>
+        <enabled>false</enabled>
+    </send_crash_reports>
+
+    <!-- Self-monitoring tables 25.3 enables by default. Most have no TTL and
+         several sample every second, so they cost inserts, merges and disk
+         indefinitely. Opik 2.0.27 reads none of them. Server log files under
+         /var/log/clickhouse-server are unaffected. -->
+    <query_log remove="1"/>
+    <trace_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <part_log remove="1"/>
+    <text_log remove="1"/>
+    <metric_log remove="1"/>
+    <latency_log remove="1"/>
+    <error_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <crash_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <backup_log remove="1"/>
+    <s3queue_log remove="1"/>
+    <blob_storage_log remove="1"/>
+</clickhouse>
