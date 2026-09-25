@@ -22,6 +22,7 @@ services=(
     "src/screening-server"
     "src/obai"
     "skills/autotrader"
+    "src/options-backtest-server"
 )
 
 fail_count=0
