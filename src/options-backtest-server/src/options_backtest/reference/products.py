@@ -11,14 +11,49 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, time
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import (
+    ROUND_05UP,
+    ROUND_CEILING,
+    ROUND_DOWN,
+    ROUND_FLOOR,
+    ROUND_HALF_DOWN,
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    ROUND_UP,
+    Decimal,
+    Inexact,
+    localcontext,
+)
 from typing import Final
 
-from options_backtest.models.market import ContractTerms, OptionType
-from options_backtest.money import Price
+from options_backtest.models.market import (
+    ContractTerms,
+    Deliverable,
+    DeliverableComponent,
+    ExerciseStyle,
+    OptionType,
+    SettlementType,
+    require_id,
+    require_type,
+)
+from options_backtest.money import EXACT, ZERO_USD, Price, Usd
 
 PRODUCT_RULES_VERSION: Final = "cboe_template_unverified_v1"
 R1_FAMILY: Final = "us_european_pm_cash_index"
+_ROUNDING_MODES: Final = frozenset(
+    {
+        ROUND_05UP,
+        ROUND_CEILING,
+        ROUND_DOWN,
+        ROUND_FLOOR,
+        ROUND_HALF_DOWN,
+        ROUND_HALF_EVEN,
+        ROUND_HALF_UP,
+        ROUND_UP,
+    }
+)
+_MAX_SETTLEMENT_PLACES: Final = 9
+"""A settlement value is a ``Price``: at most 9 decimal places."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +87,28 @@ class ProductRules:
     last_trade_local: time
     status: str
 
+    def __post_init__(self) -> None:
+        """Validate ids, positive exact decimals, places, the rounding mode and the time."""
+        require_id(self.root, "ProductRules.root")
+        require_id(self.underlying_id, "ProductRules.underlying_id")
+        require_id(self.family, "ProductRules.family")
+        require_id(self.settlement_series, "ProductRules.settlement_series")
+        _require_positive_decimal(self.settlement_divisor, "ProductRules.settlement_divisor")
+        places = self.settlement_places
+        if type(places) is not int:
+            raise TypeError(f"ProductRules.settlement_places must be int, got {places!r}")
+        if not 0 <= places <= _MAX_SETTLEMENT_PLACES:
+            raise ValueError(f"ProductRules.settlement_places must be in [0, 9], got {places}")
+        if self.settlement_rounding not in _ROUNDING_MODES:
+            raise ValueError(
+                "ProductRules.settlement_rounding must be a decimal rounding mode, "
+                f"got {self.settlement_rounding!r}"
+            )
+        _require_positive_decimal(self.premium_multiplier, "ProductRules.premium_multiplier")
+        _require_positive_decimal(self.deliverable_units, "ProductRules.deliverable_units")
+        require_type(self.last_trade_local, time, "ProductRules.last_trade_local")
+        require_id(self.status, "ProductRules.status")
+
     def terms(
         self, strike: Price, right: OptionType, expires_at_ns: int, *, expiry: date
     ) -> ContractTerms:
@@ -71,8 +128,40 @@ class ProductRules:
         Returns:
             The terms.
 
+        Raises:
+            TypeError: If ``expiry`` is not exactly a ``date`` or another argument has the wrong
+                type.
+            ValueError: If the AEA leaves DECIMAL(28,9).
+
         """
-        raise NotImplementedError
+        if type(expiry) is not date:
+            raise TypeError(f"ProductRules.terms expiry must be exactly date, got {expiry!r}")
+        require_type(strike, Price, "ProductRules.terms strike")
+        units = self.deliverable_units
+        with localcontext(EXACT):
+            aggregate_exercise_amount = Usd(units * strike.value)
+        return ContractTerms(
+            contract_id=contract_id(self.root, expiry, right, strike),
+            option_type=right,
+            strike=strike,
+            exercise_style=ExerciseStyle.EUROPEAN,
+            settlement_type=SettlementType.CASH,
+            premium_multiplier=self.premium_multiplier,
+            deliverable=Deliverable(
+                f"{self.underlying_id}:{units}",
+                (DeliverableComponent(self.underlying_id, units),),
+                ZERO_USD,
+            ),
+            aggregate_exercise_amount=aggregate_exercise_amount,
+            expires_at_ns=expires_at_ns,
+        )
+
+
+def _require_positive_decimal(value: object, field: str) -> None:
+    if type(value) is not Decimal:
+        raise TypeError(f"{field} must be exactly Decimal, got {type(value).__name__}")
+    if not (value.is_finite() and value > 0):
+        raise ValueError(f"{field} must be finite and > 0, got {value}")
 
 
 SPXW_RULES: Final = ProductRules(
@@ -116,7 +205,12 @@ def product_rules(root: str) -> ProductRules:
         ValueError: For any other root.
 
     """
-    raise NotImplementedError
+    match root:
+        case "SPXW":
+            return SPXW_RULES
+        case "XSP":
+            return XSP_RULES
+    raise ValueError(f"no R1 product rules for root {root!r}")
 
 
 def strike_text(strike: Price) -> str:
@@ -130,8 +224,12 @@ def strike_text(strike: Price) -> str:
     Returns:
         The text used in contract ids.
 
+    Raises:
+        TypeError: If ``strike`` is not a ``Price``.
+
     """
-    raise NotImplementedError
+    require_type(strike, Price, "strike_text strike")
+    return format(strike.value.normalize(EXACT), "f")
 
 
 def contract_id(root: str, expiry: date, right: OptionType, strike: Price) -> str:
@@ -146,8 +244,17 @@ def contract_id(root: str, expiry: date, right: OptionType, strike: Price) -> st
     Returns:
         The contract id.
 
+    Raises:
+        TypeError: If an argument has the wrong type (``expiry`` must be exactly a ``date``).
+        ValueError: If ``root`` is empty.
+
     """
-    raise NotImplementedError
+    require_id(root, "contract_id root")
+    if type(expiry) is not date:
+        raise TypeError(f"contract_id expiry must be exactly date, got {expiry!r}")
+    require_type(right, OptionType, "contract_id right")
+    letter = "C" if right is OptionType.CALL else "P"
+    return f"{root}:{expiry.isoformat()}:{letter}:{strike_text(strike)}"
 
 
 def settlement_price(rules: ProductRules, spx_official: Price) -> Price:
@@ -163,5 +270,17 @@ def settlement_price(rules: ProductRules, spx_official: Price) -> Price:
     Returns:
         The settlement value.
 
+    Raises:
+        TypeError: If ``rules`` or ``spx_official`` has the wrong type.
+        decimal.Inexact: If ``spx_official / settlement_divisor`` does not terminate (never for
+            the divisors 1 and 10): the quotient is rounded once, by the product's rule.
+
     """
-    raise NotImplementedError
+    require_type(rules, ProductRules, "settlement_price rules")
+    require_type(spx_official, Price, "settlement_price spx_official")
+    quantum = Decimal(1).scaleb(-rules.settlement_places, EXACT)
+    with localcontext(EXACT) as context:
+        quotient = spx_official.value / rules.settlement_divisor
+        context.traps[Inexact] = False  # the product's declared rounding is the one inexact step
+        value = quotient.quantize(quantum, rounding=rules.settlement_rounding)
+    return Price(value)

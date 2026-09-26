@@ -6,12 +6,14 @@ Each artifact table's digest is ``data.manifest.table_digest`` of its rows. Mone
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from typing import Final
 
+from options_backtest.data.manifest import table_digest
 from options_backtest.engine.clock import Phase
 from options_backtest.engine.orders import ExitTrigger, NonfillReason, OrderPurpose
 from options_backtest.errors import Issue
@@ -30,6 +32,7 @@ ARTIFACT_TABLES: Final = (
     "quality",
 )
 """Artifact tables, in ``ArtifactBundle.digests`` order."""
+_CAMPAIGN_ID: Final = re.compile(r"c[1-9][0-9]*")
 
 
 class SimEventKind(StrEnum):
@@ -38,12 +41,12 @@ class SimEventKind(StrEnum):
     DEPOSIT (OPEN 1, first window session, seq 1); SETTLE_DUE (OPEN 1, when anything is due,
     before an INVALIDATED of the same phase); INVALIDATED (any slot; detail = the Issue; the
     loop stops after it); MARKED (DEC 3, only when a position is held and every held leg has a
-    ``usable_quote`` for its closing side, the natural marks; CLOSE 3 mid and natural marks
-    when a position is held: the α ``quote.ok`` witnesses); ORDER_SUBMITTED, EXIT_DEFERRED,
-    ENTRY_SKIPPED, CAMPAIGN_ENDED (DEC 5, at most one per session); FILLED, NOT_FILLED,
-    ORDER_CANCELLED (F1-F3 4; at F3 the seq order is NOT_FILLED, ORDER_CANCELLED, then
-    CAMPAIGN_ENDED for a cancelled ROLL_OPEN); SETTLED (CUT 6); SNAPSHOT (CUT 7, with the
-    account point).
+    ``usable_quote`` for its closing side, with the liquidation P&L at those natural marks;
+    CLOSE 3 mid and natural marks when a position is held: the α ``quote.ok`` witnesses);
+    ORDER_SUBMITTED, EXIT_DEFERRED, ENTRY_SKIPPED, CAMPAIGN_ENDED (DEC 5, at most one per
+    session); FILLED, NOT_FILLED, ORDER_CANCELLED (F1-F3 4; at F3 the seq order is NOT_FILLED,
+    ORDER_CANCELLED, then CAMPAIGN_ENDED for a cancelled ROLL_OPEN); SETTLED (CUT 6); SNAPSHOT
+    (CUT 7, with the account point).
     """
 
     DEPOSIT = "deposit"
@@ -219,7 +222,49 @@ class DecisionDetail:
     trigger: ExitTrigger | None
 
 
-type EventDetail = FillDetail | NonfillDetail | SettlementDetail | DecisionDetail | Issue
+@dataclass(frozen=True, slots=True)
+class LiquidationDetail:
+    """The held generation's liquidation P&L at a DEC, with each component (design §10.4).
+
+    Carried by the DEC 3 MARKED event; take-profit compares ``liquidation_pnl >= fraction ·
+    basis`` and stop-loss ``liquidation_pnl <= -multiple · basis`` (ADR 0002 §17 items 35, 49).
+
+    Attributes:
+        realized_prior: P&L of the campaign's earlier generations, fees included.
+        entry_debit_incl_fees: The held generation's opening ``D`` plus its fees.
+        close_debit: Whole-order ``D`` of the close at the DEC naturals.
+        exit_fees: Σ trade fees of that close (the estimated exit fees).
+        basis: The campaign's ``|D|`` at entry, before fees.
+        liquidation_pnl: ``realized_prior - entry_debit_incl_fees - close_debit - exit_fees``.
+
+    """
+
+    realized_prior: Usd
+    entry_debit_incl_fees: Usd
+    close_debit: Usd
+    exit_fees: Usd
+    basis: Usd
+    liquidation_pnl: Usd
+
+    def __post_init__(self) -> None:
+        """Refuse a non-positive basis, negative fees and a P&L that is not its components'.
+
+        Raises:
+            ValueError: As stated, naming the field.
+
+        """
+        if self.basis.amount <= 0:
+            raise ValueError(f"LiquidationDetail.basis must be positive, got {self.basis}")
+        if self.exit_fees.amount < 0:
+            raise ValueError(f"LiquidationDetail.exit_fees must be >= 0, got {self.exit_fees}")
+        want = self.realized_prior - self.entry_debit_incl_fees - self.close_debit - self.exit_fees
+        if self.liquidation_pnl != want:
+            raise ValueError(f"LiquidationDetail.liquidation_pnl must be {want} (its components)")
+
+
+type EventDetail = (
+    FillDetail | NonfillDetail | SettlementDetail | DecisionDetail | LiquidationDetail | Issue
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +286,8 @@ class SimEvent:
         summary: State after the event.
         detail: Payload per kind: FILLED FillDetail; NOT_FILLED NonfillDetail; SETTLED
             SettlementDetail; ORDER_SUBMITTED, EXIT_DEFERRED, ENTRY_SKIPPED, CAMPAIGN_ENDED
-            DecisionDetail; INVALIDATED the Issue; None otherwise.
+            DecisionDetail; MARKED at DEC LiquidationDetail; INVALIDATED the Issue; None
+            otherwise.
 
     """
 
@@ -357,10 +403,46 @@ class CampaignRecord:
     outcome: CampaignOutcome
     exit_trigger: ExitTrigger | None
 
+    def __post_init__(self) -> None:
+        """Refuse a record whose ids, rolls, basis, end or trigger contradict its outcome.
+
+        Raises:
+            ValueError: If the generations are not ``c{n}.g1`` .. ``c{n}.gk`` (k >= 1), rolls is
+                not k - 1, the basis is not positive, an unfinished campaign has an end or a
+                trigger (a finished one lacks either), the end precedes the start, or
+                SETTLEMENT is not exactly the trigger of a SETTLED campaign.
+
+        """
+        if _CAMPAIGN_ID.fullmatch(self.campaign_id) is None:
+            raise ValueError(f"campaign_id must be c{{n}}, got {self.campaign_id!r}")
+        expected = tuple(f"{self.campaign_id}.g{k}" for k in range(1, len(self.generations) + 1))
+        if not self.generations or self.generations != expected:
+            raise ValueError(f"generations must be {self.campaign_id}.g1.. in order and non-empty")
+        if self.rolls != len(self.generations) - 1:
+            raise ValueError(f"rolls {self.rolls} must be one less than the generation count")
+        if self.basis.amount <= 0:
+            raise ValueError(f"basis must be positive, got {self.basis}")
+        self._check_end()
+
+    def _check_end(self) -> None:
+        finished = self.outcome in (CampaignOutcome.CLOSED, CampaignOutcome.SETTLED)
+        if finished == (self.end_session is None):
+            raise ValueError(f"end_session is stated exactly when a campaign is finished: {self}")
+        if finished == (self.exit_trigger is None):
+            raise ValueError(f"exit_trigger is stated exactly when a campaign is finished: {self}")
+        if self.end_session is not None and self.end_session < self.start_session:
+            raise ValueError(f"end_session {self.end_session} precedes {self.start_session}")
+        settled = self.outcome is CampaignOutcome.SETTLED
+        if finished and settled != (self.exit_trigger is ExitTrigger.SETTLEMENT):
+            raise ValueError(
+                f"exit trigger SETTLEMENT is exactly that of a SETTLED campaign: {self.outcome} "
+                f"with {self.exit_trigger}"
+            )
+
     @property
     def net_pnl(self) -> Usd:
         """Return the campaign P&L, ``realized_pnl - fees`` (= -ΣREALIZED_PNL - ΣFEES)."""
-        raise NotImplementedError
+        return self.realized_pnl - self.fees
 
 
 class CandidateRejection(StrEnum):
@@ -384,11 +466,16 @@ class ExpirySkip(StrEnum):
 
 
 class PackageVerdict(StrEnum):
-    """The judgment of one evaluated package, in check order."""
+    """The judgment of one evaluated package, in check order.
+
+    DELIVERABLE_MISMATCH: the legs' contract versions deliver different deliverables (a
+    ``TermsRevision`` of one leg), so the package is not an R1 package (design §9.1 item 1).
+    """
 
     CHOSEN = "CHOSEN"
     ELIGIBLE = "ELIGIBLE"
     DUPLICATE_CONTRACT = "DUPLICATE_CONTRACT"
+    DELIVERABLE_MISMATCH = "DELIVERABLE_MISMATCH"
     STRIKE_ORDER = "STRIKE_ORDER"
     PREMIUM_DIRECTION = "PREMIUM_DIRECTION"
     NO_SIZE = "NO_SIZE"
@@ -537,7 +624,8 @@ class CandidateDecision:
         evaluations: Package evaluations performed.
         budget_exceeded: The 10,000th evaluation was reached (SELECTION_BUDGET_EXCEEDED).
         reason: Why no order; None when one was chosen.
-        candidate_set_digest: ``table_digest`` of ``expiries`` followed by ``packages``.
+        candidate_set_digest: ``table_digest`` of ``expiries`` followed by ``packages``;
+            computed by the constructor, never passed (ADR 0002 §17 item 52).
 
     """
 
@@ -555,7 +643,46 @@ class CandidateDecision:
     evaluations: int
     budget_exceeded: bool
     reason: DecisionReason | None
-    candidate_set_digest: str
+    candidate_set_digest: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Refuse a record whose choice, reason or counts contradict each other; digest it.
+
+        Raises:
+            ValueError: If the purpose is not opening, ``conditions_hold`` is not the
+                conditions' conjunction, failed conditions carry candidates or another reason
+                than CONDITIONS_FALSE, ``evaluations`` is not the package count, ``chosen`` is
+                not the one CHOSEN package, ``reason`` is not stated exactly without a choice,
+                ``budget_exceeded`` is not exactly SELECTION_BUDGET_EXCEEDED, or ``cap_bound``
+                has no choice.
+
+        """
+        if not self.purpose.opening:
+            raise ValueError(f"purpose must be ENTRY or ROLL_OPEN, got {self.purpose}")
+        if self.conditions_hold != all(check.holds for check in self.conditions):
+            raise ValueError("conditions_hold must be the conjunction of the conditions")
+        failed = self.reason is DecisionReason.CONDITIONS_FALSE
+        if failed != (not self.conditions_hold) or (failed and self.expiries + self.packages):
+            raise ValueError(
+                "failed conditions record no candidates and reason CONDITIONS_FALSE, and only they"
+            )
+        if self.evaluations != len(self.packages):
+            raise ValueError(f"evaluations {self.evaluations} must count the packages evaluated")
+        self._check_choice()
+        digest = table_digest((*self.expiries, *self.packages))
+        object.__setattr__(self, "candidate_set_digest", digest)
+
+    def _check_choice(self) -> None:
+        chosen = [i for i, p in enumerate(self.packages) if p.verdict is PackageVerdict.CHOSEN]
+        if chosen != ([] if self.chosen is None else [self.chosen]):
+            raise ValueError(f"chosen {self.chosen} must index the one CHOSEN package: {chosen}")
+        if (self.reason is None) != (self.chosen is not None):
+            raise ValueError(f"reason is stated exactly when nothing is chosen: {self.reason}")
+        exceeded = self.reason is DecisionReason.SELECTION_BUDGET_EXCEEDED
+        if self.budget_exceeded != exceeded:
+            raise ValueError("budget_exceeded goes exactly with reason SELECTION_BUDGET_EXCEEDED")
+        if self.cap_bound and self.chosen is None:
+            raise ValueError("cap_bound needs a chosen package")
 
 
 class QualityCode(StrEnum):
@@ -597,7 +724,8 @@ class ArtifactBundle:
         campaigns: Campaign records in campaign order.
         candidate_decisions: Selection records in decision order.
         quality: Quality findings in emission order.
-        digests: (table, ``table_digest``) per ``ARTIFACT_TABLES`` entry, in that order.
+        digests: (table, ``table_digest``) per ``ARTIFACT_TABLES`` entry, in that order;
+            computed by the constructor, never passed (ADR 0002 §17 item 52).
 
     """
 
@@ -609,4 +737,16 @@ class ArtifactBundle:
     campaigns: tuple[CampaignRecord, ...]
     candidate_decisions: tuple[CandidateDecision, ...]
     quality: tuple[QualityFinding, ...]
-    digests: tuple[tuple[str, str], ...]
+    digests: tuple[tuple[str, str], ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Refuse a result of another type, then digest every table once.
+
+        Raises:
+            TypeError: If ``result`` is not a ``SimulationResult``, or a table cannot be encoded.
+
+        """
+        if not isinstance(self.result, SimulationResult):
+            raise TypeError(f"ArtifactBundle.result must be a SimulationResult: {self.result!r}")
+        digests = tuple((name, table_digest(getattr(self, name))) for name in ARTIFACT_TABLES)
+        object.__setattr__(self, "digests", digests)

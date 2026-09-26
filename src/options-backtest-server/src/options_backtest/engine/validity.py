@@ -11,12 +11,26 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
-from options_backtest.data.records import CoveragePartition
-from options_backtest.errors import Issue
-from options_backtest.models.market import ContractTerms
+from options_backtest.data.records import CoveragePartition, CoverageState
+from options_backtest.engine.funding import expiry_bounds
+from options_backtest.errors import ErrorCode, Issue
+from options_backtest.models.market import ContractTerms, require_type
 from options_backtest.models.result import CalculationStatus
-from options_backtest.money import Usd
+from options_backtest.money import ZERO_USD, Usd
+
+_INVALIDATING: Final = frozenset(
+    {
+        ErrorCode.MISSING_VALUATION,
+        ErrorCode.MISSING_SETTLEMENT,
+        ErrorCode.DATA_COVERAGE_GAP,
+        ErrorCode.UNSUPPORTED_CORPORATE_ACTION,
+    }
+)
+"""The codes of ADR 0002 §10's invalid outcomes."""
+_INCOMPLETE_REMEDIATION: Final = "extend the window or set end_policy to mark_open_positions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,10 +46,24 @@ class RunStatus:
     status: CalculationStatus
     reasons: tuple[Issue, ...]
 
+    def __post_init__(self) -> None:
+        """Require no reason while VALID and exactly one otherwise."""
+        require_type(self.status, CalculationStatus, "RunStatus.status")
+        if not isinstance(self.reasons, tuple):
+            raise TypeError(f"RunStatus.reasons must be a tuple, got {type(self.reasons).__name__}")
+        for reason in self.reasons:
+            require_type(reason, Issue, "RunStatus.reasons item")
+        expected = 0 if self.status is CalculationStatus.VALID else 1
+        if len(self.reasons) != expected:
+            raise ValueError(
+                f"RunStatus.reasons: a {self.status.value} run carries {expected} reason(s), "
+                f"got {len(self.reasons)}"
+            )
+
     @classmethod
     def valid(cls) -> RunStatus:
         """Return the initial status: VALID, no reasons."""
-        raise NotImplementedError
+        return cls(CalculationStatus.VALID, ())
 
     def invalidate(self, issue: Issue) -> RunStatus:
         """Return INVALID with ``issue`` as the reason.
@@ -48,25 +76,56 @@ class RunStatus:
             The new status.
 
         Raises:
-            ValueError: If the status is not VALID (it never changes twice).
+            TypeError: If ``issue`` is not an ``Issue``.
+            ValueError: If the status is not VALID (it never changes twice) or the issue's code
+                is not one of the four.
 
         """
-        raise NotImplementedError
+        self._require_move(issue)
+        if issue.code not in _INVALIDATING:
+            raise ValueError(f"issue code {issue.code} does not invalidate a run (ADR 0002 §10)")
+        return RunStatus(CalculationStatus.INVALID, (issue,))
 
     def mark_incomplete(self, issue: Issue) -> RunStatus:
         """Return INCOMPLETE with ``issue`` as the reason.
 
         Args:
-            issue: Why the run could not finish its end policy.
+            issue: Why the run could not finish its end policy; code UNSUPPORTED_ACCOUNT_STATE
+                (ADR 0002 §17 item 43).
 
         Returns:
             The new status.
 
         Raises:
-            ValueError: If the status is not VALID.
+            TypeError: If ``issue`` is not an ``Issue``.
+            ValueError: If the status is not VALID or the issue's code is another.
 
         """
-        raise NotImplementedError
+        self._require_move(issue)
+        if issue.code is not ErrorCode.UNSUPPORTED_ACCOUNT_STATE:
+            raise ValueError(
+                f"an incomplete run's issue code is UNSUPPORTED_ACCOUNT_STATE: {issue.code}"
+            )
+        return RunStatus(CalculationStatus.INCOMPLETE, (issue,))
+
+    def _require_move(self, issue: Issue) -> None:
+        """Require a VALID status (it moves once, ``CalcMonotone``) and a run-level ``Issue``.
+
+        Run-level (ADR 0002 §17 items 30, 43): ``json_pointer`` "" and ``affected_interval``
+        the ISO date of the session that moved the status.
+        """
+        require_type(issue, Issue, "RunStatus issue")
+        if self.status is not CalculationStatus.VALID:
+            raise ValueError(f"the status moves only from valid, once; it is {self.status.value}")
+        interval = issue.affected_interval
+        if issue.json_pointer != "" or interval is None:
+            raise ValueError(f"a run-level issue has json_pointer '' and a session date: {issue}")
+        try:
+            dated = date.fromisoformat(interval).isoformat() == interval
+        except ValueError as e:
+            raise ValueError(f"a run-level issue's affected_interval {interval!r}: {e}") from e
+        if not dated:
+            raise ValueError(f"a run-level issue's affected_interval {interval!r} is not ISO")
 
 
 class CoverageVerdict(StrEnum):
@@ -75,6 +134,15 @@ class CoverageVerdict(StrEnum):
     COMPLETE = "complete"
     GAP = "gap"
     INVALID = "invalid"
+
+
+_VERDICTS: Final = MappingProxyType(
+    {
+        CoverageState.COMPLETE: CoverageVerdict.COMPLETE,
+        CoverageState.GAP: CoverageVerdict.GAP,
+        CoverageState.UNKNOWN: CoverageVerdict.INVALID,
+    }
+)
 
 
 def coverage_verdict(partition: CoveragePartition | None) -> CoverageVerdict:
@@ -90,8 +158,17 @@ def coverage_verdict(partition: CoveragePartition | None) -> CoverageVerdict:
     Returns:
         The verdict.
 
+    Raises:
+        TypeError: If ``partition`` is not a ``CoveragePartition``.
+        ValueError: If it is not the ``"quotes"`` table's.
+
     """
-    raise NotImplementedError
+    if partition is None:
+        return CoverageVerdict.INVALID
+    require_type(partition, CoveragePartition, "coverage_verdict partition")
+    if partition.table != "quotes":
+        raise ValueError(f"coverage_verdict reads the quotes partition, got {partition.table!r}")
+    return _VERDICTS[partition.status]
 
 
 def package_mark_in_range(holdings: Sequence[tuple[ContractTerms, int]], mid_value: Usd) -> bool:
@@ -108,8 +185,17 @@ def package_mark_in_range(holdings: Sequence[tuple[ContractTerms, int]], mid_val
     Returns:
         Whether the value is within the range, bounds inclusive.
 
+    Raises:
+        TypeError: If ``mid_value`` is not ``Usd``.
+        ValueError: As ``expiry_bounds`` for malformed holdings.
+        UnsupportedLifecycle: As ``expiry_bounds`` for several expiries or deliverables.
+
     """
-    raise NotImplementedError
+    require_type(mid_value, Usd, "package_mark_in_range mid_value")
+    bounds = expiry_bounds(holdings, 0, ZERO_USD)
+    above_min = bounds.min_value is None or bounds.min_value <= mid_value
+    below_max = bounds.max_value is None or mid_value <= bounds.max_value
+    return above_min and below_max
 
 
 def end_status(
@@ -133,5 +219,26 @@ def end_status(
     Returns:
         The final status.
 
+    Raises:
+        TypeError: If an argument has the wrong type.
+
     """
-    raise NotImplementedError
+    require_type(status, RunStatus, "end_status status")
+    if type(liquidate_at_final) is not bool or type(held) is not bool:
+        raise TypeError("end_status liquidate_at_final and held must be bool")
+    if type(final_session) is not date:
+        raise TypeError(f"end_status final_session must be a date, got {final_session!r}")
+    if status.status is not CalculationStatus.VALID or not (liquidate_at_final and held):
+        return status
+    day = final_session.isoformat()
+    issue = Issue(
+        code=ErrorCode.UNSUPPORTED_ACCOUNT_STATE,
+        message=(
+            f"incomplete_liquidation: a position is still held after the final session {day} "
+            "under liquidate_at_final_session"
+        ),
+        json_pointer="",
+        affected_interval=day,
+        remediation=_INCOMPLETE_REMEDIATION,
+    )
+    return status.mark_incomplete(issue)

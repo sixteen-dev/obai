@@ -11,21 +11,34 @@ fill session being 1 (design §9.1 item 10).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
+from decimal import localcontext
 from enum import StrEnum
+from typing import Final
 
-from options_backtest.engine.fees import AssumedFlatFeeSchedule
-from options_backtest.engine.orders import ExitTrigger, OrderLeg, OrderPurpose
+from options_backtest.engine.fees import AssumedFlatFeeSchedule, trade_fees
+from options_backtest.engine.orders import (
+    ExitTrigger,
+    OrderLeg,
+    OrderPurpose,
+    closing_legs,
+    natural_price,
+    package_debit,
+)
 from options_backtest.models.artifacts import (
     CampaignOutcome,
     CampaignRecord,
     DecisionReason,
+    LiquidationDetail,
 )
-from options_backtest.models.ledger import LedgerEntry
+from options_backtest.models.ledger import AccountKind, LedgerEntry, LegFill
 from options_backtest.models.market import Quote
-from options_backtest.models.strategy import StrategySpec
-from options_backtest.money import Usd
+from options_backtest.models.strategy import SequentialRoll, StrategySpec
+from options_backtest.money import EXACT, ZERO_USD, Usd
+from options_backtest.reference.calendars import dte
+
+_CLOSING: Final = frozenset({OrderPurpose.EXIT, OrderPurpose.ROLL_CLOSE, OrderPurpose.FINAL})
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,10 +92,17 @@ class CampaignState:
     start_session: date | None
     held: HeldPosition | None
 
+    def __post_init__(self) -> None:
+        """Refuse negative counts and a state that holds while a replacement is due."""
+        if min(self.number, self.generation, self.rolls) < 0:
+            raise ValueError(f"CampaignState counts must be >= 0: {self}")
+        if self.held is not None and self.roll_open_due:
+            raise ValueError("CampaignState cannot hold a generation while roll_open_due")
+
     @classmethod
     def initial(cls) -> CampaignState:
         """Return the state before any campaign: zero counts, flat, nothing due."""
-        raise NotImplementedError
+        return cls(0, 0, 0, False, ZERO_USD, ZERO_USD, None, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,15 +129,29 @@ class Triggers:
     roll_cap: bool
     liquidation_pnl: Usd | None
 
+    def __post_init__(self) -> None:
+        """Refuse a roll cap without a roll trigger and a P&L rule without a P&L."""
+        if self.roll_cap and not self.roll_trigger:
+            raise ValueError("Triggers.roll_cap needs roll_trigger")
+        if (self.take_profit or self.stop_loss) and self.liquidation_pnl is None:
+            raise ValueError("Triggers take_profit and stop_loss need a liquidation_pnl")
+
     @property
     def exit_trigger(self) -> ExitTrigger | None:
         """Return the first true of TIME_EXIT, TAKE_PROFIT, STOP_LOSS, CAMPAIGN_CAP, ROLL_CAP."""
-        raise NotImplementedError
+        flags = (
+            (self.time_exit, ExitTrigger.TIME_EXIT),
+            (self.take_profit, ExitTrigger.TAKE_PROFIT),
+            (self.stop_loss, ExitTrigger.STOP_LOSS),
+            (self.campaign_cap, ExitTrigger.CAMPAIGN_CAP),
+            (self.roll_cap, ExitTrigger.ROLL_CAP),
+        )
+        return next((trigger for holds, trigger in flags if holds), None)
 
     @property
     def roll_due(self) -> bool:
         """Return ``roll_trigger and not roll_cap`` (``R1Campaign.RollDue``)."""
-        raise NotImplementedError
+        return self.roll_trigger and not self.roll_cap
 
 
 def evaluate_triggers(  # noqa: PLR0913 — the TLA ExitTrigger inputs, all explicit
@@ -151,10 +185,99 @@ def evaluate_triggers(  # noqa: PLR0913 — the TLA ExitTrigger inputs, all expl
         The triggers.
 
     Raises:
-        ValueError: If nothing is held.
+        ValueError: If nothing is held, ``held_sessions < 1`` or
+            ``campaign_sessions < held_sessions``.
+        MissingMarkError: If ``close_quotes`` lacks a held leg.
 
     """
-    raise NotImplementedError
+    held = state.held
+    if held is None:
+        raise ValueError("evaluate_triggers needs a held generation")
+    if held_sessions < 1:
+        raise ValueError(f"held_sessions counts the fill session as 1, got {held_sessions}")
+    if campaign_sessions < held_sessions:
+        raise ValueError(f"campaign_sessions {campaign_sessions} < held_sessions {held_sessions}")
+    days = dte(session_date, held.expiry)
+    exits, roll = spec.exits, spec.roll
+    pnl = None
+    if close_quotes is not None:
+        pnl = liquidation(state, schedule, close_quotes).liquidation_pnl
+    take_profit, stop_loss = _pnl_rules(spec, state.basis, pnl)
+    sequential = roll if isinstance(roll, SequentialRoll) else None
+    roll_trigger = sequential is not None and days <= sequential.trigger_dte
+    return Triggers(
+        time_exit=days <= exits.exit_dte or held_sessions >= exits.max_holding_sessions,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+        campaign_cap=(
+            sequential is not None and campaign_sessions >= sequential.max_campaign_sessions
+        ),
+        roll_trigger=roll_trigger,
+        roll_cap=roll_trigger and sequential is not None and state.rolls >= sequential.max_rolls,
+        liquidation_pnl=pnl,
+    )
+
+
+def _pnl_rules(spec: StrategySpec, basis: Usd, pnl: Usd | None) -> tuple[bool, bool]:
+    """Return (take profit, stop loss): ``pnl >= fraction·basis``, ``pnl <= -multiple·basis``.
+
+    The products are exact ``Decimal``s under ``EXACT``; both are False without a P&L.
+    """
+    if pnl is None:
+        return False, False
+    take_profit, stop_loss = spec.exits.take_profit, spec.exits.stop_loss
+    with localcontext(EXACT):
+        profit = take_profit is not None and pnl.amount >= take_profit.fraction * basis.amount
+        loss = stop_loss is not None and pnl.amount <= -(stop_loss.multiple * basis.amount)
+    return profit, loss
+
+
+def liquidation(
+    state: CampaignState,
+    schedule: AssumedFlatFeeSchedule,
+    close_quotes: Mapping[str, Quote],
+) -> LiquidationDetail:
+    """Return the held generation's liquidation P&L at the decision naturals, by component.
+
+    ``realized_prior - entry_debit_incl_fees - close D - exit fees`` (ADR 0002 §17 item 35):
+    the close ``D`` is ``package_debit(closing_legs(held.legs), held.packages, close_quotes)``
+    and the exit fees are Σ ``trade_fees`` of those legs at their naturals.
+
+    Args:
+        state: Campaign state with a held generation.
+        schedule: Fee schedule.
+        close_quotes: A ``usable_quote`` for every held leg's closing side at DEC.
+
+    Returns:
+        The P&L and its components (design §10.4: "Store each component").
+
+    Raises:
+        ValueError: If nothing is held.
+        MissingMarkError: If ``close_quotes`` lacks a held leg.
+
+    """
+    held = state.held
+    if held is None:
+        raise ValueError("liquidation needs a held generation")
+    legs = closing_legs(held.legs)
+    close_debit = package_debit(legs, held.packages, close_quotes)
+    fills = [
+        LegFill(
+            leg.terms,
+            leg.ratio * held.packages,
+            natural_price(close_quotes[leg.terms.contract_id], leg.ratio),
+        )
+        for leg in legs
+    ]
+    exit_fees = sum((line.amount for line in trade_fees(schedule, fills)), start=ZERO_USD)
+    return LiquidationDetail(
+        realized_prior=state.realized_prior,
+        entry_debit_incl_fees=held.entry_debit_incl_fees,
+        close_debit=close_debit,
+        exit_fees=exit_fees,
+        basis=state.basis,
+        liquidation_pnl=state.realized_prior - held.entry_debit_incl_fees - close_debit - exit_fees,
+    )
 
 
 class HeldAction(StrEnum):
@@ -202,8 +325,20 @@ def decide_held(
     Returns:
         The decision.
 
+    Raises:
+        TypeError: If ``triggers`` is not ``Triggers``.
+
     """
-    raise NotImplementedError
+    if not isinstance(triggers, Triggers):
+        raise TypeError(f"decide_held needs Triggers, got {type(triggers).__name__}")
+    if final_session and liquidate_at_final:
+        return HeldDecision(HeldAction.FINAL, ExitTrigger.FINAL_LIQUIDATION)
+    trigger = triggers.exit_trigger
+    if trigger is not None:
+        return HeldDecision(HeldAction.EXIT if quote_ok else HeldAction.DEFER, trigger)
+    if triggers.roll_due:
+        return HeldDecision(HeldAction.ROLL_CLOSE if quote_ok else HeldAction.DEFER, None)
+    return HeldDecision(HeldAction.HOLD, None)
 
 
 class FlatAction(StrEnum):
@@ -257,10 +392,35 @@ def decide_flat(
         The decision.
 
     Raises:
-        ValueError: If a position is held.
+        ValueError: If a position is held, or a replacement is due without sequential rolls or
+            with ``campaign_sessions < 1``.
 
     """
-    raise NotImplementedError
+    if state.held is not None:
+        raise ValueError("decide_flat needs a flat state; a generation is held")
+    if state.roll_open_due:
+        return _decide_replacement(spec, final_session, campaign_sessions)
+    if not scheduled:
+        return FlatDecision(FlatAction.IDLE, None)
+    if final_session:
+        return FlatDecision(FlatAction.SKIP, DecisionReason.FINAL_SESSION)
+    return FlatDecision(FlatAction.ENTRY, None)
+
+
+def _decide_replacement(
+    spec: StrategySpec, final_session: bool, campaign_sessions: int
+) -> FlatDecision:
+    """Decide a due replacement: end on the final session or at the cap, else ROLL_OPEN."""
+    roll = spec.roll
+    if not isinstance(roll, SequentialRoll):
+        raise ValueError("a replacement is due only under roll mode sequential")
+    if campaign_sessions < 1:
+        raise ValueError(f"campaign_sessions counts the entry session as 1: {campaign_sessions}")
+    if final_session:
+        return FlatDecision(FlatAction.END_CAMPAIGN, DecisionReason.FINAL_SESSION)
+    if campaign_sessions >= roll.max_campaign_sessions:
+        return FlatDecision(FlatAction.END_CAMPAIGN, DecisionReason.CAMPAIGN_CAP)
+    return FlatDecision(FlatAction.ROLL_OPEN, None)
 
 
 def opening_campaign_id(state: CampaignState, purpose: OrderPurpose) -> str:
@@ -274,10 +434,20 @@ def opening_campaign_id(state: CampaignState, purpose: OrderPurpose) -> str:
         The generation id.
 
     Raises:
-        ValueError: If ``purpose`` is not opening.
+        ValueError: If ``purpose`` is not opening, a generation is held, or ``purpose`` is
+            ROLL_OPEN without ``roll_open_due`` (ENTRY with it).
 
     """
-    raise NotImplementedError
+    if not purpose.opening:
+        raise ValueError(f"opening_campaign_id needs an opening purpose, got {purpose}")
+    if state.held is not None:
+        raise ValueError("no opening while a generation is held")
+    rolling = purpose is OrderPurpose.ROLL_OPEN
+    if rolling != state.roll_open_due:
+        raise ValueError(f"{purpose} needs roll_open_due {rolling}, state has {not rolling}")
+    if rolling:
+        return f"c{state.number}.g{state.generation + 1}"
+    return f"c{state.number + 1}.g1"
 
 
 def open_filled(  # noqa: PLR0913 — every FillOpen input, explicit
@@ -311,8 +481,34 @@ def open_filled(  # noqa: PLR0913 — every FillOpen input, explicit
     Returns:
         The new state.
 
+    Raises:
+        ValueError: As ``opening_campaign_id``; also for ``packages < 1``, no legs, negative
+            fees or a zero ``net_debit`` (BasisPositive).
+
     """
-    raise NotImplementedError
+    generation_id = opening_campaign_id(state, purpose)
+    if type(packages) is not int or packages < 1:
+        raise ValueError(f"open_filled packages must be an int >= 1, got {packages!r}")
+    if not legs or fees.amount < 0:
+        raise ValueError(f"open_filled needs legs and fees >= 0, got {len(legs)} and {fees}")
+    if net_debit == ZERO_USD:
+        raise ValueError("an opening fill needs a nonzero net_debit (BasisPositive)")
+    held = HeldPosition(generation_id, legs, packages, expiry, fill_session, net_debit + fees)
+    if purpose is OrderPurpose.ROLL_OPEN:
+        return replace(
+            state,
+            generation=state.generation + 1,
+            rolls=state.rolls + 1,
+            roll_open_due=False,
+            held=held,
+        )
+    basis = net_debit if net_debit.amount > 0 else -net_debit
+    return CampaignState(state.number + 1, 1, 0, False, basis, ZERO_USD, fill_session, held)
+
+
+def _end(state: CampaignState) -> CampaignState:
+    """Return the flat state after the active campaign ends: only number and generation kept."""
+    return replace(CampaignState.initial(), number=state.number, generation=state.generation)
 
 
 def close_filled(
@@ -331,18 +527,46 @@ def close_filled(
     Returns:
         The new state.
 
+    Raises:
+        ValueError: If ``purpose`` is not closing or nothing is held.
+
     """
-    raise NotImplementedError
+    if purpose not in _CLOSING:
+        raise ValueError(f"close_filled needs a closing purpose, got {purpose}")
+    if state.held is None:
+        raise ValueError("close_filled needs a held generation")
+    if purpose is OrderPurpose.ROLL_CLOSE:
+        return replace(
+            state,
+            held=None,
+            roll_open_due=True,
+            realized_prior=state.realized_prior + generation_pnl,
+        )
+    return _end(state)
 
 
 def settled(state: CampaignState) -> CampaignState:
-    """Return the state after the held generation's cash settlement: the campaign ends."""
-    raise NotImplementedError
+    """Return the state after the held generation's cash settlement: the campaign ends.
+
+    Raises:
+        ValueError: If nothing is held.
+
+    """
+    if state.held is None:
+        raise ValueError("settled needs a held generation")
+    return _end(state)
 
 
 def ended(state: CampaignState) -> CampaignState:
-    """Return the state after a due replacement is not opened: the campaign ends flat."""
-    raise NotImplementedError
+    """Return the state after a due replacement is not opened: the campaign ends flat.
+
+    Raises:
+        ValueError: Without ``roll_open_due``.
+
+    """
+    if not state.roll_open_due:
+        raise ValueError("ended needs roll_open_due: only a due replacement ends unopened")
+    return _end(state)
 
 
 def generation_pnl(entries: Sequence[LedgerEntry], generation_id: str) -> Usd:
@@ -356,7 +580,23 @@ def generation_pnl(entries: Sequence[LedgerEntry], generation_id: str) -> Usd:
         The P&L, fees included.
 
     """
-    raise NotImplementedError
+    realized, fees = _realized_and_fees(entries, {generation_id})
+    return realized - fees
+
+
+def _realized_and_fees(entries: Sequence[LedgerEntry], generation_ids: set[str]) -> tuple[Usd, Usd]:
+    """Return (-ΣREALIZED_PNL, ΣFEES) over the postings of entries of ``generation_ids``."""
+    postings = [
+        posting
+        for entry in entries
+        if entry.campaign_id in generation_ids
+        for posting in entry.postings
+    ]
+    realized = sum(
+        (p.amount for p in postings if p.account.kind is AccountKind.REALIZED_PNL), start=ZERO_USD
+    )
+    fees = sum((p.amount for p in postings if p.account.kind is AccountKind.FEES), start=ZERO_USD)
+    return -realized, fees
 
 
 def campaign_record(
@@ -380,5 +620,25 @@ def campaign_record(
     Returns:
         The record.
 
+    Raises:
+        ValueError: If no campaign is active, or the record's own checks fail.
+
     """
-    raise NotImplementedError
+    active = state.held is not None or state.roll_open_due
+    if not active or state.start_session is None:
+        raise ValueError("campaign_record needs an active campaign")
+    campaign_id = f"c{state.number}"
+    generations = tuple(f"{campaign_id}.g{k}" for k in range(1, state.generation + 1))
+    realized, fees = _realized_and_fees(entries, set(generations))
+    return CampaignRecord(
+        campaign_id=campaign_id,
+        generations=generations,
+        start_session=state.start_session,
+        end_session=end_session,
+        basis=state.basis,
+        realized_pnl=realized,
+        fees=fees,
+        rolls=state.rolls,
+        outcome=outcome,
+        exit_trigger=exit_trigger,
+    )
