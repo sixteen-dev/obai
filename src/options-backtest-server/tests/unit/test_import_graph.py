@@ -37,6 +37,22 @@ KERNEL_ALLOWED = {
         f"{PACKAGE}.pricing.european",
     },
 }
+SERVER_ALLOWED = {
+    f"{PACKAGE}.server": {
+        f"{PACKAGE}.errors",
+        f"{PACKAGE}.ingest",
+        f"{PACKAGE}.models.run",
+        f"{PACKAGE}.models.strategy",
+        f"{PACKAGE}.models.strategy_checks",
+        f"{PACKAGE}.reference.products",
+        f"{PACKAGE}.strict_json",
+        f"{PACKAGE}.config",
+        f"{PACKAGE}.logging_config",
+    },
+    f"{PACKAGE}.config": set(),
+    f"{PACKAGE}.logging_config": set(),
+}
+"""ADR 0003 §1.1 and §8: the MCP server reaches no data, synthetic or simulation module."""
 ADR_0002_MODULES = {
     f"{PACKAGE}.data",
     f"{PACKAGE}.data.records",
@@ -116,6 +132,12 @@ def test_no_src_module_imports_synthetic() -> None:
         if not module.startswith(SYNTHETIC)
     }
     assert {module: names for module, names in offenders.items() if names} == {}
+
+
+@pytest.mark.parametrize("module", sorted(SERVER_ALLOWED))
+def test_server_modules_import_only_their_allowlist(module: str) -> None:
+    assert module in GRAPH, f"{module} does not exist"
+    assert GRAPH[module] <= SERVER_ALLOWED[module], sorted(GRAPH[module] - SERVER_ALLOWED[module])
 
 
 @pytest.mark.parametrize("module", sorted(KERNEL_ALLOWED))

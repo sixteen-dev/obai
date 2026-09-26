@@ -5,7 +5,7 @@ Deterministic options strategy backtesting engine for OBaI, specified by
 gitignored). It computes results under disclosed assumptions; it does not reconstruct a
 broker's fills or promise profitability.
 
-## Status: WP1 and ADR 0002 implemented
+## Status: WP1, ADR 0002 and the ADR 0003 server implemented
 
 - **WP1** ([ADR 0001](docs/adr/0001-wp1-architecture.md)): typed errors, exact `Usd`/`Price`
   (any rounding raises `decimal.Inexact`), strict strategy ingestion (`load_strategy`), and the
@@ -16,19 +16,35 @@ broker's fills or promise profitability.
   - European pricing, IV and features in `pricing/`;
   - the complete R1 simulation: `engine/{clock,orders,fills,selector,campaign,lifecycle,validity,simulator}.py`
     and `models/{run,artifacts,result}.py`.
+- **ADR 0003** ([ADR 0003](docs/adr/0003-obai-integration-routing-slice.md)): a local
+  single-user MCP server (`config.py`, `logging_config.py`, `server.py`). It has two read-only
+  tools:
+  - `options_backtest_capabilities_tool`: what is supported, what R1 rejects, and the other
+    eleven design tools, listed as unavailable with the missing capability;
+  - `options_backtest_validate_strategy_tool`: strict validation of a strategy document and
+    an optional window.
+
+  Historical backtesting is reported as unavailable, with the typed issue
+  `DATA_ENTITLEMENT_MISSING` / `historical_options_data`. The server imports no data, synthetic
+  or simulation module, so no run is reachable over MCP.
 - **Test suites:**
   - `tests/unit/`;
   - `tests/reference/`, with QuantLib as an independent pricing oracle;
   - `tests/e2e/`, the golden scenarios G01–G24, derived by hand against the T0 interface
     before the simulator had a body ([README](tests/e2e/README.md));
   - `tests/conformance/`, which includes the R1Campaign trace checker (`r1_trace.py`);
+  - `tests/mcp/`, the service-local MCP end-to-end suite. It starts `python -m
+    options_backtest.server` on loopback and a free port and checks the tools, validation,
+    rejections and health bodies over real HTTP. It costs nothing: no model and no market
+    data. The directory has no `__init__.py`, because a package named `mcp` would shadow the
+    MCP SDK;
   - `tests/lean/`, the opt-in LEAN differential. Results are in
     [docs/lean-differential.md](docs/lean-differential.md), which also lists what LEAN does
     not validate.
 
 The engine runs on synthetic data only, and every result carries the
-`SYNTHETIC_FIXTURE_NOT_HISTORICAL` warning. Not built yet: a real data provider, a server, jobs
-and hub integration (ADR 0002 §14).
+`SYNTHETIC_FIXTURE_NOT_HISTORICAL` warning. Not built yet: a real data provider (WP2), jobs and
+runs over MCP (WP5), and the hub route (ADR 0003 Phase B).
 
 ## Commands
 
@@ -41,6 +57,27 @@ uv run ruff format --check .
 uv run mypy --strict src
 uv run pytest            # every suite except `lean`; enforces branch coverage >= 90%
 uv run pytest --no-cov tests/unit/test_money.py   # partial run
+uv run pytest --no-cov tests/mcp                  # MCP end-to-end suite only
+```
+
+### Running the server
+
+```sh
+uv run python -m options_backtest.server   # streamable HTTP at http://127.0.0.1:8012/mcp
+curl -s http://127.0.0.1:8012/health/ready
+```
+
+The variables are `TRANSPORT` (`streamable-http`, the default, or its alias `http`), `HOST`
+(default `127.0.0.1`), `PORT` (default `8012`) and `LOG_LEVEL` (default `INFO`). They are read
+from the environment or a `.env` file in the working directory. The deployment mode is fixed at
+`local_single_user` and cannot be configured. Logs are JSON lines on stdout.
+
+The container binds `0.0.0.0` inside its own network namespace. Publish its port on loopback
+only:
+
+```sh
+docker build -t obai/options-backtest-server:dev .
+docker run --rm -p 127.0.0.1:8012:8012 -e HOST=0.0.0.0 obai/options-backtest-server:dev
 ```
 
 These in-service commands are the portable gate. At the repository root,

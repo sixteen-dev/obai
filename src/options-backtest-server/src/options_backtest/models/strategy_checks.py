@@ -28,6 +28,7 @@ from options_backtest.models.strategy import (
     FixedContracts,
     Leg,
     MoneynessStrike,
+    Product,
     SameAsExpiry,
     SequentialRoll,
     StrategySpec,
@@ -142,7 +143,7 @@ def check_strategy(spec: StrategySpec) -> CheckResult:
     positions = _strike_positions(spec.legs, leg_order)
     direction_issues, direction = _premium_direction(spec, positions)
     issues = [
-        *_check_roots(spec),
+        *root_membership_issues(spec.product),
         *_check_delta_signs(spec.legs),
         *graph_issues,
         *_check_offsetting_legs(spec.legs, positions),
@@ -159,12 +160,29 @@ def check_strategy(spec: StrategySpec) -> CheckResult:
 # Row 1: product roots --------------------------------------------------------------------
 
 
-def _check_roots(spec: StrategySpec) -> list[Issue]:
+def root_membership_issues(product: Product) -> list[Issue]:
+    """Return an UNSUPPORTED_PRODUCT issue per option root outside the R1 set.
+
+    Row 1 of the checks; it reads the product block alone, so the MCP validator can run it on a
+    document a schema stage rejected (ADR 0003 §8).
+
+    Args:
+        product: The strategy's product block.
+
+    Returns:
+        The issues, at ``/product/allowed_option_roots/{i}``, in root order.
+
+    Raises:
+        TypeError: If ``product`` is not a ``Product``.
+
+    """
+    if not isinstance(product, Product):
+        raise TypeError(f"root_membership_issues needs a Product, got {type(product).__name__}")
     return [
         Issue(
             ErrorCode.UNSUPPORTED_PRODUCT, _root_message(root), f"/product/allowed_option_roots/{i}"
         )
-        for i, root in enumerate(spec.product.allowed_option_roots)
+        for i, root in enumerate(product.allowed_option_roots)
         if root not in R1_OPTION_ROOTS
     ]
 
