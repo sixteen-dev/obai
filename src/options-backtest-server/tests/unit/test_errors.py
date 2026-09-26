@@ -9,6 +9,7 @@ from options_backtest.errors import (
     Issue,
     LedgerInvariantError,
     MissingMarkError,
+    SimulationInvariantError,
     SpecRejected,
     UnsupportedLifecycle,
     sorted_issues,
@@ -41,6 +42,7 @@ ADR_0001_ADDED_CODES = {
     "UNSUPPORTED_SCHEMA_VERSION",
     "INVALID_STRATEGY_RULE",
 }
+ADR_0002_ADDED_CODES = {"SELECTION_BUDGET_EXCEEDED", "MISSING_VALUATION"}
 
 
 def _issue(pointer: str = "/legs/0/side") -> Issue:
@@ -48,7 +50,9 @@ def _issue(pointer: str = "/legs/0/side") -> Issue:
 
 
 def test_error_codes_are_section_15_2_plus_adr_additions_with_value_equal_to_name() -> None:
-    assert {code.value for code in ErrorCode} == SECTION_15_2_CODES | ADR_0001_ADDED_CODES
+    assert {code.value for code in ErrorCode} == (
+        SECTION_15_2_CODES | ADR_0001_ADDED_CODES | ADR_0002_ADDED_CODES
+    )
     assert all(code.name == code.value for code in ErrorCode)
 
 
@@ -161,3 +165,11 @@ def test_missing_mark_error_rejects_a_bare_string() -> None:
 def test_ledger_invariant_error_is_an_exception() -> None:
     with pytest.raises(LedgerInvariantError, match="unbalanced"):
         raise LedgerInvariantError("unbalanced entry")
+
+
+def test_simulation_invariant_error_is_a_job_failure_not_an_invalid_run_or_request_error() -> None:
+    # ADR 0002 §1, §10: a broken engine invariant fails the job; it never becomes an invalid run.
+    error = SimulationInvariantError("funding headroom -1.00 after commit")
+
+    assert str(error) == "funding headroom -1.00 after commit"
+    assert not isinstance(error, UnsupportedLifecycle | MissingMarkError | SpecRejected)

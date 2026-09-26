@@ -147,6 +147,7 @@ def _settle(
         settlement={INDEX_ASSET: level},
         fees=fees,
         settles_on=settle_day(day + 1),
+        settlement_ref=f"f04-official-settlement-day-{day}",
     )
 
 

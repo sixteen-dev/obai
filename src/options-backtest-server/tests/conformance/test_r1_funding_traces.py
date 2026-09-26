@@ -111,6 +111,7 @@ def _cash_settle(state: LedgerState, level: Price) -> LedgerEntry:
         settlement={INDEX_ASSET: level},
         fees=lifecycle_fees(SCHEDULE, FeeEvent.CASH_SETTLEMENT, 2),
         settles_on=settle_day(EXPIRY_DAY + 1),
+        settlement_ref="r1-official-settlement",
     )
 
 

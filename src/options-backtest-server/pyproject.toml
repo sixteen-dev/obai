@@ -17,7 +17,8 @@ packages = ["src/options_backtest"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error"]
-addopts = "--cov=options_backtest --cov-branch --cov-fail-under=90"
+markers = ["lean: opt-in LEAN differential (needs LEAN_ROOT and a .NET SDK)"]
+addopts = '--cov=options_backtest --cov-branch --cov-fail-under=90 -m "not lean"'
 
 [tool.ruff]
 line-length = 100
@@ -68,4 +69,5 @@ dev = [
     "jsonschema>=4.26.0",
     "mypy>=1.19.1",
     "ruff>=0.15.7",
+    "quantlib>=1.43",
 ]

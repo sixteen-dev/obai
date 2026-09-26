@@ -20,6 +20,7 @@ from options_backtest.models.ledger import (
 from options_backtest.models.market import OptionType
 
 PUT = option(OptionType.PUT, "100")
+LONG_PUT = option(OptionType.PUT, "95")
 CALL = option(OptionType.CALL, "105")
 LATER = date(2026, 9, 25)
 
@@ -73,6 +74,7 @@ def test_a_missing_settlement_value_raises_instead_of_settling_at_zero() -> None
             settlement={},
             fees=(),
             settles_on=LATER,
+            settlement_ref="spx-official",
         )
     assert caught.value.instrument_ids == ("SPX",)
 
@@ -89,6 +91,7 @@ def test_contract_ids_must_be_a_tuple() -> None:
             settlement={"SPX": price("97")},
             fees=(),
             settles_on=LATER,
+            settlement_ref="spx-official",
         )
 
 
@@ -101,6 +104,7 @@ def _settle_put(state: LedgerState, at_ns: int) -> LedgerEntry:
         settlement={"SPX": price("97")},
         fees=(),
         settles_on=LATER,
+        settlement_ref="spx-official",
     )
 
 
@@ -138,3 +142,61 @@ def test_a_flat_same_expiry_contract_cannot_be_reopened_after_the_package_settle
 
     with pytest.raises(LedgerInvariantError, match="expir"):
         apply_entry(settled, reopen)
+
+
+def _settle_package(
+    state: LedgerState, contract_ids: tuple[str, ...], level: str, settlement_ref: object
+) -> LedgerEntry:
+    return book_cash_settlement(
+        state,
+        event_id="settle",
+        at_ns=EXPIRES_AT_NS,
+        contract_ids=contract_ids,
+        settlement={"SPX": price(level)},
+        fees=(),
+        settles_on=LATER,
+        settlement_ref=settlement_ref,  # type: ignore[arg-type]
+    )
+
+
+def test_the_entry_records_the_settlement_ref_as_its_only_input_ref() -> None:
+    state = trade(funded(), (PUT, -1, "2.00"))
+
+    entry = _settle_package(state, (PUT.contract_id,), "97", "spx-official-2026-09-21")
+
+    assert entry.input_refs == ("spx-official-2026-09-21",)
+
+
+def test_an_all_out_of_the_money_package_records_its_ref_though_postings_hide_the_value() -> None:
+    # ADR 0001 §11: every leg expires worthless at 120 and at 150, so both entries post the same
+    # cost reliefs and no cash flow; only input_refs names where the settlement value came from.
+    state = trade(funded(), (PUT, -1, "2.00"), (LONG_PUT, 1, "1.10"))
+    package = (PUT.contract_id, LONG_PUT.contract_id)
+
+    at_120 = _settle_package(state, package, "120", "spx-official-a")
+    at_150 = _settle_package(state, package, "150", "spx-official-b")
+    after = apply_entry(state, at_120)
+
+    assert at_120.postings == at_150.postings
+    assert {p.account.kind for p in at_120.postings} == {
+        AccountKind.OPTION_COST,
+        AccountKind.REALIZED_PNL,
+    }
+    assert (at_120.input_refs, at_150.input_refs) == (("spx-official-a",), ("spx-official-b",))
+    assert set(package) <= after.retired
+    assert not set(package) & set(after.lots)
+
+
+@pytest.mark.parametrize(
+    "settlement_ref",
+    [
+        pytest.param("", id="empty"),
+        pytest.param(None, id="none"),
+        pytest.param(("spx-official",), id="tuple"),
+    ],
+)
+def test_the_settlement_ref_must_be_a_non_empty_str(settlement_ref: object) -> None:
+    state = trade(funded(), (PUT, -1, "2.00"))
+
+    with pytest.raises(ValueError, match="settlement_ref"):
+        _settle_package(state, (PUT.contract_id,), "97", settlement_ref)
