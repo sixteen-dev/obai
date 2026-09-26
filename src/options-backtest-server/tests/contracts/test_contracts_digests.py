@@ -8,6 +8,10 @@ import pytest
 CONTRACTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CONTRACTS_DIR.parents[3]
 DESIGN_DIR = REPO_ROOT / "docs" / "design" / "options-backtesting-v3"
+PACKAGED_SCHEMA = (
+    CONTRACTS_DIR.parents[1] / "src" / "options_backtest" / "contracts" / "strategy.schema.json"
+)
+"""The copy the wheel ships and the capabilities payload returns (ADR 0003 §8, F1/F2/M2/M1)."""
 
 PINNED_SHA256 = {
     "example-strategy.json": "72983b66c2c91540594505fc784d3baeeba2df36b488f4333f670705fad18ae1",
@@ -42,3 +46,7 @@ def test_vendored_contract_matches_local_design_copy(name: str) -> None:
     if not DESIGN_DIR.is_dir():
         pytest.skip("docs/design/ is gitignored; the vendored copies are the versioned contract")
     assert (CONTRACTS_DIR / name).read_bytes() == (DESIGN_DIR / name).read_bytes()
+
+
+def test_packaged_schema_is_the_vendored_contract() -> None:
+    assert _sha256(PACKAGED_SCHEMA) == PINNED_SHA256["strategy.schema.json"]

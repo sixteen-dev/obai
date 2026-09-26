@@ -11,12 +11,13 @@ import pytest
 from options_backtest import ingest
 from options_backtest.errors import ErrorCode, SpecRejected
 from options_backtest.ingest import load_strategy, parse_spec
-from options_backtest.models.strategy import StrategySpec
+from options_backtest.models.strategy import Product, StrategySpec
 from options_backtest.models.strategy_checks import (
     CheckResult,
     PremiumDirection,
     ValidatedStrategy,
     check_strategy,
+    root_membership_issues,
 )
 from options_backtest.money import EXACT
 
@@ -199,6 +200,38 @@ def test_spxw_and_xsp_roots_are_both_supported() -> None:
     _section(document, "product")["allowed_option_roots"] = ["SPXW", "XSP"]
 
     assert _found(document) == []
+
+
+def test_root_membership_issues_checks_a_product_block_alone() -> None:
+    """The MCP validator runs it on a schema-rejected document (ADR 0003 §8, F1/F2/M2/M1)."""
+    document = _example()
+    _section(document, "product")["allowed_option_roots"] = ["XSP", "SPX", "SPY"]
+    spec = _spec(document)
+
+    issues = root_membership_issues(spec.product)
+
+    assert [(issue.code, issue.json_pointer) for issue in issues] == [
+        (ErrorCode.UNSUPPORTED_PRODUCT, "/product/allowed_option_roots/1"),
+        (ErrorCode.UNSUPPORTED_PRODUCT, "/product/allowed_option_roots/2"),
+    ]
+    assert tuple(issues) == check_strategy(spec).issues
+
+
+def test_root_membership_issues_is_empty_for_r1_roots() -> None:
+    product = Product.model_validate(
+        {
+            "underlying_symbol": "SPX",
+            "allowed_option_roots": ("SPXW", "XSP"),
+            "family": "us_european_pm_cash_index",
+        }
+    )
+
+    assert root_membership_issues(product) == []
+
+
+def test_root_membership_issues_requires_a_product() -> None:
+    with pytest.raises(TypeError, match="Product"):
+        root_membership_issues(_spec(_example()))  # type: ignore[arg-type]
 
 
 def test_a_second_target_dte_leg_is_an_invalid_selector() -> None:

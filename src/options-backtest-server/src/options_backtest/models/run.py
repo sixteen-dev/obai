@@ -16,7 +16,7 @@ from typing import Final
 
 from options_backtest.engine.fees import AssumedFlatFeeSchedule
 from options_backtest.errors import ErrorCode, Issue, SpecRejected, sorted_issues
-from options_backtest.models.strategy import StrategySpec
+from options_backtest.models.strategy import Product, StrategySpec
 from options_backtest.models.strategy_checks import ValidatedStrategy
 from options_backtest.money import Usd
 from options_backtest.reference.products import product_rules
@@ -104,11 +104,28 @@ def _policy_issues(spec: StrategySpec) -> list[Issue]:
     return issues
 
 
-def _root_issues(spec: StrategySpec) -> list[Issue]:
-    """Return an UNSUPPORTED_PRODUCT issue per root whose underlying is not the product's."""
-    underlying = spec.product.underlying_symbol
+def root_issues(product: Product) -> list[Issue]:
+    """Return an UNSUPPORTED_PRODUCT issue per root whose underlying is not the product's.
+
+    Design §9.1 item 1's deferred root check; public so the MCP validator can run it without a
+    manifest (ADR 0003 §1.1), on the product block alone (§8).
+
+    Args:
+        product: A product whose every root is an R1 root (``root_membership_issues`` is empty).
+
+    Returns:
+        The issues, at ``/product/allowed_option_roots/{i}``, in root order.
+
+    Raises:
+        TypeError: If ``product`` is not a ``Product``.
+        ValueError: If a root has no R1 product rules (``root_membership_issues`` names those).
+
+    """
+    if not isinstance(product, Product):
+        raise TypeError(f"root_issues product must be a Product, got {type(product).__name__}")
+    underlying = product.underlying_symbol
     issues: list[Issue] = []
-    for index, root in enumerate(spec.product.allowed_option_roots):
+    for index, root in enumerate(product.allowed_option_roots):
         rules_underlying = product_rules(root).underlying_id
         if rules_underlying == underlying:
             continue
@@ -172,7 +189,7 @@ def resolve(
 
     """
     _check_request(strategy, start_date, end_date, manifest_id)
-    issues = sorted_issues([*_policy_issues(strategy.spec), *_root_issues(strategy.spec)])
+    issues = sorted_issues([*_policy_issues(strategy.spec), *root_issues(strategy.spec.product)])
     if issues:
         raise SpecRejected(issues)
     policies = resolve_policies(strategy.spec)

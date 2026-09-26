@@ -17,6 +17,7 @@ from options_backtest.models.run import (
     Policies,
     resolve,
     resolve_policies,
+    root_issues,
 )
 from options_backtest.money import Usd
 
@@ -111,6 +112,27 @@ def test_resolve_rejects_a_root_whose_underlying_is_not_the_product_underlying()
     ]
 
 
+def test_root_issues_reports_a_root_of_another_underlying_at_its_index() -> None:
+    # Public for the MCP validator, which has no manifest to resolve against (ADR 0003 §1.1).
+    xsp_with_spxw = strategy(
+        product={"underlying_symbol": "XSP", "allowed_option_roots": ["XSP", "SPXW"]}
+    )
+
+    issues = root_issues(xsp_with_spxw.spec.product)
+    with pytest.raises(SpecRejected) as caught:
+        resolve(xsp_with_spxw, start_date=MON, end_date=WED, manifest_id=MANIFEST_ID)
+
+    assert [(issue.code, issue.json_pointer) for issue in issues] == [
+        (ErrorCode.UNSUPPORTED_PRODUCT, "/product/allowed_option_roots/1")
+    ]
+    assert "'SPXW' trades underlying 'SPX'" in issues[0].message
+    assert caught.value.issues == tuple(issues)
+
+
+def test_root_issues_is_empty_for_roots_of_the_product_underlying() -> None:
+    assert root_issues(strategy().spec.product) == []
+
+
 def test_resolve_accepts_xsp_on_its_own_underlying() -> None:
     xsp = strategy(product={"underlying_symbol": "XSP", "allowed_option_roots": ["XSP"]})
 
@@ -154,3 +176,5 @@ def test_resolve_refuses_arguments_of_the_wrong_type() -> None:
         resolve(validated, start_date=MON, end_date=WED, manifest_id=None)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="spec"):
         resolve_policies(document())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="product"):
+        root_issues(validated.spec)  # type: ignore[arg-type]
