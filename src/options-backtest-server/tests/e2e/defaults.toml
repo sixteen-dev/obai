@@ -1,0 +1,31 @@
+# Default synthetic market of every e2e scenario (ADR 0002 §11, §17 item 17).
+#
+# Every MarketSpec field is stated. A scenario's [market] keys replace these one for one.
+# Zero drift and zero volatility fix the index at index_start on every session (item 17):
+# spot is 5000.00 at every slot. Zero rates give DF = 1 exactly, so the forward equals spot.
+# The weeks 2024-03-04 to 2024-03-28 hold no US market holiday (Good Friday is 2024-03-29).
+# That keeps the LEAN scenarios L1-L3 (G01, G02, G05) on real non-holiday weeks.
+
+[market]
+seed = 1
+first_session = "2024-03-04"         # a Monday
+last_session = "2024-03-28"          # a Thursday; every window below ends before it
+holidays = []
+early_closes = []
+index_start = "5000"
+daily_drift = "0"
+daily_vol = "0"
+sigma = "0.18"
+rates = [[28, "0"], [91, "0"], [182, "0"]]
+roots = ["SPXW"]
+weekly_dtes = [11]                   # one expiry: 2024-03-04 + 11 days = 2024-03-15, a Friday
+strike_step = "5"
+strikes_each_side = 22               # strikes 4890 ... 5110; the five nearest spot are 4990 ... 5010
+tick = "0.05"
+half_spread_abs = "0.05"
+half_spread_rel = "0.02"
+bid_size = 50
+ask_size = 50
+premium_multiplier = "100"
+deliverable_units = "100"
+overrides = []

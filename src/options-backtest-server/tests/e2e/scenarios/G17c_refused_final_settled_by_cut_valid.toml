@@ -1,0 +1,183 @@
+# G17c: the final session is the expiry session. Its FINAL order is refused for funding at every
+# attempt, but cash settlement at that CUT extinguishes the package (C36): nothing is held after
+# the final session, so the run is valid and headline-eligible (owner decision 2).
+id = "G17c"
+proves = ["C36"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-15" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { account = { initial_cash_usd = "600.00", max_campaign_risk_fraction = 1, max_total_risk_fraction = 1 } } }
+
+[market]
+# defaults.toml unchanged; take-profit and stop-loss null.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# Final and expiry session: valid, wide quotes; the natural close costs 710 (as G06).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-15"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "4.00"
+ask = "7.50"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-15"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "0.40"
+ask = "1.60"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "settlement_pin"
+series = "SPX_PM"
+session = "2024-03-15"
+value = "4897.00"
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "388.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "INSUFFICIENT_CAPITAL", "EXIT_UNFILLED"]
+open_positions = []
+retired_contracts = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+derivation = """
+Conventions as G01, except initial cash 600.00 and both risk fractions 1 (as G06).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. end_policy
+liquidate_at_final_session; final session 2024-03-15 (also the expiry date).
+
+2024-03-04 DEC: entry as G06: D(1) = -90, fees 2; risk 414 <= 600; preview headroom
+  600 - 2 - 502 = 96 >= 0; limit -90. F1: fill at D = -90, fees 2.
+Account 2024-03-04: cash 600; receivable 90; payable 2; encumbrance 502; headroom 96.
+2024-03-05 OPEN: cash = 600 + 90 - 2 = 688; headroom = 688 - 502 = 186.
+2024-03-05 .. 2024-03-14: dte 10..1 > 0, held sessions < 252, no profit rules: hold.
+2024-03-15 DEC (final session): held under liquidate_at_final_session -> FINAL (whatever the
+  DEC quotes; market-style, no limit); legs P4900 +1, P4895 -1.
+2024-03-15 F1, F2, F3 (pins): fresh VALID quotes; D = 100*7.50 - 100*0.40 = 710; no limit;
+  capacity floor(min(50, 50)*0.10) = 5 >= 1; post-fill: CASH 688, PAYABLE 710 + 2 = 712, no
+  lots -> headroom = 688 - 712 = -24 < 0 -> INSUFFICIENT_CAPITAL (net_debit 710.00) at each
+  attempt; one INSUFFICIENT_CAPITAL warning (the order's first refusal); the F3 nonfill cancels
+  the order: EXIT_UNFILLED. The package is still held and expires today (no CLOSE quote).
+2024-03-15 CUT: SPX_PM 4897.00 (pin), s:SPX_PM:2024-03-15:c0: P4900 (q -1) pays
+  100*(4900 - 4897) = 300, P4895 (q +1) 0; net_cash -300, fees 0 -> PAYABLE[2024-03-18] 300;
+  both contracts retire; the entry carries input_refs (s:SPX_PM:2024-03-15:c0).
+Account 2024-03-15: cash 688; receivable 0; payable 300; encumbrance 0; headroom 388;
+  mid_nlv = natural_nlv = 688 - 300 = 388 (flat).
+End: the refused FINAL left nothing held after the final session, because settlement at its
+  CUT extinguished the package -> VALID, flat, headline-eligible; final_equity_usd =
+  mid_nlv(2024-03-15) = 388.
+2024-03-18 (settle-only): OPEN SETTLE_DUE: cash = 688 - 300 = 388; account cash 388, payable 0,
+  headroom 388, mid_nlv 388.
+Campaign c1: REALIZED_PNL[P4900] = -200 + 300 = +100, [P4895] = +110; realized_pnl = -210;
+  fees 2; net -212 = 388 - 600; SETTLED at 2024-03-15, exit_trigger settlement.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, INSUFFICIENT_CAPITAL (F1), EXIT_UNFILLED (F3).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F1"
+purpose = "final"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F2"
+purpose = "final"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F3"
+purpose = "final"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.settlements]]
+session = "2024-03-15"
+series = "SPX_PM"
+observation_id = "s:SPX_PM:2024-03-15:c0"
+value = "4897.00"
+contract_ids = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+net_cash = "-300.00"
+fees = "0.00"
+entry_input_refs = ["s:SPX_PM:2024-03-15:c0"]
+
+[expected.account."2024-03-04"]
+cash = "600.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "96.00"
+
+[expected.account."2024-03-05"]
+cash = "688.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "186.00"
+
+[expected.account."2024-03-15"]
+cash = "688.00"
+receivable = "0.00"
+payable = "300.00"
+encumbrance = "0.00"
+headroom = "388.00"
+mid_nlv = "388.00"
+natural_nlv = "388.00"
+
+[expected.account."2024-03-18"]
+cash = "388.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "388.00"
+mid_nlv = "388.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-15"
+basis = "90.00"
+realized_pnl = "-210.00"
+fees = "2.00"
+rolls = 0
+outcome = "settled"
+exit_trigger = "settlement"

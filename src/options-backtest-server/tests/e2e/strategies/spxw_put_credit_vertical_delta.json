@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "E2E golden: SPXW put credit vertical, delta-selected short put (synthetic fixture, no performance implied)",
+  "product": {
+    "underlying_symbol": "SPX",
+    "allowed_option_roots": ["SPXW"],
+    "family": "us_european_pm_cash_index"
+  },
+  "structure": "vertical",
+  "legs": [
+    {
+      "leg_id": "short_put",
+      "side": "sell",
+      "option_type": "put",
+      "ratio": 1,
+      "expiry_selection": {"method": "target_dte", "target_dte": 10, "min_dte": 9, "max_dte": 11},
+      "strike_selection": {"method": "delta", "target_delta": -0.30, "tolerance": 0.005}
+    },
+    {
+      "leg_id": "long_put",
+      "side": "buy",
+      "option_type": "put",
+      "ratio": 1,
+      "expiry_selection": {"method": "same_as", "anchor_leg_id": "short_put"},
+      "strike_selection": {"method": "strike_offset", "anchor_leg_id": "short_put", "offset_price_units": "-5"}
+    }
+  ],
+  "clock_profile": "scheduled_daily_v1",
+  "entry": {
+    "schedule": {"frequency": "weekly", "weekday": 1, "holiday_policy": "next_session_same_week"},
+    "all_conditions": []
+  },
+  "exits": {
+    "take_profit": null,
+    "stop_loss": null,
+    "exit_dte": 0,
+    "max_holding_sessions": 2
+  },
+  "roll": {"mode": "disabled"},
+  "account": {
+    "currency": "USD",
+    "initial_cash_usd": "10000.00",
+    "policy": "fully_funded_v1",
+    "max_campaign_risk_fraction": 0.10,
+    "max_total_risk_fraction": 0.20,
+    "max_concurrent_campaigns": 1
+  },
+  "sizing": {"method": "fixed_contracts", "contracts": 1},
+  "liquidity": {
+    "min_open_interest": 0,
+    "min_cumulative_volume": 0,
+    "max_absolute_spread_price_units": "0.50",
+    "max_relative_spread": 0.25,
+    "require_positive_bid_for_entry": true
+  },
+  "execution": {
+    "model": "natural_package_limit_v1",
+    "participation_fraction": 0.10,
+    "max_contracts_per_order": 10,
+    "price_allowance_usd": "0.00",
+    "fill_attempts": 3,
+    "quantity_policy": "all_or_none_complete_packages"
+  },
+  "fee_schedule_id": "illustrative_flat_1usd_per_contract_side_v1",
+  "funding_policy_id": "illustrative_zero_interest_no_borrow_v1",
+  "comparison_policy_id": "historical_usd_cash_comparison_v1",
+  "end_policy": "liquidate_at_final_session"
+}

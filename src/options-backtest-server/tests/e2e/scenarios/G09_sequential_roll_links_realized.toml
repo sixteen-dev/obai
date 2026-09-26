@@ -1,0 +1,272 @@
+# G09: a sequential roll closes the first generation at a loss. The replacement opens at the
+# next decision, and the replacement's take-profit is judged on the campaign's cumulative P&L
+# against the original basis. The exit session proves both links (see the derivation).
+id = "G09"
+proves = ["rolls"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-13" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { roll = { mode = "sequential", trigger_dte = 8, max_rolls = 1, max_campaign_sessions = 20 }, exits = { take_profit = { basis = "initial_credit", fraction = 0.5 } } } }
+
+[market]
+weekly_dtes = [11, 17]   # 2024-03-15 and 2024-03-21, as G08a
+
+# c1.g1: entry 2024-03-04; take-profit is live, so every held DEC is pinned.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["DEC"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["DEC"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# Roll close 2024-03-07 at a loss.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-07"
+slots = ["DEC", "F1"]
+bid = "1.20"
+ask = "1.40"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-07"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# c1.g2: replacement 2024-03-08 on 2024-03-21.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4900"
+session = "2024-03-08"
+slots = ["DEC", "F1"]
+bid = "2.40"
+ask = "2.60"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4895"
+session = "2024-03-08"
+slots = ["DEC", "F1"]
+bid = "1.10"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4900"
+session = "2024-03-11"
+slots = ["DEC"]
+bid = "0.80"
+ask = "1.00"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4895"
+session = "2024-03-11"
+slots = ["DEC"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4900"
+session = "2024-03-12"
+slots = ["DEC", "F1"]
+bid = "0.70"
+ask = "0.90"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4895"
+session = "2024-03-12"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10052.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01. Roll: sequential, trigger_dte 8, max_rolls 1, max_campaign_sessions 20;
+take_profit 0.5 x initial_credit; stop_loss null.
+A = SPXW:2024-03-15:P:{4900,4895}, B = SPXW:2024-03-21:P:{4900,4895}.
+Take-profit threshold = 0.5 * basis; basis = 90 (the campaign's entry) -> 45.
+
+c1.g1 2024-03-04: ENTRY on A: D -90, fees 2, basis 90, entry_debit_incl_fees -88. Fill F1.
+2024-03-05 and 2024-03-06 DEC: close D = 120 - 40 = 80; pnl = 0 + 88 - 80 - 2 = 6 < 45;
+  dte 10, 9 > 8: hold. (2024-03-05 OPEN cash = 10088.)
+2024-03-07 DEC: close D = 100*1.40 - 100*0.40 = 100; pnl = 88 - 100 - 2 = -14 < 45 (no exit);
+  RollTrigger dte 8 <= 8, rolls 0 < 1 -> ROLL_CLOSE, limit 100. Fill F1: D 100, fees 2.
+  realized_prior = generation P&L(c1.g1) = -(-(200 - 140) + (110 - 40)) - (2 + 2) = -10 - 4 = -14.
+Account 2024-03-07: cash 10088; payable 102; encumbrance 0; headroom 9986.
+2024-03-08 OPEN: cash 9986. DEC: ROLL_OPEN on B (dte 13, as G08a): D(1) = -240 + 120 = -120,
+  fees 2, limit -120. Fill F1 -> c1.g2; rolls 1; basis stays 90; realized_prior stays -14;
+  entry_debit_incl_fees(c1.g2) = -120 + 2 = -118.
+Account 2024-03-08: cash 9986; receivable 120; payable 2; encumbrance 502; headroom 9482.
+2024-03-11 OPEN: cash = 9986 + 120 - 2 = 10104. DEC: close D = 100*1.00 - 100*0.40 = 60;
+  pnl = -14 + 118 - 60 - 2 = 42 < 45 -> hold (dte 10 > 8).
+  [An unlinked P&L, 118 - 60 - 2 = 56 >= 45, would exit here.]
+Account 2024-03-11: cash 10104; receivable 0; payable 0; encumbrance 502; headroom 9602.
+2024-03-12 DEC: close D = 100*0.90 - 100*0.40 = 50; pnl = -14 + 118 - 50 - 2 = 52 >= 45 -> EXIT
+  (TAKE_PROFIT; dte 9 > 8, so no roll trigger); limit 50. Fill F1: D 50, fees 2.
+  [The replacement's own basis 120 gives 0.5*120 = 60 > 52, and would hold here.]
+Account 2024-03-12: cash 10104; payable 52; encumbrance 0; headroom 10052; mid_nlv 10052.
+2024-03-13 (final; Wednesday, flat): OPEN cash = 10104 - 52 = 10052; final_equity_usd = 10052.
+Campaign c1: g1 REALIZED_PNL +10, g2 -(240 - 90) + (120 - 40) = -70; realized_pnl = -(10 - 70) = 60;
+  fees 8; net 52, which is the exit decision's pnl 52 because the fill is at the DEC naturals.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-07"
+slot = "F1"
+purpose = "roll_close"
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.40"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "100.00"
+fees = "2.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-08"
+slot = "F1"
+purpose = "roll_open"
+legs = [["SPXW:2024-03-21:P:4900", -1, "2.40"], ["SPXW:2024-03-21:P:4895", 1, "1.20"]]
+net_debit = "-120.00"
+fees = "2.00"
+campaign_id = "c1.g2"
+
+[[expected.fills]]
+session = "2024-03-12"
+slot = "F1"
+purpose = "exit"
+legs = [["SPXW:2024-03-21:P:4900", 1, "0.90"], ["SPXW:2024-03-21:P:4895", -1, "0.40"]]
+net_debit = "50.00"
+fees = "2.00"
+limit = "50.00"
+campaign_id = "c1.g2"
+
+[expected.account."2024-03-07"]
+cash = "10088.00"
+payable = "102.00"
+encumbrance = "0.00"
+headroom = "9986.00"
+
+[expected.account."2024-03-08"]
+cash = "9986.00"
+receivable = "120.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9482.00"
+
+[expected.account."2024-03-11"]
+cash = "10104.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9602.00"
+
+[expected.account."2024-03-12"]
+cash = "10104.00"
+payable = "52.00"
+encumbrance = "0.00"
+headroom = "10052.00"
+mid_nlv = "10052.00"
+
+[expected.account."2024-03-13"]
+cash = "10052.00"
+mid_nlv = "10052.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1", "c1.g2"]
+start_session = "2024-03-04"
+end_session = "2024-03-12"
+basis = "90.00"
+realized_pnl = "60.00"
+fees = "8.00"
+rolls = 1
+outcome = "closed"
+exit_trigger = "take_profit"

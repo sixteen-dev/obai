@@ -1,0 +1,170 @@
+# G06: the expiry-session close costs 710, above the width reserve of 500, and cash is tight.
+# Every attempt is refused for funding (INSUFFICIENT_CAPITAL); the exposure is kept and settles
+# at CUT, with the settlement payable covered by the width reserve.
+id = "G06"
+proves = ["C37"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-18" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { account = { initial_cash_usd = "600.00", max_campaign_risk_fraction = 1, max_total_risk_fraction = 1 } } }
+
+[market]
+# defaults.toml unchanged; take-profit and stop-loss null.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# Expiry session: TIME_EXIT with valid, wide quotes. The natural close costs 710, above the
+# 500 width. The package mid, 5.75 - 1.00 = 4.75, stays inside [0, 5], as in
+# R1Campaign.CanaryCloseAboveWidth.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-15"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "4.00"
+ask = "7.50"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-15"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "0.40"
+ask = "1.60"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "settlement_pin"
+series = "SPX_PM"
+session = "2024-03-15"
+value = "4897.00"
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "388.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "INSUFFICIENT_CAPITAL", "EXIT_UNFILLED"]
+open_positions = []
+retired_contracts = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+derivation = """
+Conventions as G01, except initial cash 600.00 and both risk fractions 1.
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04 DEC: entry as G01: D(1) = -200 + 110 = -90, fees 2; risk 412 + 2 = 414 <= 1 * 600;
+  preview headroom = 600 - 2 - (500 + 2) = 96 >= 0; limit -90.
+2024-03-04 F1: fill at D = -90, fees 2; post-fill headroom 96 >= 0.
+Account 2024-03-04: cash 600; receivable 90; payable 2; encumbrance 502; headroom 96.
+2024-03-05 OPEN: cash = 600 + 90 - 2 = 688; headroom = 688 - 502 = 186 at every later DEC.
+2024-03-15 DEC (expiry, not final): dte 0 <= 0 -> TIME_EXIT; both closing sides usable (P4900 buy
+  at ask 7.50, P4895 sell at bid 0.40) -> EXIT; close D = 100*7.50 - 100*0.40 = 750 - 40 = 710
+  (> width reserve 5*100 = 500); limit 710 + 0.00 = 710. Package mid = (4.00 + 7.50)/2 -
+  (0.40 + 1.60)/2 = 5.75 - 1.00 = 4.75, inside [0, 5], so mid NLV = 688 + 100*(-5.75 + 1.00)
+  = 213 >= 0. Closing orders pass no spread gate.
+2024-03-15 F1, F2, F3: D = 710 <= 710; capacity floor(min(50, 50)*0.10) = 5 >= 1; post-fill state:
+  CASH 688, PAYABLE = -(710 + 2), no lots -> headroom = 688 - 712 - 0 = -24 < 0
+  -> INSUFFICIENT_CAPITAL (net_debit 710.00) at each attempt; one INSUFFICIENT_CAPITAL warning (the
+  order's first refusal); the F3 nonfill cancels: EXIT_UNFILLED. The position is kept.
+2024-03-15 CUT: SPX_PM 4897.00 (pin): P4900 pays 100*(4900 - 4897) = 300, P4895 0; net_cash -300,
+  fees 0 -> PAYABLE[2024-03-18] 300; headroom = 688 - 300 - 0 = 388 >= 0 (the width reserve covered it).
+Account 2024-03-15: cash 688; receivable 0; payable 300; encumbrance 0; headroom 388; mid_nlv 388.
+2024-03-18 (final; Monday): OPEN cash = 688 - 300 = 388; ENTRY_SKIPPED (FINAL_SESSION).
+  Account: cash 388, headroom 388, mid_nlv 388; final_equity_usd = 388.
+Campaign c1: realized_pnl = -(+100 + 110) = -210 (as G02); fees 2; net -212 = 388 - 600.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, INSUFFICIENT_CAPITAL (F1), EXIT_UNFILLED (F3).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F1"
+purpose = "exit"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F2"
+purpose = "exit"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.nonfills]]
+session = "2024-03-15"
+slot = "F3"
+purpose = "exit"
+reason = "INSUFFICIENT_CAPITAL"
+net_debit = "710.00"
+
+[[expected.settlements]]
+session = "2024-03-15"
+series = "SPX_PM"
+observation_id = "s:SPX_PM:2024-03-15:c0"
+value = "4897.00"
+contract_ids = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+net_cash = "-300.00"
+fees = "0.00"
+
+[expected.account."2024-03-04"]
+cash = "600.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "96.00"
+
+[expected.account."2024-03-05"]
+cash = "688.00"
+encumbrance = "502.00"
+headroom = "186.00"
+
+[expected.account."2024-03-15"]
+cash = "688.00"
+receivable = "0.00"
+payable = "300.00"
+encumbrance = "0.00"
+headroom = "388.00"
+mid_nlv = "388.00"
+
+[expected.account."2024-03-18"]
+cash = "388.00"
+headroom = "388.00"
+mid_nlv = "388.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-15"
+basis = "90.00"
+realized_pnl = "-210.00"
+fees = "2.00"
+rolls = 0
+outcome = "settled"
+exit_trigger = "settlement"

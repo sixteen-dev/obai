@@ -1,0 +1,156 @@
+# G19: XSP, the tenth-size index option (§17 items 15 and 48). The index sits at the SPX value
+# 4,512.37, so the XSP value is 451.237 exactly; the generated PM settlement rounds it half up to
+# 451.24, and a short in-the-money put settles on 455 - 451.24 = 3.76 points x multiplier 100.
+id = "G19"
+proves = ["divisor", "rounding"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-18" }
+strategy = { file = "xsp_put_credit_vertical.json" }
+
+[market]
+roots = ["XSP"]
+index_start = "4512.37"   # SPX; XSP = 451.237 at every slot (zero drift and vol)
+strike_step = "1"
+strikes_each_side = 10    # XSP strikes 441 ... 461 around 451 = 1 * round_half_up(451.237)
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "XSP:2024-03-15:P:455"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "7.50"
+ask = "7.60"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "XSP:2024-03-15:P:448"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "4.10"
+ask = "4.20"
+bid_size = 50
+ask_size = 50
+
+# Expiry session: the long put's closing sell meets bid 0 (NO_BID); the TIME_EXIT close defers
+# and the package settles on the generated XSP_PM value (item 40; no SettlementPin, item 48).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "XSP:2024-03-15:P:448"
+session = "2024-03-15"
+slots = ["DEC"]
+bid = "0.00"
+ask = "0.05"
+bid_size = 0
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "9952.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_DEFERRED"]
+open_positions = []
+retired_contracts = ["XSP:2024-03-15:P:448", "XSP:2024-03-15:P:455"]
+derivation = """
+XSP: underlying XSP, series XSP_PM, divisor 10, 2 places ROUND_HALF_UP, multiplier 100, units 100
+(item 15). S_i = Decimal(float(4512.37) * exp(0)) = 4512.37 on every session; the XSP
+INDEX_VALUE is S_i / 10 = 451.237 exactly (item 18). Zero rates: DF = 1. $1.00 per contract side,
+$0 settlement; T+1. P455 = XSP:2024-03-15:P:455, P448 = XSP:2024-03-15:P:448. Strike grid:
+centre 1 * round_half_up(4512.37 / 10 / 1) = 451, strikes 441 ... 461; the five nearest the
+spot are 449 ... 453 (untouched). take_profit and stop_loss null; exit_dte 0; weekly Mondays.
+
+2024-03-04 DEC (Monday, flat): expiry 2024-03-15 (dte 11 in [9, 13]).
+  short_put: |Decimal(455.0 / 451.237) - 1.0083| = |1.0083393... - 1.0083| ~ 3.9e-5 <= 0.0005;
+  454 (1.006123...) and 456 (1.010555...) miss by ~0.0022. long_put: 455 - 7 = 448.
+  Spreads 0.10 and 0.10 <= 0.50; bids > 0.
+  D(1) = 100*(-1*7.50) + 100*(+1*4.20) = -750 + 420 = -330; Q*D = 330 > 0; fees 2.
+  Payoff min (S <= 448) = 100*(-(455 - S) + (448 - S)) = -700; entry_cash = 330 - 2 = 328;
+  risk = -(-700 + 328) + 2*1*1.00 = 372 + 2 = 374 <= 0.10 * 10000 = 1000.
+  preview headroom = 10000 - 2 - (700 + 2) = 9296 >= 0; capacity floor(50 * 0.10) = 5 >= 1.
+  limit = -330.
+2024-03-04 F1 (pins = DEC): fill at D = -330, fees 2; basis 330.
+Account 2024-03-04: cash 10000; receivable 330; payable 2; encumbrance 700 + 2 = 702;
+  headroom = 10000 - 2 - 702 = 9296.
+2024-03-05 OPEN: cash = 10000 + 330 - 2 = 10328. Account 2024-03-05: cash 10328, receivable 0,
+  payable 0, encumbrance 702, headroom 9626.
+2024-03-05 .. 2024-03-14: dte 10..1 > 0, held sessions < 252: hold.
+2024-03-15 DEC (expiry, not final): dte 0 -> TIME_EXIT; P448's closing sell needs a bid, its
+  DEC quote is NO_BID -> EXIT_DEFERRED (warning), no order. No CLOSE quote (expiry session).
+2024-03-15 CUT: generated XSP_PM for 2024-03-15, s:XSP_PM:2024-03-15:c0, value
+  settlement_price(XSP, 4512.37) = (4512.37 / 10 = 451.237) rounded half up to 2 places = 451.24.
+  P455 (q -1): -100 * max(455 - 451.24, 0) = -100 * 3.76 = -376.00 (unrounded 451.237 would give
+  -376.30); P448 (q +1): max(448 - 451.24, 0) = 0. net_cash -376.00 -> PAYABLE[2024-03-18];
+  settlement fees 0. Both contracts retire; the entry carries input_refs (s:XSP_PM:2024-03-15:c0).
+Account 2024-03-15: cash 10328; receivable 0; payable 376; encumbrance 0; headroom 9952;
+  mid_nlv = natural_nlv = 10328 - 376 = 9952 (flat).
+2024-03-18 (final; Monday, scheduled): OPEN cash = 10328 - 376 = 9952; ENTRY_SKIPPED
+  (FINAL_SESSION). Account: cash 9952, payable 0, headroom 9952, mid_nlv 9952.
+final_equity_usd = 9952.
+Campaign c1: REALIZED_PNL[P455] = -750 + 376 = -374, REALIZED_PNL[P448] = +420 (cost lost);
+  realized_pnl = -(-374 + 420) = -46; fees 2; net -48 = 9952 - 10000.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_DEFERRED (2024-03-15).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["XSP:2024-03-15:P:455", -1, "7.50"], ["XSP:2024-03-15:P:448", 1, "4.20"]]
+net_debit = "-330.00"
+fees = "2.00"
+limit = "-330.00"
+campaign_id = "c1.g1"
+
+[[expected.settlements]]
+session = "2024-03-15"
+series = "XSP_PM"
+observation_id = "s:XSP_PM:2024-03-15:c0"
+value = "451.24"
+contract_ids = ["XSP:2024-03-15:P:448", "XSP:2024-03-15:P:455"]
+net_cash = "-376.00"
+fees = "0.00"
+entry_input_refs = ["s:XSP_PM:2024-03-15:c0"]
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "330.00"
+payable = "2.00"
+encumbrance = "702.00"
+headroom = "9296.00"
+
+[expected.account."2024-03-05"]
+cash = "10328.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "702.00"
+headroom = "9626.00"
+
+[expected.account."2024-03-15"]
+cash = "10328.00"
+receivable = "0.00"
+payable = "376.00"
+encumbrance = "0.00"
+headroom = "9952.00"
+mid_nlv = "9952.00"
+natural_nlv = "9952.00"
+
+[expected.account."2024-03-18"]
+cash = "9952.00"
+payable = "0.00"
+headroom = "9952.00"
+mid_nlv = "9952.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-15"
+basis = "330.00"
+realized_pnl = "-46.00"
+fees = "2.00"
+rolls = 0
+outcome = "settled"
+exit_trigger = "settlement"
