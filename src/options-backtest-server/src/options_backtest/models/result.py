@@ -11,11 +11,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 
 from options_backtest.data.records import FidelityClass
 from options_backtest.errors import Issue
 from options_backtest.money import Usd
+
+_FIXED_BASES: Final = (
+    ("execution_basis", "synthetic_natural_package"),
+    ("calibration_status", "uncalibrated"),
+    ("cost_basis", "assumed_schedule"),
+    ("assignment_basis", "not_applicable"),
+)
+_END_POLICIES: Final = frozenset({"liquidate_at_final_session", "mark_open_positions"})
 
 
 class CalculationStatus(StrEnum):
@@ -65,6 +73,17 @@ class RunWarning:
     session_date: date
     message: str
     refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        """Refuse a non-enum code, a non-date session or an empty message."""
+        if not isinstance(self.code, WarningCode):
+            raise TypeError(f"RunWarning.code must be a WarningCode, got {self.code!r}")
+        if type(self.session_date) is not date:
+            raise TypeError(f"RunWarning.session_date must be a date, got {self.session_date!r}")
+        if not isinstance(self.message, str) or not self.message:
+            raise ValueError("RunWarning.message must be a non-empty str")
+        if not isinstance(self.refs, tuple):
+            raise TypeError(f"RunWarning.refs must be a tuple, got {self.refs!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,3 +160,94 @@ class SimulationResult:
     invalid_reasons: tuple[Issue, ...]
     headline_eligible: bool
     provenance: ResultProvenance
+
+    def __post_init__(self) -> None:
+        """Refuse a result WP3 cannot defend (ADR 0002 §6, §7 α, §17 items 4, 32).
+
+        Raises:
+            TypeError: If the status, fidelity or headline flag has the wrong type.
+            ValueError: If a fixed basis differs, the window, positions, equity, headline or
+                invalid reasons contradict the status, or a SYNTHETIC_FIXTURE result does not
+                open with SYNTHETIC_FIXTURE_NOT_HISTORICAL.
+
+        """
+        self._check_types()
+        self._check_window()
+        self._check_positions()
+        self._check_validity()
+        self._check_disclosure()
+
+    def _check_types(self) -> None:
+        if not isinstance(self.calculation_status, CalculationStatus):
+            raise TypeError(
+                f"calculation_status must be a CalculationStatus: {self.calculation_status!r}"
+            )
+        if not isinstance(self.data_fidelity, FidelityClass):
+            raise TypeError(f"data_fidelity must be a FidelityClass: {self.data_fidelity!r}")
+        if type(self.headline_eligible) is not bool:
+            raise TypeError(f"headline_eligible must be a bool: {self.headline_eligible!r}")
+        for field, fixed in _FIXED_BASES:
+            if getattr(self, field) != fixed:
+                raise ValueError(f"{field} is always {fixed!r} in WP3: {getattr(self, field)!r}")
+        if self.end_policy not in _END_POLICIES:
+            raise ValueError(f"end_policy must be one of {sorted(_END_POLICIES)}")
+
+    def _check_window(self) -> None:
+        start, end = self.window_requested
+        first, last = self.window_simulated
+        if start > end:
+            raise ValueError(f"window_requested is inverted: {self.window_requested}")
+        if first != start or not first <= last <= end:
+            raise ValueError(
+                f"window_simulated {self.window_simulated} must start at {start} and end "
+                f"within the requested window ending {end}"
+            )
+        stopped_early = self.calculation_status is CalculationStatus.INVALID
+        if last != end and not stopped_early:
+            raise ValueError(
+                f"window_simulated ends {last}, but a {self.calculation_status} run simulates "
+                f"through {end}"
+            )
+
+    def _check_positions(self) -> None:
+        ids = [contract_id for contract_id, _ in self.open_positions]
+        if ids != sorted(set(ids)) or any(qty == 0 for _, qty in self.open_positions):
+            raise ValueError(
+                "open_positions must be distinct contracts sorted by id with nonzero "
+                f"quantities: {self.open_positions}"
+            )
+        valid = self.calculation_status is CalculationStatus.VALID
+        if valid and self.open_positions and self.end_policy != "mark_open_positions":
+            raise ValueError(
+                "a valid run ends holding open_positions only under mark_open_positions "
+                "(OpenAtEndIsNotValid)"
+            )
+
+    def _check_validity(self) -> None:
+        valid = self.calculation_status is CalculationStatus.VALID
+        if valid == bool(self.invalid_reasons):
+            raise ValueError(
+                f"invalid_reasons must be empty exactly when the run is valid: "
+                f"{self.calculation_status} with {len(self.invalid_reasons)} reasons"
+            )
+        if valid != (self.final_equity_usd is not None):
+            raise ValueError(
+                f"final_equity_usd is stated exactly when the run is valid: "
+                f"{self.calculation_status} with {self.final_equity_usd}"
+            )
+        flat_and_valid = valid and not self.open_positions
+        if self.headline_eligible != flat_and_valid:
+            raise ValueError(
+                "headline_eligible must hold exactly when the run is valid and flat "
+                "(HeadlineOnlyIfValid)"
+            )
+
+    def _check_disclosure(self) -> None:
+        if self.data_fidelity is not FidelityClass.SYNTHETIC_FIXTURE:
+            return
+        first = self.warnings[0].code if self.warnings else None
+        if first is not WarningCode.SYNTHETIC_FIXTURE_NOT_HISTORICAL:
+            raise ValueError(
+                "a SYNTHETIC_FIXTURE result's first warning must be "
+                f"SYNTHETIC_FIXTURE_NOT_HISTORICAL, got {first}"
+            )

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The LEAN probe algorithm (ADR 0002 §12 step 3, §16 decision 3), compiled by tests/lean/runner.py
+    against a built LEAN checkout: dotnet build -p:LeanBin=$LEAN_ROOT/Launcher/bin/Debug.
+    The LEAN assemblies are referenced, never copied: the launcher loads its own. Python.Runtime
+    is referenced only because QCAlgorithm's overloads take PyObject (CS0012 without it).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(LeanBin)/QuantConnect.*.dll" Private="false" />
+    <Reference Include="$(LeanBin)/Python.Runtime.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="RequireLeanBin" BeforeTargets="ResolveAssemblyReferences" Condition="'$(LeanBin)' == ''">
+    <Error Text="Pass -p:LeanBin=$LEAN_ROOT/Launcher/bin/Debug so the LEAN assemblies resolve." />
+  </Target>
+</Project>

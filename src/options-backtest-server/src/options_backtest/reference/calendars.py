@@ -12,9 +12,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from itertools import pairwise
 from typing import Final
 
 from options_backtest.data.records import TradingSession
+from options_backtest.models.market import require_type
 from options_backtest.models.strategy import DailySchedule, MonthlySchedule, WeeklySchedule
 
 
@@ -33,6 +35,9 @@ class Slot(StrEnum):
 FILL_SLOTS: Final = (Slot.F1, Slot.F2, Slot.F3)
 QUOTE_SLOTS: Final = (Slot.DEC, Slot.F1, Slot.F2, Slot.F3, Slot.CLOSE)
 """Slots at which the generator observes the chain and the index."""
+_MINUTE_NS: Final = 60 * 10**9
+_DECISION_LEAD_NS: Final = 15 * _MINUTE_NS
+"""DEC is the close minus 15 minutes; F1-F3 follow it at one-minute steps."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,8 +71,24 @@ def slot_times(session: TradingSession) -> Slots:
     Returns:
         Its slots, computed from ``close_ns`` and ``cutoff_ns`` only.
 
+    Raises:
+        TypeError: If ``session`` is not a ``TradingSession``.
+        ValueError: If the session closes 15 minutes or less after it opens (DEC would not
+            follow OPEN).
+
     """
-    raise NotImplementedError
+    require_type(session, TradingSession, "slot_times session")
+    dec = session.close_ns - _DECISION_LEAD_NS
+    if dec <= session.open_ns:
+        raise ValueError(f"session {session.session_date} closes within 15 minutes of its open")
+    return Slots(
+        dec=dec,
+        f1=dec + _MINUTE_NS,
+        f2=dec + 2 * _MINUTE_NS,
+        f3=dec + 3 * _MINUTE_NS,
+        close=session.close_ns,
+        cut=session.cutoff_ns,
+    )
 
 
 def slot_instant(session: TradingSession, slot: Slot) -> int:
@@ -80,8 +101,22 @@ def slot_instant(session: TradingSession, slot: Slot) -> int:
     Returns:
         The instant, UTC nanoseconds.
 
+    Raises:
+        TypeError: If ``slot`` is not a ``Slot`` or ``session`` not a ``TradingSession``.
+
     """
-    raise NotImplementedError
+    require_type(slot, Slot, "slot_instant slot")
+    slots = slot_times(session)
+    instants = {
+        Slot.OPEN: session.open_ns,
+        Slot.DEC: slots.dec,
+        Slot.F1: slots.f1,
+        Slot.F2: slots.f2,
+        Slot.F3: slots.f3,
+        Slot.CLOSE: slots.close,
+        Slot.CUT: slots.cut,
+    }
+    return instants[slot]
 
 
 def sessions_between(
@@ -97,8 +132,15 @@ def sessions_between(
     Returns:
         The sessions; () when ``start > end`` or none falls inside.
 
+    Raises:
+        TypeError: If a bound is not a ``date`` or a row not a ``TradingSession``.
+        ValueError: If ``sessions`` is not sorted by date without repeats.
+
     """
-    raise NotImplementedError
+    _require_table(sessions)
+    _require_day(start, "sessions_between start")
+    _require_day(end, "sessions_between end")
+    return tuple(session for session in sessions if start <= session.session_date <= end)
 
 
 def next_session(sessions: Sequence[TradingSession], session_date: date) -> TradingSession | None:
@@ -111,24 +153,14 @@ def next_session(sessions: Sequence[TradingSession], session_date: date) -> Trad
     Returns:
         The session; None when the table has none later.
 
-    """
-    raise NotImplementedError
-
-
-def previous_session(
-    sessions: Sequence[TradingSession], session_date: date
-) -> TradingSession | None:
-    """Return the last table session strictly before ``session_date``.
-
-    Args:
-        sessions: Session table.
-        session_date: Any date.
-
-    Returns:
-        The session; None when the table has none earlier.
+    Raises:
+        TypeError: If ``session_date`` is not a ``date`` or a row not a ``TradingSession``.
+        ValueError: If ``sessions`` is not sorted by date without repeats.
 
     """
-    raise NotImplementedError
+    _require_table(sessions)
+    _require_day(session_date, "next_session session_date")
+    return next((s for s in sessions if s.session_date > session_date), None)
 
 
 def dte(session_date: date, expiry_date: date) -> int:
@@ -141,8 +173,13 @@ def dte(session_date: date, expiry_date: date) -> int:
     Returns:
         ``(expiry_date - session_date).days``; negative after expiry.
 
+    Raises:
+        TypeError: If either argument is not exactly a ``date``.
+
     """
-    raise NotImplementedError
+    _require_day(session_date, "dte session_date")
+    _require_day(expiry_date, "dte expiry_date")
+    return (expiry_date - session_date).days
 
 
 def scheduled(
@@ -166,7 +203,59 @@ def scheduled(
         Whether an entry is scheduled.
 
     Raises:
-        ValueError: If ``session`` is not in ``sessions``.
+        TypeError: If ``schedule`` is not one of the three schedules.
+        ValueError: If ``session`` is not in ``sessions`` or ``sessions`` is not sorted by date
+            without repeats.
 
     """
-    raise NotImplementedError
+    _require_table(sessions)
+    if session not in sessions:
+        raise ValueError(f"session {session.session_date} is not in the session table")
+    match schedule:
+        case DailySchedule():
+            return True
+        case WeeklySchedule():
+            return _weekly_entry(schedule.weekday, session, sessions) == session
+        case MonthlySchedule():
+            return _monthly_entry(schedule.session_ordinal, session, sessions) == session
+    raise TypeError(f"unsupported entry schedule {type(schedule).__name__}")
+
+
+def _weekly_entry(
+    weekday: int, session: TradingSession, sessions: Sequence[TradingSession]
+) -> TradingSession | None:
+    """Return the first session of ``session``'s ISO week whose ISO weekday is >= ``weekday``."""
+    week = session.session_date.isocalendar()[:2]
+    return next(
+        (
+            s
+            for s in sessions
+            if s.session_date.isocalendar()[:2] == week and s.session_date.isoweekday() >= weekday
+        ),
+        None,
+    )
+
+
+def _monthly_entry(
+    ordinal: int, session: TradingSession, sessions: Sequence[TradingSession]
+) -> TradingSession | None:
+    """Return the ``ordinal``-th table session of ``session``'s calendar month, if any."""
+    month = (session.session_date.year, session.session_date.month)
+    in_month = [s for s in sessions if (s.session_date.year, s.session_date.month) == month]
+    return in_month[ordinal - 1] if ordinal <= len(in_month) else None
+
+
+def _require_table(sessions: Sequence[TradingSession]) -> None:
+    for session in sessions:
+        require_type(session, TradingSession, "sessions item")
+    for previous, current in pairwise(sessions):
+        if current.session_date <= previous.session_date:
+            raise ValueError(
+                "sessions must be sorted by date without repeats, got "
+                f"{previous.session_date} then {current.session_date}"
+            )
+
+
+def _require_day(value: object, field: str) -> None:
+    if type(value) is not date:
+        raise TypeError(f"{field} must be exactly date, got {type(value).__name__}")

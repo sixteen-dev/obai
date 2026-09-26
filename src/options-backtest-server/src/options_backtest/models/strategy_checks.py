@@ -64,8 +64,8 @@ _LEG_COUNTS: Final = MappingProxyType(
     {"single_long": 1, "vertical": 2, "iron_condor": 4, "long_straddle": 2, "long_strangle": 2}
 )
 # Roles in ascending strike order.
-_CONDOR_ROLES: Final = (("buy", "put"), ("sell", "put"), ("sell", "call"), ("buy", "call"))
-_LONG_PUT_CALL_ROLES: Final = (("buy", "put"), ("buy", "call"))
+CONDOR_ROLES: Final = (("buy", "put"), ("sell", "put"), ("sell", "call"), ("buy", "call"))
+LONG_PUT_CALL_ROLES: Final = (("buy", "put"), ("buy", "call"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,7 +345,7 @@ def _check_structure(spec: StrategySpec, positions: _Positions) -> list[Issue]:
         return _check_vertical(legs)
     if structure == "long_straddle":
         return _check_straddle(legs, positions)
-    roles = _CONDOR_ROLES if structure == "iron_condor" else _LONG_PUT_CALL_ROLES
+    roles = CONDOR_ROLES if structure == "iron_condor" else LONG_PUT_CALL_ROLES
     return _check_ordered_roles(structure, legs, roles, positions)
 
 
@@ -400,9 +400,9 @@ def _check_ordered_roles(
 
 
 def _check_straddle(legs: Sequence[Leg], positions: _Positions) -> list[Issue]:
-    indices = _role_indices(legs, _LONG_PUT_CALL_ROLES)
+    indices = _role_indices(legs, LONG_PUT_CALL_ROLES)
     if indices is None:
-        return [_composition_issue("long_straddle", _LONG_PUT_CALL_ROLES)]
+        return [_composition_issue("long_straddle", LONG_PUT_CALL_ROLES)]
     put, call = indices
     if put not in positions or call not in positions:
         return []  # unresolved legs: the anchor-graph issue already rejects the spec
