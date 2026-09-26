@@ -86,6 +86,7 @@ def book_cash_settlement(  # noqa: PLR0913 — signature fixed by ADR 0001 §11 
     settlement: Mapping[str, Price],
     fees: tuple[FeeLine, ...],
     settles_on: date,
+    settlement_ref: str,
 ) -> LedgerEntry:
     """Settle one campaign's whole held cash-settled package at one expiry, in one entry.
 
@@ -98,15 +99,21 @@ def book_cash_settlement(  # noqa: PLR0913 — signature fixed by ADR 0001 §11 
         settlement: Official settlement price per deliverable asset.
         fees: Fee lines, computed by the caller over the package's Σ|quantity|.
         settles_on: Settlement cash date.
+        settlement_ref: Reference of the source of every value in ``settlement`` (the
+            settlement observation, or the manifest entry that supplied it); kept in
+            ``input_refs``, since an all-out-of-the-money package's postings do not reveal it.
 
     Returns:
         The settlement entry; applying it retires every contract in ``contract_ids``.
 
     Raises:
+        ValueError: If ``settlement_ref`` is not a non-empty str.
         LedgerInvariantError: If ``contract_ids`` is not exactly such a package.
         MissingMarkError: If ``settlement`` lacks a deliverable asset; never settled at zero.
 
     """
+    if not isinstance(settlement_ref, str) or not settlement_ref:
+        raise ValueError(f"settlement_ref must be a non-empty str, got {settlement_ref!r}")
     package = _package_terms(state, contract_ids)
     campaign_id = _require_whole_package(state, package)
     amounts: list[tuple[AccountKey, Usd]] = [*fee_amounts(fees, settles_on)]
@@ -133,7 +140,7 @@ def book_cash_settlement(  # noqa: PLR0913 — signature fixed by ADR 0001 §11 
         quantity_events=tuple(events),
         contracts=package,
         fee_lines=fees,
-        input_refs=(),
+        input_refs=(settlement_ref,),
     )
 
 

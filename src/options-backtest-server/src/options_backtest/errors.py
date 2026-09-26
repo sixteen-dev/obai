@@ -6,7 +6,10 @@ from enum import StrEnum
 
 
 class ErrorCode(StrEnum):
-    """Machine-readable error codes: the §15.2 required list plus the ADR 0001 §4 additions."""
+    """Machine-readable error codes.
+
+    The §15.2 required list plus the ADR 0001 §4 and ADR 0002 §1 additions.
+    """
 
     UNSUPPORTED_STRUCTURE = "UNSUPPORTED_STRUCTURE"
     UNSUPPORTED_PRODUCT = "UNSUPPORTED_PRODUCT"
@@ -31,6 +34,8 @@ class ErrorCode(StrEnum):
     SCHEMA_VIOLATION = "SCHEMA_VIOLATION"
     UNSUPPORTED_SCHEMA_VERSION = "UNSUPPORTED_SCHEMA_VERSION"
     INVALID_STRATEGY_RULE = "INVALID_STRATEGY_RULE"
+    SELECTION_BUDGET_EXCEEDED = "SELECTION_BUDGET_EXCEEDED"
+    MISSING_VALUATION = "MISSING_VALUATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +119,15 @@ class SpecRejected(Exception):
 
 class LedgerInvariantError(Exception):
     """A ledger entry or state transition would break a ledger invariant."""
+
+
+class SimulationInvariantError(Exception):
+    """An engine invariant broke during a simulation; the job fails (ADR 0002 §1, §10).
+
+    Raised for engine defects, such as negative funding headroom after a commit or a ledger
+    invariant broken by the simulator's own entries. It is never a user-facing invalid run:
+    invalid runs are reported through the result's ``invalid_reasons``, not by this error.
+    """
 
 
 class UnsupportedLifecycle(Exception):

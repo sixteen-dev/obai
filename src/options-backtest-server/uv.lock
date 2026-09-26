@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-18T00:08:35.554802613Z"
+exclude-newer = "2026-09-19T00:09:43.221444914Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -487,6 +487,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "quantlib" },
     { name = "ruff" },
 ]
 
@@ -500,6 +501,7 @@ dev = [
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "quantlib", specifier = ">=1.43" },
     { name = "ruff", specifier = ">=0.15.7" },
 ]
 
@@ -657,6 +659,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/51/a849f96e117386044471c8ec2bd6cfebacda285da9525c9106aeb28da671/pytest_cov-7.1.0.tar.gz", hash = "sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2", size = 55592, upload-time = "2026-03-21T20:11:16.284Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/7a/d968e294073affff457b041c2be9868a40c1c71f4a35fcc1e45e5493067b/pytest_cov-7.1.0-py3-none-any.whl", hash = "sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678", size = 22876, upload-time = "2026-03-21T20:11:14.438Z" },
+]
+
+[[package]]
+name = "quantlib"
+version = "1.43"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/32/3902ec027c3f08d2d36091adf8a77b542b85284f04be2c25ff69cbf22f7b/quantlib-1.43-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:53bf822aef061d6264260350156cda2ac1aa27db1a8a1443ac8a2f81d283ecce", size = 16274846, upload-time = "2026-07-14T08:40:18.401Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/a7/0cfbfd7b0fdf1e87e93ee41c0754c3e73cf466b13000a40bcb2925695db5/quantlib-1.43-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:03dc31c2e4b68b458a47937047c6704ae30c51fff229aa7a009a4c9c7077590a", size = 15652633, upload-time = "2026-07-14T08:40:21.236Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/a5/bce840ba2f7cfb7b5f712a265ece39f30116f8f50a67106a397b464824c8/quantlib-1.43-cp314-cp314t-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:70e2bd469d155a3198438e28a89bdd9d6dcc7e260c756c5de7e761f3ccda4cb2", size = 19130123, upload-time = "2026-07-14T08:40:24.29Z" },
+    { url = "https://files.pythonhosted.org/packages/34/44/5088b72c62e7a0dbabf8799fe3618d44e6fd9fae288e67def65fad13c9a2/quantlib-1.43-cp314-cp314t-manylinux_2_24_i686.manylinux_2_28_i686.whl", hash = "sha256:03f027bab14891a9b599417eacef3116353e385194dd3300dc801166c92bf71c", size = 23993395, upload-time = "2026-07-14T08:40:28.147Z" },
+    { url = "https://files.pythonhosted.org/packages/96/b7/c805d73c7f8fc1dc54236789609549a2504bdf48a0f22d7c70a0bba3bfd3/quantlib-1.43-cp314-cp314t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2c1fb5bcaf4f20704559c79c280a20585387fbe9aa4534d82421c15a1cb4e17f", size = 20292447, upload-time = "2026-07-14T08:40:31.576Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/d4/5ee03f13c164b20d07a6a638750f51ebe3ddbcbf53839e57836fe3049e79/quantlib-1.43-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:ef6cde83c3beff278ed651196b6b802ddf749544d2c6c253cb059b19f39fab90", size = 20743601, upload-time = "2026-07-14T08:40:34.48Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/03/d2402b975079d43cb81dd2218e25eae0344fb72b49d9c0450736f37e4c45/quantlib-1.43-cp314-cp314t-musllinux_1_2_i686.whl", hash = "sha256:577c98ee38e3cafe564daeb22fb9e8628e2fba782eb7afa0134b1e2a6eccb720", size = 25974137, upload-time = "2026-07-14T08:40:37.779Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/5d/e5ef19a18d420087a17721db36193fa25dfabcb018a847b866871ff03d61/quantlib-1.43-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:d019ad14efacbec732253c65d1a33f97f22b0a9e0e236e0cb0278cea2a5769cf", size = 21756542, upload-time = "2026-07-14T08:40:41.123Z" },
+    { url = "https://files.pythonhosted.org/packages/30/7d/a452636cc9f850194a7027d07855b2aa25ceaaa1acdf01ca123b2378451b/quantlib-1.43-cp314-cp314t-win32.whl", hash = "sha256:6ee4295d0432d9ab0f0529ba97eda0c80da61cab134576fee62a4ca407cd85c0", size = 12160830, upload-time = "2026-07-14T08:40:44.117Z" },
+    { url = "https://files.pythonhosted.org/packages/61/07/75974f40158bf354d737032c5c03de39dd23d60cca0f9cb7014bd5c250b3/quantlib-1.43-cp314-cp314t-win_amd64.whl", hash = "sha256:c7b33959457889b6392a7c203a7c6730a301d192dcc60d6839cbbfcfc4336cd0", size = 13177407, upload-time = "2026-07-14T08:40:46.581Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/c4/b9b978248104e7ac7b0fb459c98d48fe3ce6137446cee56cfe0faee3aaf0/quantlib-1.43-cp39-abi3-macosx_10_13_x86_64.whl", hash = "sha256:cf113464f75500c3f67ec7a6865b9dee1082650b37943a45974d83d9b29a32b1", size = 16190279, upload-time = "2026-07-14T08:40:49.653Z" },
+    { url = "https://files.pythonhosted.org/packages/be/20/15f75418eeee6646869815ccd1a666ed15b8a7eda6367837a78b93c3079f/quantlib-1.43-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:85d70b28778afca84b9b6ae74ef05a1069b2dca00e80fc74aa8ddf438259dc0c", size = 15553889, upload-time = "2026-07-14T08:40:52.641Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/57/c6b320e72e145de00a124a2af1e001e318873bb9560093a465b791ff0e30/quantlib-1.43-cp39-abi3-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3c0ec04adb19660a029d2095609f5a8add1541b1d2bb14a990665738c911770e", size = 19071666, upload-time = "2026-07-14T08:40:55.682Z" },
+    { url = "https://files.pythonhosted.org/packages/70/00/6a6358ef7b9d9fd97c8dfddb30f719a5304ace171676ba54176826393b2c/quantlib-1.43-cp39-abi3-manylinux_2_24_i686.manylinux_2_28_i686.whl", hash = "sha256:9d028659a2557d549766bcebb346a9cacae0b3514bf205ddefadb64f9330bbb4", size = 23725989, upload-time = "2026-07-14T08:40:58.898Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/39/2df89a3f4fe6668535d7c56f29ee646f7642e46b7fc6a9db1707804c7520/quantlib-1.43-cp39-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:35cd2c178aa9a30c3b7a9ca050536037c3185afd6728e6a1cf2085adef54464e", size = 20376095, upload-time = "2026-07-14T08:41:02.15Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/c4/4aa663f627e01d6814cba8ec721bd5f3df42906f7b07785a13f2061c540d/quantlib-1.43-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f21eaf656ea5bd26e023a402eda81a6b66338c7a3d1f3dfef3894f05312f7ac6", size = 20680647, upload-time = "2026-07-14T08:41:05.358Z" },
+    { url = "https://files.pythonhosted.org/packages/77/a1/dabec80c079c7369b20709f1f4a98ce832d02ffb7daa9bee62714cbe2b48/quantlib-1.43-cp39-abi3-musllinux_1_2_i686.whl", hash = "sha256:c2d1680e1bb28bc58fe9d5cd1a966382cc490264368cc77300c9c9a381416d7e", size = 25689090, upload-time = "2026-07-14T08:41:08.65Z" },
+    { url = "https://files.pythonhosted.org/packages/00/81/37e8df4623b470fbded9241c1d99973863fbc0913cfe9e717f313063dbf7/quantlib-1.43-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f9c620de81c8bea76b7bd82a190fdf0393f18812a2c2529351fabc7338b6b3c1", size = 21839501, upload-time = "2026-07-14T08:41:12.093Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/46/e7ab24781ad101616705d08dc69900080bf8897962f7fc26d9439c0eac24/quantlib-1.43-cp39-abi3-win32.whl", hash = "sha256:70adba78db6bbb72b5b608af866c2fb3d3e440dc54bee9eb68d757e31c1c2e90", size = 11872353, upload-time = "2026-07-14T08:41:14.815Z" },
+    { url = "https://files.pythonhosted.org/packages/72/46/a2aa4a78e26bbb53c5d70ec73745d117519b3df6bc9fd342e2b1738e1724/quantlib-1.43-cp39-abi3-win_amd64.whl", hash = "sha256:61fcb95e8d7e15dfd23e83104d24ce28d45582a645e7dbce0c248216bf51913b", size = 12908304, upload-time = "2026-07-14T08:41:17.36Z" },
 ]
 
 [[package]]

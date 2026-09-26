@@ -212,6 +212,7 @@ def test_a_package_funded_with_zero_slack_stays_funded_through_a_fee_paying_sett
         settlement={"SPX": price(level)},
         fees=fees,
         settles_on=EXPIRY_SETTLES_ON,
+        settlement_ref="spx-official",
     )
     settled = apply_entry(kept, entry)
     final = _settle_due(settled, EXPIRY_SETTLES_ON)

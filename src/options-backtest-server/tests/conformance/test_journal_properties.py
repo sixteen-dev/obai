@@ -185,6 +185,7 @@ def _cash_settle(
         settlement={INDEX_ASSET: level},
         fees=lifecycle_fees(SCHEDULE, FeeEvent.CASH_SETTLEMENT, contracts),
         settles_on=settle_day(day + 1),
+        settlement_ref=f"official-settlement-day-{day}",
     )
 
 
