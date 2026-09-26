@@ -1,0 +1,125 @@
+# G17a: under liquidate_at_final_session the final session's FINAL order finds no fresh quote
+# for the short put at F1, F2 or F3 (C36). The order is cancelled, the position is still held at
+# the end of the window, and the run is INCOMPLETE: no final equity, no headline.
+id = "G17a"
+proves = ["C36"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# Final session: the short put has no observation after DEC until CLOSE.
+[[market.overrides]]
+kind = "quote_drop"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["F1", "F2", "F3"]
+
+[expected]
+calculation_status = "incomplete"
+headline_eligible = false
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_UNFILLED"]
+open_positions = [["SPXW:2024-03-15:P:4895", 1], ["SPXW:2024-03-15:P:4900", -1]]
+retired_contracts = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. take_profit and stop_loss null,
+exit_dte 0, max_holding_sessions 252, end_policy liquidate_at_final_session; final 2024-03-06.
+
+2024-03-04: entry as G01: D = -90, fees 2, limit -90, basis 90.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash 10088. DEC: dte 10, held session 2: no trigger -> hold.
+2024-03-06 DEC (final session): held under liquidate_at_final_session -> FINAL, submitted at
+  DEC (15:45) whatever the quotes; market-style (no limit); packages 1; legs P4900 +1, P4895 -1.
+2024-03-06 F1: P4900 (first in leg order) has no F1 observation; its latest visible one is the
+  DEC quote, observed 15:45, not strictly after the submission instant 15:45 -> NO_OBSERVATION
+  (every leg passes check 1 before check 2; no net_debit is computed). F2, F3: likewise ->
+  NO_OBSERVATION; the F3 nonfill cancels the order: ORDER_CANCELLED, EXIT_UNFILLED (warning).
+2024-03-06 CLOSE: both legs are marked from their generated CLOSE quotes (fresh, VALID or NO_BID).
+Account 2024-03-06: cash 10088; receivable 0; payable 0; encumbrance 502; headroom 9586.
+End: a position is held after the final window session under liquidate_at_final_session ->
+  INCOMPLETE (UNSUPPORTED_ACCOUNT_STATE "incomplete_liquidation..."); final_equity null; no
+  headline. No dues are outstanding, so no settle-only session follows.
+  open_positions, sorted by contract id: [(P4895, +1), (P4900, -1)]. Nothing retired.
+Campaign c1: INCOMPLETE, end_session and exit_trigger null; basis 90, realized_pnl 0, fees 2.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_UNFILLED (2024-03-06 F3).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.nonfills]]
+session = "2024-03-06"
+slot = "F1"
+purpose = "final"
+reason = "NO_OBSERVATION"
+contract = "SPXW:2024-03-15:P:4900"
+
+[[expected.nonfills]]
+session = "2024-03-06"
+slot = "F2"
+purpose = "final"
+reason = "NO_OBSERVATION"
+contract = "SPXW:2024-03-15:P:4900"
+
+[[expected.nonfills]]
+session = "2024-03-06"
+slot = "F3"
+purpose = "final"
+reason = "NO_OBSERVATION"
+contract = "SPXW:2024-03-15:P:4900"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-06"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+basis = "90.00"
+realized_pnl = "0.00"
+fees = "2.00"
+rolls = 0
+outcome = "incomplete"

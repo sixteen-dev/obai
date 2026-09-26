@@ -1,0 +1,244 @@
+# G24: a weekly Monday schedule over a Monday holiday (§9.1 item 10). The 2024-03-11 entry moves
+# to Tuesday 2024-03-12, the next session of the same week; the final session, Monday 2024-03-18,
+# is scheduled but opens nothing. The first campaign's credit, 1.00, is below its 2.00 of fees
+# per fill: the suite's R1Campaign.CanaryFeeExceedsCredit state, incidental to the claim.
+id = "G24"
+proves = ["§9.1 item 10"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-18" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { max_holding_sessions = 2 } } }
+
+[market]
+holidays = ["2024-03-11"]  # a Monday: no session
+weekly_dtes = [11, 20]     # 2024-03-15; 2024-03-24 (Sunday) moves back to Friday 2024-03-22
+tick = "0.01"              # the 2024-03-04 pins are cent prices
+
+# 2024-03-04: a tiny credit, D = -1.00.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "0.03"
+ask = "0.04"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "0.01"
+ask = "0.02"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.01"
+ask = "0.02"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.01"
+ask = "0.02"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-12: the moved Monday entry, on the 2024-03-22 expiry.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:P:4900"
+session = "2024-03-12"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:P:4895"
+session = "2024-03-12"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:P:4900"
+session = "2024-03-13"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:P:4895"
+session = "2024-03-13"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10002.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+m = 100; $1.00 per contract side, $0 settlement; T+1 (next table session); zero rates, DF 1;
+S = 5000.00. Sessions: weekdays from 2024-03-04 except the holiday 2024-03-11. Expiries
+2024-03-15 and 2024-03-22. Weekly schedule: weekday 1 (Monday), holiday_policy
+next_session_same_week. max_holding_sessions 2; take_profit and stop_loss null.
+
+2024-03-04 DEC (Monday, flat): expiry 2024-03-15 (dte 11; 2024-03-22 has dte 18, out).
+  short_put 4900 (moneyness 0.98), long_put 4895, as G01. Spreads 0.01 pass the absolute gate
+  (0.50); bids 0.03 and 0.01 > 0. D(1) = 100*(-0.03) + 100*0.02 = -1; Q*D = 1 > 0; fees 2.
+  risk = -(-500 + (1 - 2)) + 2 = 503 <= 1000; preview headroom 10000 - 2 - 502 = 9496; capacity
+  5; limit -1. F1 (pins): fill at D = -1, fees 2; basis 1 < Fee 2 (fees of one fill).
+Account 2024-03-04: cash 10000; receivable 1; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash = 10000 + 1 - 2 = 9999. DEC: held session 2 >= 2 -> TIME_EXIT; close
+  D = 100*0.02 (buy P4900 at ask) - 100*0.01 (sell P4895 at bid) = 1; limit 1. F1: fill at D = 1,
+  fees 2; post-fill headroom = 9999 - 3 = 9996.
+Account 2024-03-05: cash 9999; receivable 0; payable 1 + 2 = 3; encumbrance 0; headroom 9996;
+  mid_nlv 9996.
+2024-03-06 OPEN: cash 9996. 2024-03-06 .. 2024-03-08: unscheduled, flat.
+2024-03-11: holiday, not a session. The week's Monday entry moves to the next session of the
+  same week, Tuesday 2024-03-12.
+2024-03-12 DEC (scheduled by the holiday policy, flat, not final): expiries 2024-03-15 (dte 3,
+  out) and 2024-03-22 (dte 10, in [9, 13]). SPXW:2024-03-22:P:4900 short, P:4895 long;
+  D(1) = -200 + 110 = -90, fees 2; risk 414 <= 0.10 * 9996; preview headroom
+  9996 - 2 - 502 = 9492; limit -90. F1: fill at D = -90, fees 2; basis 90.
+Account 2024-03-12: cash 9996; receivable 90; payable 2; encumbrance 502; headroom 9492.
+2024-03-13 OPEN: cash = 9996 + 90 - 2 = 10084. DEC: held session 2 -> TIME_EXIT; close D = 80;
+  limit 80. F1: fill at D = 80, fees 2; post-fill headroom 10084 - 82 = 10002.
+Account 2024-03-13: cash 10084; receivable 0; payable 82; encumbrance 0; headroom 10002;
+  mid_nlv 10002.
+2024-03-14 OPEN: cash 10002. 2024-03-15: unscheduled, flat; nothing held expires.
+2024-03-18 (final; Monday, scheduled, flat): ENTRY_SKIPPED (FINAL_SESSION): no entry on the
+  final session. final_equity_usd = 10002.
+Campaign c1: REALIZED_PNL[P4900] = -(3 - 2) = -1, [P4895] = +(2 - 1) = +1; realized_pnl 0;
+  fees 4; net -4. Campaign c2: realized_pnl 10, fees 4, net 6. Total 10002 - 10000 = 2.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only (a holiday-moved entry discloses nothing).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "0.03"], ["SPXW:2024-03-15:P:4895", 1, "0.02"]]
+net_debit = "-1.00"
+fees = "2.00"
+limit = "-1.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", 1, "0.02"], ["SPXW:2024-03-15:P:4895", -1, "0.01"]]
+net_debit = "1.00"
+fees = "2.00"
+limit = "1.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-12"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-22:P:4900", -1, "2.00"], ["SPXW:2024-03-22:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c2.g1"
+
+[[expected.fills]]
+session = "2024-03-13"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-22:P:4900", 1, "1.20"], ["SPXW:2024-03-22:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+campaign_id = "c2.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "1.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "9999.00"
+receivable = "0.00"
+payable = "3.00"
+encumbrance = "0.00"
+headroom = "9996.00"
+mid_nlv = "9996.00"
+
+[expected.account."2024-03-12"]
+cash = "9996.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9492.00"
+
+[expected.account."2024-03-13"]
+cash = "10084.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10002.00"
+mid_nlv = "10002.00"
+
+[expected.account."2024-03-18"]
+cash = "10002.00"
+payable = "0.00"
+headroom = "10002.00"
+mid_nlv = "10002.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "1.00"
+realized_pnl = "0.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"
+
+[[expected.campaigns]]
+campaign_id = "c2"
+generations = ["c2.g1"]
+start_session = "2024-03-12"
+end_session = "2024-03-13"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"

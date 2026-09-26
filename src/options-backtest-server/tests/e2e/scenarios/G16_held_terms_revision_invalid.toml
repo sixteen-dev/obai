@@ -1,0 +1,86 @@
+# G16: a held contract's terms are revised (C21). The long put's deliverable changes from 100
+# to 50 index units at the next session's open; R1 models no corporate action, so the run is
+# invalidated at that OPEN, after the session's dues settle and before any decision.
+id = "G16"
+proves = ["C21"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# SPXW:2024-03-15:P:4895@v1 ends at 2024-03-05's open; @v2 (deliverable 50 units) starts then.
+[[market.overrides]]
+kind = "terms_revision"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+deliverable_units = "50"
+
+[expected]
+calculation_status = "invalid"
+headline_eligible = false
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04: entry as G01 on P4895@v1 (100 units): D = -90, fees 2, limit -90, basis 90.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN 1: the 90 receivable and 2 payable are due -> SETTLE_DUE (seq 1): cash 10088.
+2024-03-05 OPEN 1: P4895 is held and a new version of its terms, @v2 (50 units), is effective
+  from this open -> INVALIDATED (UNSUPPORTED_CORPORATE_ACTION, seq 2). The loop stops: no
+  decision, no mark, no 2024-03-05 SNAPSHOT, no 2024-03-06 session.
+Result: invalid, not headline-eligible, final_equity null.
+Campaign c1: INCOMPLETE, end_session and exit_trigger null; basis 90, realized_pnl 0, fees 2.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+basis = "90.00"
+realized_pnl = "0.00"
+fees = "2.00"
+rolls = 0
+outcome = "incomplete"

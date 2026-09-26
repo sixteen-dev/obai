@@ -1,0 +1,185 @@
+# G10: invalid quotes are never rescued by a model price. A crossed quote at the exit decision
+# defers the exit. The next session's exit order meets a zero ask (QUOTE_INVALID) at F1 and a
+# zero bid on its sell leg (NO_SIDE) at F2, and fills at F3.
+id = "G10"
+proves = ["C08"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-07" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { max_holding_sessions = 2 } } }
+
+[market]
+# defaults.toml unchanged. TIME_EXIT from held session 2 (2024-03-05) needs no quote to trigger.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05 DEC: the short put (closed by a buy) is CROSSED: bid 1.30 > ask 1.20.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "1.30"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-06: valid DEC and F2/F3 quotes for the short put; F1 has a zero ask (ZERO_ASK).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["DEC", "F2", "F3"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["F1"]
+bid = "0.00"
+ask = "0.00"
+bid_size = 0
+ask_size = 0
+
+# The long put (closed by a sell) is valid at DEC, F1 and F3; at F2 its bid is 0 (NO_BID).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["DEC", "F1", "F3"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["F2"]
+bid = "0.00"
+ask = "0.50"
+bid_size = 0
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_DEFERRED"]
+open_positions = []
+derivation = """
+Conventions as G01; max_holding_sessions 2; take_profit and stop_loss null.
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04: entry as G01: D -90, fees 2 (held session 1). 2024-03-05 OPEN cash = 10088.
+2024-03-05 DEC: held session 2 >= 2 -> TIME_EXIT. The P4900 closing buy needs VALID/LOCKED/NO_BID;
+  its DEC quote is CROSSED (bid 1.30 > ask 1.20) -> no quote_ok -> EXIT_DEFERRED (warning).
+  No order, no model-price rescue. The position is held (CLOSE marks from generated quotes).
+Account 2024-03-05: cash 10088; receivable 0; payable 0; encumbrance 502; headroom 9586.
+2024-03-06 DEC: held session 3 >= 2 -> TIME_EXIT; DEC quotes valid -> EXIT;
+  close D = 100*1.20 - 100*0.40 = 80; limit 80.
+2024-03-06 F1: every leg has a fresh quote observed after DEC; P4900 (first in leg order) has
+  ask 0 -> ZERO_ASK status -> QUOTE_INVALID on P4900; no net_debit is computed.
+2024-03-06 F2: P4900 VALID, ask 1.20 > 0, size 50; P4895 bid 0 -> NO_BID, a status the check
+  accepts, but its used side (the bid, ratio -1) has price 0 -> NO_SIDE on P4895.
+2024-03-06 F3: both VALID; D = 100*1.20 - 100*0.40 = 80 <= 80; capacity 5 >= 1; post-fill
+  headroom = 10088 - 82 = 10006 >= 0 -> fill; fees 2. No EXIT_UNFILLED: the order filled.
+Account 2024-03-06: cash 10088; payable 82; encumbrance 0; headroom 10006; mid_nlv 10006.
+2024-03-07 (final; Thursday, flat): OPEN cash = 10088 - 82 = 10006; final_equity_usd 10006.
+Campaign c1: realized_pnl = -(-(200 - 120) + (110 - 40)) = 10; fees 4; exit_trigger time_exit.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_DEFERRED (2024-03-05).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+
+[[expected.fills]]
+session = "2024-03-06"
+slot = "F3"
+purpose = "exit"
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+
+[[expected.nonfills]]
+session = "2024-03-06"
+slot = "F1"
+purpose = "exit"
+reason = "QUOTE_INVALID"
+contract = "SPXW:2024-03-15:P:4900"
+
+[[expected.nonfills]]
+session = "2024-03-06"
+slot = "F2"
+purpose = "exit"
+reason = "NO_SIDE"
+contract = "SPXW:2024-03-15:P:4895"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[expected.account."2024-03-06"]
+cash = "10088.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-03-07"]
+cash = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-06"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"

@@ -1,0 +1,146 @@
+# G20: risk_budget sizing counts down from its cap (§8 item 6). Three packages pass the risk
+# test and the preview headroom, but the short put's displayed bid size allows only two, so the
+# entry is sized at two: the decision capacity binds, not the budget.
+id = "G20"
+proves = ["sizing"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical_risk_budget.json", patch = { exits = { take_profit = { basis = "initial_credit", fraction = 0.05 } } } }
+
+[market]
+# defaults.toml unchanged.
+
+# The sold leg's bid size is 25: floor(25 * 0.10) = 2 packages at most.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 25
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10012.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. Sizing risk_budget,
+max_contracts 3, max_contracts_per_order 10; max_campaign_risk_fraction 0.20;
+participation 0.10; take_profit 0.05 of initial credit.
+
+2024-03-04 DEC: selection as G01 (P4900 short, P4895 long). Sizing counts down from
+  min(3, 10) = 3; mid NLV = CASH + ΣRECEIVABLE + ΣPAYABLE = 10000 (flat).
+  n = 3: D(3) = 3*(-200 + 110) = -270; fees(3) = 6; payoff min = 3*(-500) = -1500;
+    risk = -(-1500 + (270 - 6)) + 2*3*1.00 = 1236 + 6 = 1242 <= 0.20 * 10000 = 2000;
+    preview headroom = 10000 - 6 - (1500 + 6) = 8488 >= 0;
+    capacity = floor(min(25 (P4900 bid), 50 (P4895 ask)) * 0.10) = floor(2.5) = 2 < 3 -> fails.
+  n = 2: D(2) = -180; fees(2) = 4; risk = -(-1000 + 176) + 4 = 828 <= 2000; preview headroom
+    = 10000 - 4 - (1000 + 4) = 8992 >= 0; capacity 2 >= 2 -> n = 2; limit = -180 + 0.00.
+2024-03-04 F1 (pins = DEC): D = -180 <= -180; capacity 2 >= 2; post-fill headroom 8992 -> fill:
+  2 packages, legs P4900 -2 @ 2.00, P4895 +2 @ 1.10; net_debit -180.00, fees 4.00; basis 180.
+Account 2024-03-04: cash 10000; receivable 180; payable 4; encumbrance 2*500 + 4 = 1004;
+  headroom = 10000 - 4 - 1004 = 8992.
+2024-03-05 OPEN: cash = 10000 + 180 - 4 = 10176.
+2024-03-05 DEC: close D(2) = 2*(100*1.20 - 100*0.40) = 160; exit fees 4;
+  entry_debit_incl_fees = -180 + 4 = -176; LiquidationPnL = 0 + 176 - 160 - 4 = 12
+  >= 0.05 * 180 = 9 -> EXIT (TAKE_PROFIT), packages 2, limit 160.
+2024-03-05 F1: D = 160 <= 160; capacity floor(50 * 0.10) = 5 >= 2; post-fill headroom
+  = 10176 - 164 = 10012 -> fill: net_debit 160.00, fees 4.00.
+Account 2024-03-05: cash 10176; receivable 0; payable 164; encumbrance 0; headroom 10012;
+  mid_nlv 10012.
+2024-03-06 (final; flat, unscheduled): OPEN cash = 10176 - 164 = 10012; final_equity 10012.
+Campaign c1: REALIZED_PNL[P4900] = -(400 - 240) = -160, [P4895] = +(220 - 80) = +140;
+  realized_pnl = 20; fees 8; net 12 = 10012 - 10000.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 2
+legs = [["SPXW:2024-03-15:P:4900", -2, "2.00"], ["SPXW:2024-03-15:P:4895", 2, "1.10"]]
+net_debit = "-180.00"
+fees = "4.00"
+limit = "-180.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 2
+legs = [["SPXW:2024-03-15:P:4900", 2, "1.20"], ["SPXW:2024-03-15:P:4895", -2, "0.40"]]
+net_debit = "160.00"
+fees = "4.00"
+limit = "160.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "180.00"
+payable = "4.00"
+encumbrance = "1004.00"
+headroom = "8992.00"
+
+[expected.account."2024-03-05"]
+cash = "10176.00"
+receivable = "0.00"
+payable = "164.00"
+encumbrance = "0.00"
+headroom = "10012.00"
+mid_nlv = "10012.00"
+
+[expected.account."2024-03-06"]
+cash = "10012.00"
+payable = "0.00"
+headroom = "10012.00"
+mid_nlv = "10012.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "180.00"
+realized_pnl = "20.00"
+fees = "8.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "take_profit"

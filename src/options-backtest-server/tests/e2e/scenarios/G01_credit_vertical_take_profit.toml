@@ -1,0 +1,155 @@
+# G01: a credit put vertical taken off at the naturals by take-profit. Its numbers are F01's:
+# cash 10,000, then 10,088 after the entry settles, then 10,006 after the exit settles.
+id = "G01"
+proves = ["C10"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { take_profit = { basis = "initial_credit", fraction = 0.05 } } } }
+
+[market]
+# defaults.toml unchanged: spot 5000.00 at every slot, DF 1, one expiry 2024-03-15.
+
+# 2024-03-04 (Monday, scheduled): DEC selects and sizes, F1 fills, CLOSE marks (NLVs stated).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1", "CLOSE"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1", "CLOSE"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05: DEC decides take-profit and sets the exit limit, F1 fills.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions: m = 100; fee $1.00 per contract per traded side, $0 settlement; premiums and fees
+settle T+1 (next table session); zero interest. S = 5000.00 at every slot (zero drift and vol);
+DF = 1 (zero rates). P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04 DEC (Monday; weekly weekday 1; not final): flat, no conditions -> ENTRY selection.
+  Expiry: 2024-03-15 only, dte = 11 in [9, 13], 11 > exit_dte 0.
+  short_put: |Decimal(4900.0/5000.0) - 0.98| ~ 1.8e-17 <= 0.0005; 4895 and 4905 miss by ~0.001.
+  long_put: 4900 + (-5) = 4895 (strike_offset). Spreads 0.20, 0.10 <= 0.50; bids > 0.
+  D(1) = 100*(-1*2.00) + 100*(+1*1.10) = -200 + 110 = -90; Q*D = (-1)*(-90) = 90 > 0.
+  fees(1) = 2 legs * 1 * 1.00 = 2.
+  risk: payoff min (S <= 4895) = 100*(-(4900 - S) + (4895 - S)) = -500; entry_cash = 90 - 2 = 88;
+    -(-500 + 88) + provision 2*1*max(1.00, 0) = 412 + 2 = 414 <= 0.10 * 10000 = 1000.
+  preview headroom = 10000 - 2 - (500 + 2) = 9496 >= 0; capacity floor(min(50, 50)*0.10) = 5 >= 1.
+  limit = D(1) + price_allowance 0.00 = -90.
+2024-03-04 F1 (pins = DEC): D = -90 <= -90 -> fill; net_debit -90.00, fees 2.00, basis |-90| = 90.
+Account 2024-03-04 (CUT): cash 10000 (flows settle 2024-03-05); receivable 90; payable 2;
+  encumbrance = width 5 * m * 1 + fee provision 2 = 502; headroom = 10000 - 2 - 502 = 9496;
+  mid_nlv = 10000 + 90 - 2 + 100*(-1*2.10 + 1*1.05) = 10088 - 105 = 9983 (CLOSE mids 2.10, 1.05);
+  natural_nlv = 10088 + 100*(-1*2.20 + 1*1.00) = 10088 - 120 = 9968 (short at ask, long at bid).
+2024-03-05 OPEN: dues through 2024-03-05 settle: cash = 10000 + 90 - 2 = 10088.
+2024-03-05 DEC: held session 2 < 252; dte 10 > 0; close legs (P4900 +1, P4895 -1):
+  close D = 100*1.20 - 100*0.40 = 80; exit fees 2; entry_debit_incl_fees = -90 + 2 = -88;
+  LiquidationPnL = 0 - (-88) - 80 - 2 = 6 >= 0.05 * 90 = 4.5 -> EXIT (TAKE_PROFIT); limit 80 + 0.00 = 80.
+2024-03-05 F1 (pins = DEC): D = 80 <= 80 -> fill; net_debit 80.00, fees 2.00.
+  post-fill headroom = 10088 - (80 + 2) - 0 = 10006 >= 0.
+Account 2024-03-05: cash 10088; receivable 0; payable 80 + 2 = 82; encumbrance 0 (flat);
+  headroom = 10088 - 82 = 10006; mid_nlv = natural_nlv = 10088 - 82 = 10006.
+2024-03-06 (final; Wednesday, unscheduled, flat -> no decision): OPEN cash = 10088 - 82 = 10006;
+  account cash 10006, payable 0, headroom 10006, mid_nlv 10006.
+final_equity_usd = mid_nlv(2024-03-06) = 10006; headline_eligible: valid and flat; no dues remain.
+Campaign c1 (one generation c1.g1): basis 90;
+  REALIZED_PNL[P4900] = -(200 - 120) = -80, REALIZED_PNL[P4895] = +(110 - 40) = +70;
+  realized_pnl = -(-80 + 70) = 10; fees = 2 + 2 = 4; net = 10 - 4 = 6 = 10006 - 10000 (F01).
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+mid_nlv = "9983.00"
+natural_nlv = "9968.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+natural_nlv = "10006.00"
+
+[expected.account."2024-03-06"]
+cash = "10006.00"
+receivable = "0.00"
+payable = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "take_profit"

@@ -1,0 +1,127 @@
+# G03: G02 with a settlement above both strikes: the package expires all out of the money.
+# Zero cash flow, yet the settlement entry records its settlement_ref and retires both contracts.
+id = "G03"
+proves = ["settlement_ref"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-18" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged; take-profit and stop-loss null (see G02).
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-15"
+slots = ["DEC"]
+bid = "0.00"
+ask = "0.05"
+bid_size = 0
+ask_size = 50
+
+[[market.overrides]]
+kind = "settlement_pin"
+series = "SPX_PM"
+session = "2024-03-15"
+value = "4950.00"
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10088.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_DEFERRED"]
+open_positions = []
+retired_contracts = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+derivation = """
+Conventions as G01. P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04: entry as G01: D = -200 + 110 = -90, fees 2. Account 2024-03-04: cash 10000,
+  receivable 90, payable 2, encumbrance 502, headroom 9496.
+2024-03-05 OPEN: cash = 10000 + 90 - 2 = 10088. Held to 2024-03-14 without a trigger (as G02).
+2024-03-15 DEC: TIME_EXIT (dte 0 <= 0); P4895 DEC quote NO_BID, unusable for its closing sell
+  -> EXIT_DEFERRED (warning), no order.
+2024-03-15 CUT: SPX_PM 4950.00 (pin), s:SPX_PM:2024-03-15:c0; intrinsics
+  P4900: max(4900 - 4950, 0) = 0, P4895: max(4895 - 4950, 0) = 0 -> net_cash = 0, no RECEIVABLE
+  or PAYABLE; fees 2 * $0 = 0. The entry still carries input_refs (s:SPX_PM:2024-03-15:c0),
+  relieves both costs and retires both contracts (ADR 0001 §11 settlement_ref amendment).
+Account 2024-03-15: cash 10088; receivable 0; payable 0; encumbrance 0; headroom 10088;
+  mid_nlv = natural_nlv = 10088 (flat, no dues).
+2024-03-18 (final; Monday): nothing due, ENTRY_SKIPPED (FINAL_SESSION). Account: cash 10088,
+  headroom 10088, mid_nlv 10088. final_equity_usd = 10088.
+Campaign c1: REALIZED_PNL[P4900] = -200 (the short's 200 premium kept), REALIZED_PNL[P4895] = +110;
+  realized_pnl = -(-200 + 110) = 90; fees 2; net 88 = 10088 - 10000.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_DEFERRED (2024-03-15).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+
+[[expected.settlements]]
+session = "2024-03-15"
+series = "SPX_PM"
+observation_id = "s:SPX_PM:2024-03-15:c0"
+value = "4950.00"
+contract_ids = ["SPXW:2024-03-15:P:4895", "SPXW:2024-03-15:P:4900"]
+net_cash = "0.00"
+fees = "0.00"
+entry_input_refs = ["s:SPX_PM:2024-03-15:c0"]
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-15"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "10088.00"
+mid_nlv = "10088.00"
+natural_nlv = "10088.00"
+
+[expected.account."2024-03-18"]
+cash = "10088.00"
+headroom = "10088.00"
+mid_nlv = "10088.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-15"
+basis = "90.00"
+realized_pnl = "90.00"
+fees = "2.00"
+rolls = 0
+outcome = "settled"
+exit_trigger = "settlement"

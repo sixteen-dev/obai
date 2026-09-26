@@ -1,0 +1,122 @@
+# G14 (full window): a held leg without a valid CLOSE mark invalidates the run (C35). The loop stops
+# at that CLOSE; the run is neither truncated to its earlier sessions nor marked at zero. Its
+# shorter-window twin, G14_shorter_window_rerun_valid.toml, has the same strategy and market.
+id = "G14"
+proves = ["C35"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-07" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged. The market is identical in both G14 files.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05 F1: read only by the shorter run, whose final session this is (FINAL fill).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-06 CLOSE: the long put's mark is missing.
+[[market.overrides]]
+kind = "quote_drop"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["CLOSE"]
+
+[expected]
+calculation_status = "invalid"
+headline_eligible = false
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. take_profit and stop_loss null,
+exit_dte 0, max_holding_sessions 252, liquidate_at_final_session; final session 2024-03-07.
+
+2024-03-04: ENTRY as G01: D = 100*(-2.00) + 100*1.10 = -90, fees 2, limit -90; fill at F1.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 500 + 2 = 502;
+  headroom = 10000 - 2 - 502 = 9496.
+2024-03-05 OPEN: cash = 10000 + 90 - 2 = 10088. DEC: not final; dte 10 > 0, held session 2 < 252,
+  no profit rules -> no trigger -> hold (the F1 pins of this session are never read here).
+  CLOSE: both legs marked from generated quotes (at most 120 s old, VALID or NO_BID).
+Account 2024-03-05: cash 10088; receivable 0; payable 0; encumbrance 502; headroom 9586.
+2024-03-06 DEC: dte 9, held session 3: no trigger -> hold.
+2024-03-06 CLOSE: P4895 is held and unexpired (expiry 2024-03-15 > 2024-03-06); its CLOSE
+  observation is dropped, so its latest visible quote of the session is F3's (15:48), 720 s old
+  > 120 s -> no mark -> INVALIDATED (MISSING_VALUATION). The loop stops: no 2024-03-06 SNAPSHOT,
+  no 2024-03-07 session, final equity null, no headline. No mark is zero-filled and the run is
+  not cut back to its last complete session (the shorter window is a separate run, its twin).
+Campaign c1: still held when the run stopped -> INCOMPLETE, end_session and exit_trigger null;
+  basis 90; realized_pnl = -ΣREALIZED_PNL = 0 (an opening realizes nothing); fees 2; rolls 0.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only (invalidity is an invalid reason, not a warning).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+basis = "90.00"
+realized_pnl = "0.00"
+fees = "2.00"
+rolls = 0
+outcome = "incomplete"
