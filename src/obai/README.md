@@ -20,6 +20,7 @@ OBaI/
 │   ├── strategy_agent.py       # Backtesting, strategy design, optimization
 │   ├── research_agent.py       # Qualitative research via Exa semantic search
 │   ├── prediction_markets_agent.py  # Polymarket analysis, trade memos
+│   ├── options_strategy_agent.py  # Options-strategy validation, capability scope
 │   ├── mcp/                     # MCP client integration
 │   │   ├── client.py            # HTTP client for MCP servers
 │   │   └── tool_converter.py   # MCP tools → Agent SDK format
@@ -71,6 +72,7 @@ cd src/portfolio-server && uv run fastmcp run server.py      # :8006
 cd src/backtest-server && uv run fastmcp run server.py       # :8007
 cd src/research-server && uv run fastmcp run server.py       # :8008
 cd src/prediction-markets-server && uv run python -m src.server  # :8009
+cd src/options-backtest-server && uv run python -m options_backtest.server  # :8012
 ```
 
 ### 2. Set Environment Variables
@@ -86,6 +88,7 @@ export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
 export MCP_BACKTEST_URL=http://localhost:8007/mcp
 export MCP_RESEARCH_URL=http://localhost:8008/mcp
 export MCP_PREDICTION_MARKETS_URL=http://localhost:8009/mcp
+export MCP_OPTIONS_BACKTEST_URL=http://localhost:8012/mcp
 export EXA_API_KEY=...                                    # research-server
 ```
 
@@ -150,7 +153,7 @@ uv run python test_connection.py
 
 **Central Hub** (gpt-5.6-terra, `max` effort): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
-**Specialists** (9 agents, each with dedicated MCP server):
+**Specialists** (11 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
 2. **Fundamentals Agent** (:8001): Financial statements, ratios, analyst estimates
 3. **Events/News Agent** (:8003): News articles, earnings calendar, dividends
@@ -160,6 +163,8 @@ uv run python test_connection.py
 7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.6-terra for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
+10. **Crypto Agent** (:8010): Coinbase spot markets — quotes, order books, OHLCV, execution-grade spot backtests, paper-ledger artifacts. Uses public market data (no keys required).
+11. **Options Strategy Agent** (:8012): Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP). Compiles the user's rules into a strategy document, validates it against options-backtest-server, and is a terminal author the hub relays verbatim. Historical backtesting is reported unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) until qualified data exists; it never produces a performance figure. Follows the Strategy Agent's model and reasoning effort.
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)

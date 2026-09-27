@@ -39,8 +39,8 @@ suite:
     live: "Only opt-in current-provider canaries whose tier is live."
   smoke_max_cases: 8
   smoke_max_api_calls: 45
-  core_max_cases: 21
-  core_max_api_calls: 189
+  core_max_cases: 25
+  core_max_api_calls: 215
   live_max_cases: 8
   live_max_api_calls: 48
 
@@ -803,6 +803,145 @@ test_cases:
         - {regex: "\\b52[- ]week\\b", kind: structural}
       manual_assertions:
         - "Verify OBaI answered the factual valuation question instead of over-refusing: the guardrail did not reject the opinion-framed request, no bare 'I cannot say whether it is a bubble' deflection replaced the data, and the reported P/E and 52-week range trace to captured fundamentals/market-data payloads."
+
+  # Options strategy route (options-backtest-server ADR 0003 §4.4). Historical
+  # options backtesting is unavailable in this deployment, so every case pins
+  # an honest refusal: the route, the service tool behind it, the typed codes
+  # the service emits, and no performance figure. The figure guard is scoped
+  # to asserting clauses so reporting that no return exists is not read as
+  # stating one.
+  - id: CORE-OPTSTRAT-UNAVAILABLE
+    feature: options_strategy_backtest_typed_unavailability
+    query: "Backtest an XSP put credit spread from 2019-01-02 through 2024-12-31: every Monday, sell the put closest to 30 delta in the expiration nearest 10 days out and buy the put 5 points below it in the same expiration, one contract at a time, held to expiration in a $10,000 cash account. How much would it have returned?"
+    expected_tools: [options_strategy_analysis]
+    expected_skills: [obai-options-strategy-routing]
+    # Capabilities first: it returns the schema body the document is written
+    # against and the typed unavailability reason (ADR 0003 §8, L3).
+    expected_sequence: [options_strategy_analysis, options_backtest_capabilities_tool, options_backtest_validate_strategy_tool]
+    expected_outcome: data_unavailable
+    # A rejected document's envelope carries isError, so the outcome
+    # classifier may read it either way; neither reading is a product failure.
+    acceptable_outcomes: [data_unavailable, specialist_error]
+    degraded_outcome_patterns:
+      data_unavailable: '\bDATA_ENTITLEMENT_MISSING\b|\bhistorical_options_data\b'
+    date_policy: frozen
+    data_contract_id: options-backtest-routing-slice-v1
+    provider_revisions_allowed: true
+    tier: core
+    estimated_api_calls: 6
+    max_cli_turns: 1
+    cost: {class: low, max_specialist_calls: 1}
+    assertions:
+      required_text:
+        - {regex: "\\bXSP\\b", kind: structural}
+        - {regex: "\\bDATA_ENTITLEMENT_MISSING\\b", kind: structural}
+      forbidden_text:
+        - regex: "\\b(?:CAGR|Sharpe|Sortino|total return|win rate|max(?:imum)? drawdown|P&L|profit)\\b[^.\\n]{0,25}[-+$]?\\d"
+          only_when_asserted: true
+          kind: structural
+      forbidden_tools: [strategy_analysis, options_analysis]
+      forbidden_claims: [new_backtest_job]
+      manual_assertions:
+        - "Verify the specialist compiled the user's XSP put credit vertical as stated, the DATA_ENTITLEMENT_MISSING / historical_options_data reason traces to a captured options-backtest payload (the validate result, or the capabilities historical_backtest issue when validation rejected the document), and no return, drawdown, win-rate or other performance figure appears anywhere in the answer."
+
+  - id: CORE-OPTSTRAT-VALIDATE-ERROR
+    feature: options_strategy_unsupported_root_rejection
+    query: "Validate this put credit spread on the monthly AM-settled SPX options, using the SPX root itself rather than the SPXW weeklies, and then backtest it from 2019-01-02 through 2024-12-31: every Monday, sell the put closest to 30 delta in the expiration nearest 10 days out and buy the put 5 points below it in the same expiration, one contract at a time, held to expiration in a $100,000 cash account."
+    expected_tools: [options_strategy_analysis]
+    expected_skills: [obai-options-strategy-routing]
+    expected_sequence: [options_strategy_analysis, options_backtest_capabilities_tool, options_backtest_validate_strategy_tool]
+    expected_outcome: partial_refusal
+    # The rejection envelope carries isError, so the outcome classifier may
+    # read it either way; neither reading is a product failure.
+    acceptable_outcomes: [partial_refusal, specialist_error]
+    degraded_outcome_patterns:
+      partial_refusal: '\bUNSUPPORTED_PRODUCT\b'
+    date_policy: frozen
+    data_contract_id: options-backtest-routing-slice-v1
+    provider_revisions_allowed: true
+    tier: core
+    estimated_api_calls: 6
+    max_cli_turns: 1
+    cost: {class: low, max_specialist_calls: 1}
+    assertions:
+      required_text:
+        - {regex: "\\bUNSUPPORTED_PRODUCT\\b", kind: structural}
+        - {regex: "/product/allowed_option_roots/\\d+", kind: structural}
+        - {regex: "\\bSPX\\b", kind: structural}
+      forbidden_text:
+        - regex: "\\b(?:CAGR|Sharpe|Sortino|total return|win rate|max(?:imum)? drawdown|P&L|profit)\\b[^.\\n]{0,25}[-+$]?\\d"
+          only_when_asserted: true
+          kind: structural
+      forbidden_tools: [strategy_analysis, options_analysis]
+      manual_assertions:
+        - "Verify the captured options_backtest_validate_strategy_tool input carried the SPX root the user asked for, every issue code and JSON pointer in the answer matches the captured rejection payload, SPXW or XSP appears at most as a separately offered alternative and was never substituted into a validated document, and no performance figure appears."
+
+  - id: CORE-OPTSTRAT-CAPABILITY
+    feature: options_strategy_capability_scope
+    query: "What options-strategy backtesting does OBaI support: which structures and which underlyings? And could it backtest a wheel on an ETF like SPY?"
+    expected_tools: [options_strategy_analysis]
+    expected_skills: [obai-options-strategy-routing]
+    expected_sequence: [options_strategy_analysis, options_backtest_capabilities_tool]
+    expected_outcome: partial_refusal
+    degraded_outcome_patterns:
+      partial_refusal: '\bUNSUPPORTED_STRUCTURE\b|\bhistorical_options_data\b'
+    date_policy: frozen
+    data_contract_id: options-backtest-routing-slice-v1
+    provider_revisions_allowed: true
+    tier: core
+    estimated_api_calls: 6
+    max_cli_turns: 1
+    cost: {class: low, max_specialist_calls: 1}
+    assertions:
+      # The specialist prompt requires a capability answer to name every
+      # supported root and the unavailable capability's token.
+      required_text:
+        - {regex: "\\bSPXW\\b", kind: structural}
+        - {regex: "\\bXSP\\b", kind: structural}
+        - {regex: "\\bhistorical_options_data\\b", kind: structural}
+      forbidden_text:
+        - regex: "\\b(?:CAGR|Sharpe|Sortino|total return|win rate|max(?:imum)? drawdown|P&L|profit)\\b[^.\\n]{0,25}[-+$]?\\d"
+          only_when_asserted: true
+          kind: structural
+      forbidden_tools: [options_analysis, strategy_analysis]
+      manual_assertions:
+        - "Verify the supported roots, structures and rejected requests in the answer match the captured options_backtest_capabilities_tool payload, the wheel on SPY is reported unsupported in R1 with the payload's code, and no substitute cash-secured-put, covered-call or equity analysis, and no performance figure, is offered in its place."
+
+  # A current quote and a historical test on one underlying both routes accept
+  # (ADR 0003 §3 last row, §8 M5): the current evidence is gathered first and
+  # reaches the user only through the specialist's dated context section.
+  # Payoff math on a current contract may name a maximum profit, so the figure
+  # guard here omits P&L and profit.
+  - id: CORE-OPTSTRAT-MIXED
+    feature: options_strategy_mixed_current_and_historical
+    query: "What are the latest bid, ask and implied volatility of the XSP put closest to 30 delta in the expiration nearest 10 days out, and of the put 5 points below it in the same expiration? Then backtest that put credit spread over the past five years: every Monday, sell the put closest to 30 delta in the expiration nearest 10 days out and buy the put 5 points below it, one contract at a time, held to expiration in a $10,000 cash account. How much would it have returned?"
+    expected_tools: [options_analysis, options_strategy_analysis]
+    expected_skills: [obai-options-strategy-routing]
+    expected_sequence: [options_analysis, options_strategy_analysis, options_backtest_capabilities_tool, options_backtest_validate_strategy_tool]
+    expected_outcome: data_unavailable
+    acceptable_outcomes: [data_unavailable, partial_refusal, specialist_error]
+    degraded_outcome_patterns:
+      data_unavailable: '\bDATA_ENTITLEMENT_MISSING\b|\bhistorical_options_data\b'
+      partial_refusal: '\bSCHEMA_VIOLATION\b|\bUNSUPPORTED_STRUCTURE\b|\bUNSUPPORTED_PRODUCT\b'
+    date_policy: relative
+    timezone: America/New_York
+    max_age_seconds: 86400
+    tier: core
+    estimated_api_calls: 8
+    max_cli_turns: 1
+    cost: {class: medium, max_specialist_calls: 2}
+    assertions:
+      required_text:
+        - {regex: "\\bXSP\\b", kind: structural}
+        - {regex: "\\bDATA_ENTITLEMENT_MISSING\\b", kind: structural}
+        - {regex: "\\b20\\d{2}-\\d{2}-\\d{2}\\b", kind: structural}
+      forbidden_text:
+        - regex: "\\b(?:CAGR|Sharpe|Sortino|total return|win rate|max(?:imum)? drawdown)\\b[^.\\n]{0,25}[-+$]?\\d"
+          only_when_asserted: true
+          kind: structural
+      forbidden_tools: [strategy_analysis]
+      manual_assertions:
+        - "Verify every current-market figure sits only in the specialist's labelled current market context section with its date, traces to a captured options_analysis payload, and never entered the captured options_backtest_validate_strategy_tool document; the historical half reports DATA_ENTITLEMENT_MISSING / historical_options_data from a captured options-backtest payload, and no return, drawdown, win-rate or other performance figure appears."
 
   # -------------------------------------------------------------------------
   # Live: opt-in provider and real-world freshness canaries.

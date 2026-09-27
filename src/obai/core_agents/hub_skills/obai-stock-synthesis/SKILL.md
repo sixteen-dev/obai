@@ -1,6 +1,6 @@
 ---
 name: obai-stock-synthesis
-description: Use when finalizing any non-terminal analysis built from one or more evidence-supplier specialists (`market_data_analysis`, `fundamentals_analysis`, `events_news_analysis`, `options_analysis`, `screener_lookup`, `portfolio_analysis`, `research_analysis`). Covers stock, ETF, company, sector, thematic, portfolio, and research-only queries. Do not use for terminal strategy backtest or terminal prediction-market output.
+description: Use when finalizing any non-terminal analysis built from one or more evidence-supplier specialists (`market_data_analysis`, `fundamentals_analysis`, `events_news_analysis`, `options_analysis`, `screener_lookup`, `portfolio_analysis`, `research_analysis`). Covers stock, ETF, company, sector, thematic, portfolio, and research-only queries. Do not use for terminal strategy backtest, terminal options-strategy, or terminal prediction-market output.
 ---
 
 # OBaI Stock Synthesis

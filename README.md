@@ -40,13 +40,15 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-5.6-terra` at `max` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-5.6-terra` for stronger analysis, and the remaining specialists use `gpt-5.6-luna`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
+The Options Strategy Agent is a fourth terminal specialist, relayed verbatim the same way. It compiles an options strategy into a strategy document, validates it against options-backtest-server, and states what OBaI supports. Until qualified historical options data exists it reports a historical backtest as unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) and never produces a performance figure. It runs on the Strategy Agent's model and reasoning effort.
+
 ---
 
 ## Why These Data Providers
 
 | Provider | Cost | Coverage |
 |----------|------|----------|
-| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 10 servers. |
+| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 11 servers. |
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 | **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |
@@ -151,7 +153,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 10 MCP servers (Docker Compose)
+5. Builds and starts all 11 MCP servers (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
@@ -185,7 +187,7 @@ obai upgrade
 
 ## Running the System
 
-Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that all ten servers are healthy:
+Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that all eleven servers are healthy:
 
 ```bash
 obai status
@@ -260,6 +262,7 @@ obai web         # serve the web UI
 | **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
 | **prediction-markets-server** | 8009 | Polymarket | Market discovery, executable pricing (bid/ask/depth), price history, trade flow, holder concentration, leaderboard, wallet tracing, setup-based backtesting |
 | **crypto-server** | 8010 | Coinbase Advanced Trade (public) | Spot product resolution, best bid/ask, order books, latest trades, OHLCV with source-quality checks, execution-grade spot backtests (trend/mean-reversion), trade logs, and internal paper-ledger strategy artifacts. No API key required. |
+| **options-backtest-server** | 8012 | None yet (no qualified historical options data) | Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP): verticals, iron condors, long straddles and strangles, single long options. Historical backtesting is reported unavailable until the historical data work package lands. No API key required; the port is bound to localhost (local single-user license). |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -419,7 +422,7 @@ Key environment variables (all have sensible defaults):
 | `MCP_TIMEOUT` | `180` | MCP request timeout (seconds), between 1 and 300 |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
-Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`.
+Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`. `OPTIONS_STRATEGY_MODEL` and `OPTIONS_STRATEGY_REASONING_EFFORT` pin the Options Strategy Agent; unset, it follows the Strategy Agent's resolved model and effort.
 
 Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists, and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent. Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` model, so OBaI does not accept it.)
 
@@ -568,7 +571,7 @@ The agents use `get_preferences` and `set_preferences` tools automatically.
 ```
 obai/
 ├── setup.sh                        # One-shot setup script
-├── docker-compose.yml              # All 10 MCP servers
+├── docker-compose.yml              # All 11 MCP servers
 ├── pyproject.toml                  # Monorepo dev tooling config
 ├── scripts/                        # run-all-tests.sh, run-all-typechecks.sh
 ├── skills/                         # 13 agent skills (see Agent Skills below)
@@ -587,6 +590,7 @@ obai/
 │   ├── research-server/            # MCP server — qualitative research (Exa)
 │   ├── prediction-markets-server/  # MCP server — Polymarket analysis (no API keys)
 │   ├── crypto-server/              # MCP server — Coinbase spot crypto (no API keys)
+│   ├── options-backtest-server/    # MCP server — options-strategy validation (no API keys)
 │   └── obai/                       # Core application
 │       ├── pyproject.toml          # OBaI package config
 │       ├── core_agents/            # Agent definitions + orchestration
@@ -596,7 +600,7 @@ obai/
 │       │   ├── hub_settings.py     # ~/.obai/settings.json (hub model + effort)
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
-│       │   └── *_agent.py          # 10 specialist agents
+│       │   └── *_agent.py          # 11 specialist agents
 │       ├── clients/
 │       │   ├── cli/                # CLI + TUI clients
 │       │   │   ├── chat.py         # CLI entry point — query/chat/tui/status/web,

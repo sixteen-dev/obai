@@ -5,6 +5,7 @@ Tests config loading, validation, and the reset function.
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +13,20 @@ from pydantic import ValidationError
 from core_agents import hub_settings as hub_settings_module
 from core_agents.config import AgentConfig, get_config, reset_config
 from core_agents.hub_settings import HubSettings, HubSettingsStore
+from core_agents.options_strategy_agent import OptionsStrategyAgent
+
+
+def _options_strategy_default_model(config: AgentConfig) -> str:
+    """Return the model the Options Strategy Agent resolves under ``config``.
+
+    Args:
+        config: The config the agent reads.
+
+    Returns:
+        The agent's own ``_get_model()`` result.
+    """
+    with patch("core_agents.base_agent.get_config", return_value=config):
+        return OptionsStrategyAgent()._get_model()
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +60,11 @@ def setup_env(  # type: ignore[misc]
         "ENABLE_GUARDRAILS",
         "ORCHESTRATOR_REASONING_EFFORT",
         "STRATEGY_REASONING_EFFORT",
+        "MCP_OPTIONS_BACKTEST_URL",
+        "OPTIONS_STRATEGY_MODEL",
+        "OPTIONS_STRATEGY_REASONING_EFFORT",
+        "OPTIONS_STRATEGY_MAX_TURNS",
+        "ENABLE_OPTIONS_STRATEGY",
     ]
     for var in model_vars:
         if var in os.environ:
@@ -83,6 +103,9 @@ class TestAgentConfig:
             "strategy": config.get_strategy_model(),
             "crypto": config.get_agent_model("crypto"),
             "prediction_markets": config.get_agent_model("prediction_markets"),
+            # Resolved by the agent itself, so a change to its fallback is
+            # checked here too (ADR 0003 §2.2 as amended).
+            "options_strategy": _options_strategy_default_model(config),
             "guardrail": config.guardrail_model,
         }
         off_tier = {
@@ -98,6 +121,35 @@ class TestAgentConfig:
         assert config.strategy_reasoning_effort == "medium"
         assert config.crypto_reasoning_effort == "medium"
         assert config.prediction_markets_reasoning_effort == "medium"
+        assert config.options_strategy_reasoning_effort is None
+
+    def test_options_strategy_model_and_effort_inherit_by_default(self) -> None:
+        """Unset overrides mean the strategy agent's resolved model and effort."""
+        config = AgentConfig()
+        assert config.options_strategy_model is None
+        assert config.options_strategy_reasoning_effort is None
+
+    def test_options_strategy_overrides_read_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPTIONS_STRATEGY_MODEL", "gpt-6-luna")
+        monkeypatch.setenv("OPTIONS_STRATEGY_REASONING_EFFORT", "high")
+        config = AgentConfig()
+        assert config.options_strategy_model == "gpt-6-luna"
+        assert config.options_strategy_reasoning_effort == "high"
+
+    def test_options_strategy_max_turns_default_and_bounds(self) -> None:
+        """Capabilities, validate, two re-validations and the answer, with headroom."""
+        assert AgentConfig().options_strategy_max_turns == 12
+        with pytest.raises(ValidationError):
+            AgentConfig(options_strategy_max_turns=4)
+        with pytest.raises(ValidationError):
+            AgentConfig(options_strategy_max_turns=101)
+
+    def test_options_strategy_is_enabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert AgentConfig().enable_options_strategy is True
+        monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "false")
+        assert AgentConfig().enable_options_strategy is False
 
     def test_default_compact_ratio(self) -> None:
         """Hub compaction is on by default at 90% of the model window."""
@@ -147,6 +199,7 @@ class TestAgentConfig:
         assert "localhost:8003" in config.mcp_events_news_url
         assert "localhost:8004" in config.mcp_options_url
         assert "localhost:8010" in config.mcp_crypto_url
+        assert config.mcp_options_backtest_url == "http://localhost:8012/mcp"
 
     def test_get_agent_model_default(self) -> None:
         """Test get_agent_model falls back to specialist_model."""

@@ -326,6 +326,7 @@ async def _run_query(  # noqa: PLR0912
 
     from core_agents.central_hub_agent import (
         CryptoPassthroughEvent,
+        OptionsStrategyPassthroughEvent,
         PredictionPassthroughEvent,
         StrategyPassthroughEvent,
         get_inner_tool_outputs,
@@ -356,7 +357,10 @@ async def _run_query(  # noqa: PLR0912
             # Terminal passthrough: use specialist output directly
             if isinstance(
                 event,
-                PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+                PredictionPassthroughEvent
+                | CryptoPassthroughEvent
+                | StrategyPassthroughEvent
+                | OptionsStrategyPassthroughEvent,
             ):
                 passthrough = event.content
                 continue
@@ -674,6 +678,7 @@ def status(
             ("Research", config.mcp_research_url),
             ("Prediction Markets", config.mcp_prediction_markets_url),
             ("Crypto", config.mcp_crypto_url),
+            ("Options Backtest", config.mcp_options_backtest_url),
         ]
 
         results: list[dict[str, Any]] = []
