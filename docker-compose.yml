@@ -338,6 +338,36 @@ services:
       retries: 3
       start_period: 30s
 
+  options-backtest-server:
+    image: ghcr.io/sixteen-dev/obai/options-backtest-server:${OBAI_VERSION:-latest}
+    build:
+      context: ./src/options-backtest-server
+      dockerfile: Dockerfile
+    container_name: obai-options-backtest-server
+    # Host side bound to loopback: the Individual data license permits only a
+    # local single-user deployment (design §16.1, ADR 0003 §1.10). Containers
+    # on obai-mcp-network reach it by service name.
+    ports:
+      - "127.0.0.1:8012:8012"
+    environment:
+      # No API keys and no volumes: this slice validates strategies and
+      # advertises capabilities; it reads no market data.
+      - TRANSPORT=streamable-http
+      - HOST=0.0.0.0
+      - PORT=8012
+      - LOG_LEVEL=INFO
+    mem_limit: 512m
+    memswap_limit: 512m
+    networks:
+      - obai-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8012/health/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   # qdrant-data:  # disabled with the qdrant service above
   backtest-data:

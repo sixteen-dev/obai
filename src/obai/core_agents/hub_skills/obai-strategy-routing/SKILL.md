@@ -1,6 +1,6 @@
 ---
 name: obai-strategy-routing
-description: Use when the user wants to build, test, backtest, optimize, refine, repair, compare, or follow up on a systematic trading strategy. Covers strategy design, backtesting, optimization, robustness analysis, rule generation, strategy repair/comparison, execution handoff, and strategy job follow-ups. Excludes prediction markets.
+description: Use when the user wants to build, test, backtest, optimize, refine, repair, compare, or follow up on a systematic trading strategy. Covers strategy design, backtesting, optimization, robustness analysis, rule generation, strategy repair/comparison, execution handoff, and strategy job follow-ups. Excludes prediction markets. Excludes options-structure strategies, which route to `options_strategy_analysis`.
 ---
 
 # OBaI Strategy Routing
@@ -74,7 +74,7 @@ Gather context from other specialists only when the strategy family materially d
 - Value, quality, fundamental-factor, balance-sheet → `fundamentals_analysis`
 - Portfolio overlay, hedging, exposure-aware sizing → `portfolio_analysis`
 - Thematic, competitive, structural-research-driven → `research_analysis`
-- Options-structure-dependent (e.g., covered call, wheel, vol selling) → `options_analysis`
+- Options-structure strategies (covered calls, cash-secured puts, wheels, rolls, vol selling) → not a `strategy_analysis` request; route the whole request to `options_strategy_analysis`
 
 For purely technical strategy intent (momentum, mean-reversion, breakout, RSI/MACD/SMA-driven), skip pre-strategy context. The Strategy Agent fetches its own technical data.
 

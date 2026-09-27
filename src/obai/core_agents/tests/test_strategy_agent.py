@@ -638,6 +638,28 @@ class TestStrategyPrompt:
             assert "default to the `high` column" in text, label
             assert "`RATIO` and `DIFF` have no default" in text, label
 
+    def test_options_structures_are_refused_never_proxied_with_shares(self) -> None:
+        """A mis-routed options structure ends in an honest refusal (ADR 0003 §8, H1).
+
+        The equity engine cannot trade options, so the proxy rules would turn
+        a covered call or a wheel into share-strategy figures. The exception
+        must outrank those rules, name the route that owns the request, and
+        keep a share strategy on an option-writing fund an equity request.
+        """
+        prompt = _read_prompt()
+        mandate = _collapse(_prompt_section(prompt, "## Core Mandate", "## Your expertise"))
+        mode_3 = _collapse(_prompt_section(prompt, "### Mode 3", "## Hub Context"))
+
+        assert "is never proxied with a share strategy" in mandate
+        assert "overrides every proxy, approximation and mandatory-backtest rule" in mandate
+        for mechanic in ("covered calls", "cash-secured puts", "wheels", "straddles", "rolls"):
+            assert mechanic in mandate, mechanic
+        assert "share strategy on a fund or ETF that itself writes options" in mandate
+        for text, label in ((mandate, "Core Mandate"), (mode_3, "Mode 3")):
+            assert "`options_strategy_analysis`" in text, label
+        assert "options structure" in mode_3
+        assert "run no backtest" in mode_3
+
 
 class TestStrategySkill:
     """Test the standalone obai-strategy skill files."""

@@ -11,7 +11,7 @@ This is a black-box release gate. It submits real CLI queries, correlates each q
 
 ## Canonical sources
 
-- Paid gate: `cases/cases.yaml` — 37 deduplicated cases.
+- Paid gate: `cases/cases.yaml` — 41 deduplicated cases.
 - Pre-change backup: `cases/cases.v1-2026-07-15.yaml` — 88 cases; never execute as the default gate.
 - Broader/overlapping coverage: `src/obai/evaluation/test_cases/suite.yaml` — separate evaluation corpus, not valid input to this skill's canonical runner.
 - `.agents/skills/obai-e2e-regression/SKILL.md` is only a compatibility pointer. Use this directory's scripts and cases.
@@ -22,7 +22,7 @@ or reducing its estimate fails lint just as an overrun does.
 | Tier | Cases | Minimum planning estimate | Selection |
 |---|---:|---:|---|
 | `smoke` | 8 | 45 | Explicit cheaper route check |
-| `core` | 21 | 189 | Exact default release gate |
+| `core` | 25 | 215 | Exact default release gate |
 | `live` | 8 | 48 | Explicit provider/freshness canary |
 
 The legacy YAML/CLI field is named `estimated_api_calls`, but it is only a minimum planning estimate for billable model requests, including guardrail, hub, skill-load continuation, and specialist turns. `--max-api-calls` is a **between-case start limit**, not a hard cap: one already-started hub or specialist agent can exceed its estimate before control returns to the runner. The runner counts actual Opik `llm` spans after every case and refuses to start another case when accounting is unavailable or the next estimate would cross the limit. Use an OpenAI project budget/rate limit as the hard external spending backstop.
@@ -54,7 +54,7 @@ Core gate:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-e2e-regression/scripts/run_suite.py \
-  --execute --max-api-calls 189 --run-dir <new-run-dir>
+  --execute --max-api-calls 215 --run-dir <new-run-dir>
 ```
 
 Smoke gate, only when the user asks for smoke/cheaper coverage:

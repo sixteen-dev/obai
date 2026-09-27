@@ -462,6 +462,7 @@ if [ "$SKIP_MCP" = false ]; then
         "backtest:8007"
         "research:8008"
         "prediction-markets:8009"
+        "options-backtest:8012"
     )
 
     # `/health` is liveness only — the server is up but may have no working

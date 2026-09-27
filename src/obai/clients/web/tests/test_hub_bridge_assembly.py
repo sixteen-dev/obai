@@ -4,6 +4,10 @@ Reasoning models emit interim assistant messages labelled ``commentary``
 alongside their tool calls. The CLI drops them through ``AnswerAccumulator``;
 the bridge appended every delta, so the saved conversation and everything
 replayed from it carried a status line glued to the front of the answer.
+
+A terminal specialist's passthrough event replaces the hub's text wholesale:
+the Options Strategy Agent's answer is relayed verbatim (ADR 0003 §2.8), so
+hub-authored text must never be what the conversation stores.
 """
 
 from __future__ import annotations
@@ -11,15 +15,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
-from agents.items import MessageOutputItem
+from agents.items import MessageOutputItem, ToolCallItem
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import (
+    ResponseFunctionToolCall,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseTextDeltaEvent,
 )
 
 from clients.web.hub_bridge import HubBridge
+from core_agents.central_hub_agent import OptionsStrategyPassthroughEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -66,6 +72,20 @@ def _message(
     )
 
 
+def _tool_call(call_id: str, name: str) -> RunItemStreamEvent:
+    """A hub tool call to ``name``, as the SDK streams it."""
+    raw = ResponseFunctionToolCall(
+        arguments="{}",
+        call_id=call_id,
+        name=name,
+        type="function_call",
+    )
+    return RunItemStreamEvent(
+        name="tool_called",
+        item=ToolCallItem(agent=cast(Any, _StubAgent()), raw_item=raw),
+    )
+
+
 class _ScriptedHub:
     """Streams a fixed event sequence so assembly can be checked in isolation."""
 
@@ -78,6 +98,12 @@ class _ScriptedHub:
 
     async def close(self) -> None:
         return None
+
+
+async def _emitted(events: list[Any]) -> list[dict[str, Any]]:
+    """Run the bridge over ``events`` and return every WS-protocol dict it yields."""
+    bridge = HubBridge(cast(Any, _ScriptedHub(events)))
+    return [evt async for evt in bridge.run_query("q", cast("Session", None))]
 
 
 async def _collect(events: list[Any]) -> str:
@@ -125,3 +151,39 @@ async def test_commentary_after_the_answer_is_still_dropped() -> None:
     ]
 
     assert await _collect(events) == "AAPL closed at $210.00."
+
+
+@pytest.mark.asyncio
+async def test_options_strategy_passthrough_replaces_the_hub_text() -> None:
+    """The options-strategy terminal output is stored, not the hub's own answer."""
+    specialist = "Status: unavailable\nReference: strategy schema, engine and product rules"
+    events = [
+        _delta("msg_1", "Hub-authored text the relay must discard."),
+        _message("msg_1", "Hub-authored text the relay must discard.", "final_answer"),
+        OptionsStrategyPassthroughEvent(content=specialist),
+    ]
+
+    assert await _collect(events) == specialist
+
+
+@pytest.mark.asyncio
+async def test_options_strategy_passthrough_is_streamed_to_the_client() -> None:
+    """The browser renders the specialist text itself, not only the stored copy."""
+    specialist = "Status: rejected"
+    emitted = await _emitted([OptionsStrategyPassthroughEvent(content=specialist)])
+
+    assert {"type": "text_delta", "delta": specialist} in emitted
+
+
+@pytest.mark.asyncio
+async def test_options_strategy_tool_call_is_shown_as_its_specialist() -> None:
+    """The hub's options_strategy_analysis call is labelled with its agent's name.
+
+    The label is what the tracker keys MCP calls on, so without it the two
+    options-backtest tool calls cannot nest under the specialist.
+    """
+    emitted = await _emitted([_tool_call("call_1", "options_strategy_analysis")])
+
+    starts = [e for e in emitted if e.get("type") == "tool_start" and e["call_id"] == "call_1"]
+    assert len(starts) == 1
+    assert starts[0]["agent"] == "Options Strategy Agent"

@@ -12,6 +12,7 @@ Architecture:
     - Screener Agent: Stock screening and ticker discovery
     - Research Agent: Deep company research via Exa semantic search
     - Crypto Agent: Coinbase spot crypto data, backtests, and artifacts
+    - Options Strategy Agent: Options-strategy validation via the options backtest server
 
 All agent classes and factories are importable from this package but loaded
 lazily to avoid pulling in the entire agent system when only config or a
@@ -37,6 +38,7 @@ __all__ = [
     "MarketDataAgent",
     "EventsNewsAgent",
     "OptionsAgent",
+    "OptionsStrategyAgent",
     "ResearchAgent",
     "ScreenerAgent",
     "PortfolioAgent",
@@ -72,6 +74,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "create_market_data_agent": ".market_data_agent",
     "OptionsAgent": ".options_agent",
     "create_options_agent": ".options_agent",
+    "OptionsStrategyAgent": ".options_strategy_agent",
     "ResearchAgent": ".research_agent",
     "create_research_agent": ".research_agent",
     "ScreenerAgent": ".screener_agent",

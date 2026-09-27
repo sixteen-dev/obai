@@ -30,10 +30,11 @@ def test_hub_skills_dir_exists() -> None:
     """Lazy-skill source directory ships with the package."""
     assert HUB_SKILLS_DIR.is_dir()
     skill_files = list(HUB_SKILLS_DIR.rglob("SKILL.md"))
-    # Six lifecycle skills: stock synthesis, strategy routing,
-    # prediction-market routing, crypto routing, grounding/cache, and research routing.
+    # Seven lifecycle skills: stock synthesis, strategy routing,
+    # prediction-market routing, crypto routing, options-strategy routing,
+    # grounding/cache, and research routing.
     # Each routing skill carries its own output-contract rules.
-    assert len(skill_files) == 6
+    assert len(skill_files) == 7
 
 
 def test_hub_builder_returns_sandbox_agent_with_skills() -> None:
@@ -65,6 +66,7 @@ def test_hub_builder_returns_sandbox_agent_with_skills() -> None:
         ("_build_prediction_tool", "prediction_markets_agent"),
         ("_build_crypto_tool", "crypto_agent"),
         ("_build_strategy_tool", "strategy_agent"),
+        ("_build_options_strategy_tool", "options_strategy_agent"),
     ],
 )
 def test_specialist_wrappers_use_strict_json_schema(builder: str, attribute: str) -> None:

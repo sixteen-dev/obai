@@ -19,6 +19,7 @@ from openai.types.responses import ResponseTextDeltaEvent  # noqa: E402
 
 from core_agents.central_hub_agent import (  # noqa: E402
     CryptoPassthroughEvent,
+    OptionsStrategyPassthroughEvent,
     PredictionPassthroughEvent,
     StrategyPassthroughEvent,
     create_central_hub,
@@ -50,7 +51,10 @@ async def test_multi_domain() -> None:
     async for event in hub.run(query):
         if isinstance(
             event,
-            PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+            PredictionPassthroughEvent
+            | CryptoPassthroughEvent
+            | StrategyPassthroughEvent
+            | OptionsStrategyPassthroughEvent,
         ):
             passthrough = event.content
             continue

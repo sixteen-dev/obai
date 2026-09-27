@@ -10,6 +10,7 @@ This agent acts as the central hub for a team of 8 specialist agents:
     - Strategy Agent: Trading strategy design, backtesting, optimization
     - Prediction Markets Agent: Polymarket analysis and trade ideas
     - Crypto Agent: Coinbase spot crypto data, backtests, and artifacts
+    - Options Strategy Agent: Options-strategy validation and capability scope
 
 The central hub uses the "agents-as-tools" pattern (not handoffs):
     1. Understands user intent
@@ -34,10 +35,11 @@ from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from agents import Agent, ModelSettings, Runner, Tool, function_tool
 from agents.agent import AgentToolStreamEvent
+from agents.exceptions import ModelBehaviorError
 from agents.items import ItemHelpers, MessageOutputItem
 from agents.run import RunConfig
 from agents.run_context import RunContextWrapper
@@ -47,6 +49,7 @@ from agents.sandbox.capabilities.skills import LocalDirLazySkillSource, Skills
 from agents.sandbox.entries import LocalDir
 from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+from agents.tool import default_tool_error_function
 from openai.types.responses import ResponseTextDeltaEvent
 from openai.types.responses.response_create_params import ContextManagement
 from openai.types.shared import Reasoning
@@ -66,6 +69,7 @@ from .logging_config import configure_file_logging
 from .market_data_agent import MarketDataAgent
 from .mcp import clear_tool_cache
 from .options_agent import OptionsAgent
+from .options_strategy_agent import OptionsStrategyAgent
 from .portfolio_agent import PortfolioAgent
 from .prediction_context import validate_prediction_relay
 from .prediction_markets_agent import PredictionMarketsAgent
@@ -128,6 +132,13 @@ class StrategyPassthroughEvent:
     content: str
 
 
+@dataclass(frozen=True)
+class OptionsStrategyPassthroughEvent:
+    """Emitted by hub.run() for terminal options-strategy specialist output."""
+
+    content: str
+
+
 @dataclass
 class CryptoPassthroughState:
     """Mutable run-scoped crypto passthrough holder.
@@ -135,6 +146,18 @@ class CryptoPassthroughState:
     Agent SDK tool execution may run in a copied context. Mutating a shared
     holder preserves per-run isolation while keeping child-task writes visible
     to the parent stream loop.
+    """
+
+    content: str | None = None
+
+
+@dataclass
+class OptionsStrategyState:
+    """Mutable invocation-scoped options-strategy terminal holder.
+
+    One ``CentralHubAgent.run()`` call owns one holder. The tool task runs in
+    a copied context and mutates the same object, so its write reaches the
+    stream loop, while two concurrent runs hold different objects.
     """
 
     content: str | None = None
@@ -232,6 +255,56 @@ def _clear_crypto_passthrough() -> None:
     _crypto_passthrough.set(CryptoPassthroughState())
 
 
+_options_strategy_state: ContextVar[OptionsStrategyState | None] = ContextVar(
+    "options_strategy_state",
+    default=None,
+)
+
+
+def _get_options_strategy_state() -> OptionsStrategyState:
+    """Return the current invocation's holder, installing one if absent.
+
+    Returns:
+        The holder ``run()`` installed, or a new one in this context when the
+        tool runs outside ``run()``.
+    """
+    state = _options_strategy_state.get()
+    if state is None:
+        state = OptionsStrategyState()
+        _options_strategy_state.set(state)
+    return state
+
+
+def _set_options_strategy_passthrough(content: str) -> None:
+    """Record terminal options-strategy output for the current invocation.
+
+    Args:
+        content: The user-facing output to relay verbatim.
+    """
+    _get_options_strategy_state().content = content
+    logger.info("Options strategy passthrough set (len=%d)", len(content))
+
+
+def _get_options_strategy_passthrough() -> str | None:
+    """Return the current invocation's terminal options-strategy output.
+
+    Returns:
+        The recorded output, or None when the route has not fired.
+    """
+    state = _options_strategy_state.get()
+    return state.content if state is not None else None
+
+
+def _clear_options_strategy_passthrough() -> None:
+    """Install a fresh empty holder in the current context.
+
+    A new holder rather than ``Token.reset``: an async generator abandoned by
+    its consumer is finalized by the event loop in another context, where
+    ``reset`` raises ``ValueError``.
+    """
+    _options_strategy_state.set(OptionsStrategyState())
+
+
 def _is_completed_strategy_output(output: str) -> bool:
     """Detect if strategy output is a completed response (not error/missing)."""
     return "#### 1. Verdict" in output or "## Verdict" in output
@@ -305,6 +378,8 @@ _STRATEGY_TOOL_DESCRIPTION = (
     "informed strategies, then backtests and iterates. "
     "Use for strategy building, backtesting, or trading "
     "system questions. "
+    "Equity and ETF share strategies only; options-structure strategies go "
+    "to options_strategy_analysis. "
     "MANDATORY PRE-CONDITION: before calling this tool, you MUST first "
     "call load_skill('obai-strategy-routing') in the same turn. The "
     "skill body holds the routing rules that govern this call. Calling "
@@ -332,6 +407,7 @@ _RESEARCH_TOOL_DESCRIPTION = (
 _TERMINAL_STRATEGY_OUTPUT_PREFIX = "__TERMINAL_TOOL_OUTPUT__:strategy_analysis:"
 _TERMINAL_PREDICTION_PREFIX = "__TERMINAL_TOOL_OUTPUT__:prediction_market_analysis:"
 _TERMINAL_CRYPTO_PREFIX = "__TERMINAL_TOOL_OUTPUT__:crypto_analysis:"
+_TERMINAL_OPTIONS_STRATEGY_PREFIX = "__TERMINAL_TOOL_OUTPUT__:options_strategy_analysis:"
 
 
 def _wrap_terminal_strategy_output(output: str, kind: str) -> str:
@@ -369,6 +445,18 @@ def _wrap_terminal_crypto_output(output: str) -> str:
     return f"{control}\n\n{output}"
 
 
+def _wrap_terminal_options_strategy_output(output: str) -> str:
+    """Wrap terminal options-strategy output with its rendering control line.
+
+    Args:
+        output: The user-facing output.
+
+    Returns:
+        The marker line, a blank line, then ``output`` unchanged.
+    """
+    return f"{_TERMINAL_OPTIONS_STRATEGY_PREFIX}render=verbatim_relay\n\n{output}"
+
+
 _PREDICTION_TOOL_DESCRIPTION = (
     "Polymarket prediction market analysis. "
     "Use for market discovery, understanding, and comparison; "
@@ -400,6 +488,27 @@ _CRYPTO_TOOL_DESCRIPTION = (
     "obai-crypto-routing skill."
 )
 
+_OPTIONS_STRATEGY_TOOL_DESCRIPTION = (
+    "Options-strategy specialist. "
+    "Use for historical performance or backtests of an options strategy, "
+    "validation of options strategy rules or a strategy document, design of "
+    "managed options rules (verticals, iron condors, straddles, strangles, "
+    "single long options, covered calls, cash-secured puts, wheels, rolls), and "
+    "questions about what options-strategy backtesting OBaI supports. "
+    "Do not use for current options chains, Greeks, implied volatility, or "
+    "scenario math on current contracts (options_analysis), or for equity and "
+    "ETF share strategies (strategy_analysis). "
+    "MANDATORY PRE-CONDITION: before calling this tool, call "
+    "load_skill('obai-options-strategy-routing') in the same turn. "
+    "Pass `user_request` as the user's wording verbatim, never a rewrite or "
+    "summary of it. Pass `underlyings` as the resolved underlying symbols; it "
+    "may be empty for explain, status, and capability questions. Pass `context` "
+    "as Hub-resolved dated facts only, `prior_run_ids` as the run identifiers "
+    "the user named, and `requested_action` as the action the user asked for. "
+    "This tool is a terminal author; relay its output according to the "
+    "obai-options-strategy-routing skill."
+)
+
 _STRATEGY_OBJECTIVE_PATTERNS = (
     # Technical strategy families
     re.compile(
@@ -408,7 +517,7 @@ _STRATEGY_OBJECTIVE_PATTERNS = (
     ),
     # Fundamental factor strategy families
     re.compile(
-        r"\b(value|quality|growth|income|dividend|factor|rotation|swing|covered[- ]call|wheel)\b",
+        r"\b(value|quality|growth|income|dividend|factor|rotation|swing)\b",
         re.IGNORECASE,
     ),
     # Passive holding families (buy-and-hold is a complete objective on its own,
@@ -768,6 +877,166 @@ def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | 
         "conditions or add operator semantics the user did not explicitly "
         "specify."
     )
+
+
+def _get_options_strategy_handoff_error(
+    user_request: str, original_query: str | None
+) -> str | None:
+    """Return a control signal when the handoff dropped the user's wording.
+
+    Only the hard syntactic fact is checked: the normalized original query
+    must be a substring of the normalized ``user_request``. What is missing
+    from the request is the specialist's domain judgment, not the hub's.
+
+    Args:
+        user_request: The ``user_request`` argument the Hub supplied.
+        original_query: The query the user actually submitted.
+
+    Returns:
+        The ``OPTIONS_STRATEGY_HANDOFF_ERROR:`` text for the Hub, or None
+        when the request was preserved.
+    """
+    if not original_query:
+        return None
+    normalized_query = _normalize_strategy_handoff_text(original_query)
+    if not normalized_query or normalized_query in _normalize_strategy_handoff_text(user_request):
+        return None
+    return (
+        "OPTIONS_STRATEGY_HANDOFF_ERROR: options_strategy_analysis requires the "
+        "user's original request verbatim. Retry with `user_request` set to the "
+        "user's original wording and put resolved facts in `context`."
+    )
+
+
+def _render_options_strategy_handoff(
+    user_request: str,
+    requested_action: str,
+    underlyings: list[str],
+    prior_run_ids: list[str],
+    context: str,
+) -> str:
+    """Render the labelled blocks the Options Strategy Agent reads.
+
+    Args:
+        user_request: The user's wording, preserved verbatim.
+        requested_action: One of the strict-schema action names.
+        underlyings: Resolved underlying symbols, possibly empty.
+        prior_run_ids: Run identifiers the user named, possibly empty.
+        context: Hub-resolved dated facts, possibly blank.
+
+    Returns:
+        ``User request:`` and ``Requested action:`` blocks, then
+        ``Underlyings:``, ``Prior run IDs:`` and ``Context:`` when non-empty.
+    """
+    symbols = ", ".join(symbol.strip() for symbol in underlyings if symbol.strip())
+    run_ids = ", ".join(run_id.strip() for run_id in prior_run_ids if run_id.strip())
+    blocks = [f"User request:\n{user_request.strip()}", f"Requested action:\n{requested_action}"]
+    if symbols:
+        blocks.append(f"Underlyings:\n{symbols}")
+    if run_ids:
+        blocks.append(f"Prior run IDs:\n{run_ids}")
+    if context.strip():
+        blocks.append(f"Context:\n{context.strip()}")
+    return "\n\n".join(blocks)
+
+
+def _warn_if_several_terminals_fired(relayed: str | None) -> None:
+    """Log every terminal holder set this turn when more than one is.
+
+    ``run()`` relays one terminal, first in detection order (ADR 0003 §2.6);
+    two in one turn come only from a routing error, so the dropped output is
+    named in the log rather than lost silently (ADR 0003 §8).
+
+    Args:
+        relayed: The terminal ``run()`` relays.
+    """
+    holders = {
+        "prediction": _prediction_passthrough is not None,
+        "crypto": _get_crypto_passthrough() is not None,
+        "strategy": _get_strategy_passthrough() is not None,
+        "options_strategy": _get_options_strategy_passthrough() is not None,
+    }
+    fired = [name for name, is_set in holders.items() if is_set]
+    if len(fired) > 1:
+        logger.warning(
+            "Several terminal specialists fired in one turn (%s); relaying %s only",
+            ", ".join(fired),
+            relayed,
+        )
+
+
+def _format_options_strategy_failure(reason: str) -> str:
+    """Render a wrapper failure in the specialist's short form.
+
+    The reason is fixed text or an exception class name, never an exception
+    message: a message can carry model text, and no number the service did
+    not return may reach the user.
+
+    Args:
+        reason: Why the specialist produced no answer, as one clause.
+
+    Returns:
+        The user-facing ``failed`` short form.
+    """
+    return (
+        "**Status**: `failed`\n\n"
+        "**Reference**: none. The options strategy specialist stopped before it "
+        "answered; no validation result is reported here and no run exists.\n\n"
+        "**Supported next action**: send the request again.\n\n"
+        f"**Explanation**: {reason}. No figure was produced."
+    )
+
+
+def _is_options_strategy_argument_rejection(error: Exception) -> bool:
+    """Report whether the SDK refused the hub's arguments before the wrapper ran.
+
+    The SDK raises ``ModelBehaviorError`` with this prefix for undecodable
+    argument JSON and for arguments the strict schema rejects; its own default
+    error function recognizes argument errors by the same prefix.
+
+    Args:
+        error: The exception the SDK passed to the failure hook.
+
+    Returns:
+        True for an argument rejection of ``options_strategy_analysis``.
+    """
+    return isinstance(error, ModelBehaviorError) and str(error).startswith(
+        "Invalid JSON input for tool options_strategy_analysis"
+    )
+
+
+def _terminal_options_strategy_failure(ctx: RunContextWrapper[Any], error: Exception) -> str:
+    """Turn a failure inside ``options_strategy_analysis`` into terminal output.
+
+    The SDK's default error string is unmarked, so the hub would be free to
+    paraphrase it or replace it with its own memo. This hook logs the error,
+    records the short form for the invocation and returns it marker-wrapped;
+    the SDK still attaches the error to the tool span. An argument rejection
+    is not a failure inside the wrapper: it returns the SDK's default text,
+    unwrapped and unrecorded, so the hub can retry the call and the judge
+    classifies it as a malformed invocation (ADR 0003 §2.5).
+
+    Args:
+        ctx: Tool run context, passed to the SDK default for argument errors.
+        error: The exception the SDK caught around the tool call.
+
+    Returns:
+        The SDK's default text for an argument rejection, else the
+        marker-wrapped ``failed`` short form.
+    """
+    if _is_options_strategy_argument_rejection(error):
+        logger.warning("options_strategy_analysis arguments rejected; returned to the hub")
+        return default_tool_error_function(ctx, error)
+    logger.error(
+        "options_strategy_analysis failed with %s",
+        type(error).__name__,
+        exc_info=error,
+    )
+    content = _format_options_strategy_failure(
+        f"the options strategy specialist failed with `{type(error).__name__}`"
+    )
+    _set_options_strategy_passthrough(content)
+    return _wrap_terminal_options_strategy_output(content)
 
 
 # A citation URL is a promise the reader can open and verify the claim. The
@@ -1238,6 +1507,7 @@ class CentralHubAgent:
         self.research_agent: ResearchAgent | None = None
         self.prediction_markets_agent: PredictionMarketsAgent | None = None
         self.crypto_agent: CryptoAgent | None = None
+        self.options_strategy_agent: OptionsStrategyAgent | None = None
 
         # Track which agents were successfully initialized (for cleanup)
         self._initialized_agents: list[BaseAgent] = []
@@ -1362,9 +1632,11 @@ class CentralHubAgent:
                     self.options_agent.agent.as_tool(
                         tool_name="options_analysis",
                         tool_description=(
-                            "Get options chains, Greeks (delta, gamma, theta, vega), "
+                            "Get current options chains, Greeks (delta, gamma, theta, vega), "
                             "implied volatility, strike prices, and expiration data. "
-                            "Use for any options or derivatives questions."
+                            "Use for current options market questions. Historical "
+                            "options-strategy backtests, options strategy validation, and "
+                            "managed options rules go to options_strategy_analysis."
                         ),
                         on_stream=_create_stream_handler("options_analysis", "Options Agent"),
                     )
@@ -1413,6 +1685,9 @@ class CentralHubAgent:
 
             if self.crypto_agent and self.crypto_agent.agent:
                 specialist_tools.append(self._build_crypto_tool())
+
+            if self.options_strategy_agent and self.options_strategy_agent.agent:
+                specialist_tools.append(self._build_options_strategy_tool())
 
             # Preference tools are local (no MCP routing needed)
             specialist_tools.append(get_preferences)
@@ -1490,8 +1765,10 @@ class CentralHubAgent:
         loads its tools via list_tools(), and reads its prompt file.
         No shared state — safe to run concurrently.
 
-        All required agents must succeed. Research, prediction markets, and
-        crypto are optional and degrade gracefully if unavailable.
+        All required agents must succeed. Research, prediction markets,
+        crypto, and options strategy are optional and degrade gracefully if
+        unavailable. The options strategy agent is constructed only when
+        ``enable_options_strategy`` is true; disabled is not degraded.
 
         Raises:
             MCPClientError: If any required agent fails to initialize.
@@ -1518,7 +1795,19 @@ class CentralHubAgent:
             self.strategy_agent,
         ]
 
-        optional = [self.research_agent, self.prediction_markets_agent, self.crypto_agent]
+        optional: list[BaseAgent] = [
+            self.research_agent,
+            self.prediction_markets_agent,
+            self.crypto_agent,
+        ]
+        if self.config.enable_options_strategy:
+            self.options_strategy_agent = OptionsStrategyAgent()
+            optional.append(self.options_strategy_agent)
+        else:
+            logger.info(
+                "Options Strategy Agent disabled (ENABLE_OPTIONS_STRATEGY=false) — "
+                "options_strategy_analysis tool not built."
+            )
         all_agents = [*required, *optional]
         results = await asyncio.gather(
             *[a.initialize() for a in all_agents],
@@ -1554,6 +1843,15 @@ class CentralHubAgent:
                     )
                     self.crypto_agent = None
                     self.degraded_capabilities.append("crypto")
+                elif agent is self.options_strategy_agent:
+                    logger.warning(
+                        "Options Strategy Agent unavailable (%s) — "
+                        "options_strategy_analysis tool disabled. "
+                        "Other agents unaffected.",
+                        result,
+                    )
+                    self.options_strategy_agent = None
+                    self.degraded_capabilities.append("options_strategy")
                 else:
                     logger.error("Failed to initialize %s: %s", agent.agent_name, result)
                     first_error = first_error or result
@@ -1583,6 +1881,7 @@ class CentralHubAgent:
         self.research_agent = None
         self.prediction_markets_agent = None
         self.crypto_agent = None
+        self.options_strategy_agent = None
         self.agent = None
         self._run_config = None
         self._initialized = False
@@ -1696,6 +1995,73 @@ class CentralHubAgent:
             return _wrap_terminal_crypto_output(output)
 
         return crypto_analysis
+
+    def _build_options_strategy_tool(self) -> Tool:
+        """Build the options-strategy tool wrapper with terminal relay.
+
+        Every specialist response and every failure inside the wrapper reaches
+        the user verbatim; an empty response is relayed as the ``failed`` short
+        form (ADR 0003 §8), so the hub never authors this answer.
+
+        Returns:
+            The strict-schema ``options_strategy_analysis`` tool.
+
+        Raises:
+            ValueError: If the Options Strategy Agent is not initialized.
+        """
+        if self.options_strategy_agent is None or self.options_strategy_agent.agent is None:
+            msg = "Options Strategy Agent not initialized"
+            raise ValueError(msg)
+
+        options_strategy_agent = self.options_strategy_agent.agent
+        stream_handler = _create_stream_handler(
+            "options_strategy_analysis", "Options Strategy Agent"
+        )
+
+        @function_tool(
+            name_override="options_strategy_analysis",
+            description_override=_OPTIONS_STRATEGY_TOOL_DESCRIPTION,
+            strict_mode=True,
+            failure_error_function=_terminal_options_strategy_failure,
+        )
+        async def options_strategy_analysis(
+            ctx: RunContextWrapper[Any],
+            user_request: str,
+            underlyings: list[str],
+            context: str,
+            prior_run_ids: list[str],
+            requested_action: Literal["build", "backtest", "compare", "explain", "status"],
+        ) -> str:
+            handoff_error = _get_options_strategy_handoff_error(
+                user_request, self._current_user_query
+            )
+            if handoff_error:
+                logger.info("Blocked options_strategy_analysis due to unfaithful handoff")
+                return handoff_error
+
+            handoff = _render_options_strategy_handoff(
+                user_request, requested_action, underlyings, prior_run_ids, context
+            )
+            result = Runner.run_streamed(
+                starting_agent=options_strategy_agent,
+                input=handoff,
+                context=ctx.context,
+                max_turns=self.config.options_strategy_max_turns,
+            )
+            async for event in result.stream_events():
+                await stream_handler({"agent": options_strategy_agent, "event": event})
+
+            final_output = getattr(result, "final_output", None)
+            output = final_output if isinstance(final_output, str) else str(final_output or "")
+            if not output.strip():
+                logger.warning("options_strategy_analysis returned no text; relaying failed")
+                output = _format_options_strategy_failure(
+                    "the options strategy specialist returned no text"
+                )
+            _set_options_strategy_passthrough(output)
+            return _wrap_terminal_options_strategy_output(output)
+
+        return options_strategy_analysis
 
     def _build_research_tool(self) -> Tool:
         """Build the research tool wrapper that verifies cited links.
@@ -1841,7 +2207,8 @@ class CentralHubAgent:
 
         Args:
             specialist_name: Name of specialist (fundamentals, market_data,
-                events_news, options, screener).
+                events_news, options, screener, portfolio, strategy, research,
+                prediction_markets, crypto, options_strategy).
 
         Returns:
             Specialist's OpenAI Agent SDK agent instance.
@@ -1864,6 +2231,7 @@ class CentralHubAgent:
             "research": self.research_agent,
             "prediction_markets": self.prediction_markets_agent,
             "crypto": self.crypto_agent,
+            "options_strategy": self.options_strategy_agent,
         }
 
         if specialist_name not in specialists:
@@ -1917,6 +2285,34 @@ class CentralHubAgent:
             msg = "Central Hub not initialized. Call initialize() first."
             raise ValueError(msg)
 
+        # One options-strategy holder per invocation: fresh at the start and
+        # again in finally, so a cancelled or abandoned run leaves no content.
+        _clear_options_strategy_passthrough()
+        try:
+            async for event in self._stream_query(self.agent, query, session):
+                yield event
+        finally:
+            _clear_options_strategy_passthrough()
+
+    async def _stream_query(
+        self,
+        agent: Agent[None],
+        query: str,
+        session: Session | None,
+    ) -> AsyncIterator[Any]:
+        """Stream one hub query and relay terminal specialist output.
+
+        The body of :meth:`run`, kept separate so ``run`` owns the
+        invocation-scoped options-strategy state in a single ``finally``.
+
+        Args:
+            agent: The initialized hub agent.
+            query: User query to process.
+            session: Optional session for conversation memory.
+
+        Yields:
+            Agent SDK streaming events, then at most one passthrough event.
+        """
         # Reset agent activity tracking and passthrough state for this query
         _clear_active_agents()
         _clear_strategy_passthrough()
@@ -1959,7 +2355,7 @@ class CentralHubAgent:
         # Opik tracing handled by OpikTracingProcessor (set up in init_opik).
         # run_config carries a SandboxRunConfig with a UnixLocalSandboxClient.
         result = Runner.run_streamed(
-            starting_agent=self.agent,
+            starting_agent=agent,
             input=query_to_run,
             session=session,
             run_config=self._run_config,
@@ -1999,6 +2395,8 @@ class CentralHubAgent:
                 terminal_fired = "crypto"
             if terminal_fired is None and _get_strategy_passthrough() is not None:
                 terminal_fired = "strategy"
+            if terminal_fired is None and _get_options_strategy_passthrough() is not None:
+                terminal_fired = "options_strategy"
 
             # After a terminal specialist fires, buffer hub text synthesis.
             if terminal_fired is not None:
@@ -2012,6 +2410,8 @@ class CentralHubAgent:
                     continue
 
             yield event
+
+        _warn_if_several_terminals_fired(terminal_fired)
 
         # Context persistence disabled — the SDK session already carries
         # conversation history for follow-ups, and tool-output-based context
@@ -2048,6 +2448,10 @@ class CentralHubAgent:
             strategy_output = strategy_state.content if strategy_state else ""
             yield StrategyPassthroughEvent(content=strategy_output)
             passthrough = strategy_output
+        elif terminal_fired == "options_strategy" and _get_options_strategy_passthrough():
+            options_strategy_output = _get_options_strategy_passthrough() or ""
+            yield OptionsStrategyPassthroughEvent(content=options_strategy_output)
+            passthrough = options_strategy_output
 
         # Cache the response for future follow-up questions
         final_response = passthrough if passthrough is not None else answer.text()
@@ -2072,6 +2476,7 @@ async def create_central_hub() -> CentralHubAgent:
     - Research Agent (Exa)
     - Prediction Markets Agent (Polymarket)
     - Crypto Agent (Coinbase spot)
+    - Options Strategy Agent (options-backtest-server), when enabled
 
     Opik tracing is automatically initialized before agent creation
     if OPIK_ENABLED=true (default). Traces are sent to the Opik UI.

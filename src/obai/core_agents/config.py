@@ -246,6 +246,12 @@ class AgentConfig(BaseSettings):
         default="gpt-5.6-terra",
         description="Override model for crypto agent (uses specialist_model if None)",
     )
+    options_strategy_model: str | None = Field(
+        default=None,
+        description=(
+            'Override model for options strategy agent (uses get_agent_model("strategy") if None)'
+        ),
+    )
     guardrail_model: str = Field(
         default="gpt-5.6-luna",
         description=(
@@ -315,6 +321,13 @@ class AgentConfig(BaseSettings):
         default="medium",
         description="Reasoning effort for prediction markets agent (uses specialist tier if None)",
     )
+    options_strategy_reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for options strategy agent "
+            '(uses get_agent_reasoning_effort("strategy") if None)'
+        ),
+    )
 
     # Guardrails
     enable_guardrails: bool = Field(
@@ -337,6 +350,22 @@ class AgentConfig(BaseSettings):
         ge=5,
         le=100,
         description="Max turns for the crypto_analysis tool's inner Runner.run loop",
+    )
+    # Capabilities, validate, at most two re-validations and the answer, with
+    # headroom. This is the hard bound behind the prompt's re-validation rule.
+    options_strategy_max_turns: int = Field(
+        default=12,
+        ge=5,
+        le=100,
+        description="Max turns for the options_strategy_analysis tool's inner Runner.run loop",
+    )
+
+    # Options strategy route (design §17.3 enable flag). Disabled means the
+    # agent is never constructed and the hub gets no options_strategy_analysis
+    # tool; it is not reported as a degraded capability.
+    enable_options_strategy: bool = Field(
+        default=True,
+        description="Enable the options strategy specialist and its hub tool",
     )
 
     # MCP Server URLs
@@ -379,6 +408,10 @@ class AgentConfig(BaseSettings):
     mcp_crypto_url: str = Field(
         default="http://localhost:8010/mcp",
         description="Crypto MCP server URL",
+    )
+    mcp_options_backtest_url: str = Field(
+        default="http://localhost:8012/mcp",
+        description="Options backtest MCP server URL",
     )
 
     # MCP Client Settings
