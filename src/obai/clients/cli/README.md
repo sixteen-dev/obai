@@ -57,6 +57,8 @@ export WANDB_API_KEY=your-key           # Enable W&B Weave tracing
 
 The CLI also loads `~/.obai/.env` into the environment at startup (without overriding anything already exported), so a line there behaves exactly like an `export`.
 
+The optional options-backtest server and its `options_strategy_analysis` route are off unless that file holds `ENABLE_OPTIONS_STRATEGY=true`, which `obai start --with-options-backtest` (or `obai restart`, `./setup.sh` and `install.sh` with the same flag) writes and `--without-options-backtest` sets back to `false`; `obai config show` prints the current state.
+
 ### Hub Model & Reasoning Effort
 
 You do not have to export the two hub settings — `obai config` saves them to `~/.obai/settings.json`, the same file the web UI settings modal writes:

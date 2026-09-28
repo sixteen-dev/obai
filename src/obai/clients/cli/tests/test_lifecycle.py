@@ -4,7 +4,9 @@ Covers the three risky areas of clients/cli/lifecycle.py:
 * repo discovery (env override, walk-up, failure),
 * managed-vs-source install classification,
 * the upgrade decision table and its safety guards (never touch a dirty or
-  diverged tree; fast-forward only a clean, strictly-behind branch).
+  diverged tree; fast-forward only a clean, strictly-behind branch),
+* the options-backtest opt-in that `start` and `restart` forward to setup.sh
+  (ADR 0004 §6); no script ever actually runs.
 
 Git plumbing (`_upgrade_status`, `_apply_upgrade`) is exercised against real
 temporary repositories with a local bare "origin" so the states are genuine.
@@ -17,8 +19,10 @@ from pathlib import Path
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from clients.cli import lifecycle
+from clients.cli.chat import cli
 
 # --- Git test scaffolding ---
 
@@ -370,4 +374,142 @@ class TestRunUpgradeGuards:
         monkeypatch.setattr(lifecycle, "_run_script", lambda root, script: ran.append(script))
         with pytest.raises(typer.Exit):
             lifecycle.run_upgrade(assume_yes=True)
+        assert not ran
+
+
+# --- start / stop / restart: the options-backtest opt-in (ADR 0004 §6) ---
+
+
+@pytest.mark.parametrize(
+    ("options_backtest", "expected"),
+    [
+        (None, []),
+        (True, ["--with-options-backtest"]),
+        (False, ["--without-options-backtest"]),
+    ],
+)
+def test_setup_args_maps_the_opt_in_to_setup_flags(
+    options_backtest: bool | None, expected: list[str]
+) -> None:
+    """No flag keeps the saved choice; True/False name the setup.sh flag."""
+    assert lifecycle._setup_args(options_backtest) == expected
+
+
+class TestLifecycleScripts:
+    """start/restart forward the opt-in to setup.sh; teardown never gets it."""
+
+    def _spy_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, list[tuple[list[str], Path]]]:
+        """Point at a fake checkout and record every script invocation."""
+        root = _make_checkout(tmp_path / "repo")
+        (root / lifecycle._TEARDOWN_SCRIPT).write_text("x")
+        monkeypatch.setattr(lifecycle, "find_repo_root", lambda: root)
+        calls: list[tuple[list[str], Path]] = []
+
+        def _fake_run(cmd: list[str], cwd: Path) -> int:
+            calls.append((cmd, cwd))
+            return 0
+
+        monkeypatch.setattr(lifecycle, "_run", _fake_run)
+        return root, calls
+
+    @pytest.mark.parametrize(
+        ("options_backtest", "flag"),
+        [(True, "--with-options-backtest"), (False, "--without-options-backtest")],
+    )
+    def test_start_with_a_flag_restarts_so_a_running_web_ui_applies_it(
+        self,
+        options_backtest: bool,
+        flag: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """setup.sh never relaunches a running web UI, whose hub keeps the old route."""
+        root, calls = self._spy_run(tmp_path, monkeypatch)
+
+        lifecycle.run_start(options_backtest=options_backtest)
+
+        teardown = str(root / lifecycle._TEARDOWN_SCRIPT)
+        setup = str(root / lifecycle._SETUP_SCRIPT)
+        assert calls == [(["bash", teardown], root), (["bash", setup, flag], root)]
+
+    def test_start_without_a_flag_keeps_the_saved_choice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root, calls = self._spy_run(tmp_path, monkeypatch)
+
+        lifecycle.run_start()
+
+        assert calls == [(["bash", str(root / lifecycle._SETUP_SCRIPT)], root)]
+
+    def test_restart_tears_down_bare_then_forwards_the_opt_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root, calls = self._spy_run(tmp_path, monkeypatch)
+
+        lifecycle.run_restart(options_backtest=False)
+
+        teardown = str(root / lifecycle._TEARDOWN_SCRIPT)
+        setup = str(root / lifecycle._SETUP_SCRIPT)
+        assert calls == [
+            (["bash", teardown], root),
+            (["bash", setup, "--without-options-backtest"], root),
+        ]
+
+    def test_stop_runs_teardown_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        root, calls = self._spy_run(tmp_path, monkeypatch)
+
+        lifecycle.run_stop()
+
+        assert calls == [(["bash", str(root / lifecycle._TEARDOWN_SCRIPT)], root)]
+
+
+class TestCliOptInFlags:
+    """`obai start|restart` expose the paired flag; stop/teardown/upgrade take none."""
+
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            (["start"], ("start", None)),
+            (["start", "--with-options-backtest"], ("start", True)),
+            (["start", "--without-options-backtest"], ("start", False)),
+            (["restart"], ("restart", None)),
+            (["restart", "--with-options-backtest"], ("restart", True)),
+            (["restart", "--without-options-backtest"], ("restart", False)),
+        ],
+    )
+    def test_flag_reaches_the_lifecycle_command(
+        self,
+        argv: list[str],
+        expected: tuple[str, bool | None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        seen: list[tuple[str, bool | None]] = []
+
+        def _start(*, options_backtest: bool | None = None) -> None:
+            seen.append(("start", options_backtest))
+
+        def _restart(*, options_backtest: bool | None = None) -> None:
+            seen.append(("restart", options_backtest))
+
+        monkeypatch.setattr(lifecycle, "run_start", _start)
+        monkeypatch.setattr(lifecycle, "run_restart", _restart)
+
+        result = CliRunner().invoke(cli, argv)
+
+        assert result.exit_code == 0, result.output
+        assert seen == [expected]
+
+    @pytest.mark.parametrize("command", ["stop", "teardown", "upgrade"])
+    def test_other_lifecycle_commands_reject_the_flag(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Upgrade applies the persisted choice; only start/restart change it."""
+        ran: list[str] = []
+        monkeypatch.setattr(lifecycle, "_run_script", lambda *args: ran.append(str(args)))
+
+        result = CliRunner().invoke(cli, [command, "--with-options-backtest"])
+
+        assert result.exit_code == 2  # click usage error
         assert not ran

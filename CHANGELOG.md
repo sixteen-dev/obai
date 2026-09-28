@@ -27,6 +27,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   over the new hub default.
 - Hub compaction falls back to a documented input window for `gpt-6-sol`, which
   the installed Agents SDK does not know yet, instead of disabling compaction.
+- **The options-backtest server and `options_strategy_analysis` are opt-in.**
+  A default install, start, upgrade or `obai status` no longer pulls, builds,
+  starts or checks `options-backtest-server`, and the Hub has no
+  options-strategy route: `ENABLE_OPTIONS_STRATEGY` now defaults to `false`.
+  Opt in with `--with-options-backtest` on `install.sh`, `setup.sh`,
+  `obai start` or `obai restart`; `setup.sh` saves the choice to
+  `~/.obai/.env`, later runs and `obai upgrade` keep it, and
+  `--without-options-backtest` turns it off and removes the container.
+  `teardown.sh`, `obai stop` and `obai teardown` remove the server in both
+  states. Without the opt-in, the E2E gate records the four `CORE-OPTSTRAT-*`
+  cases `skipped_not_applicable` instead of running them. A machine already
+  running the server has its container removed by the next `obai start`,
+  `obai restart` or `obai upgrade` unless it opts in. `obai start` with either
+  flag restarts running services so the Web UI's Hub applies the change; a
+  flag passed straight to `setup.sh` or `install.sh`, or a run that removes a
+  leftover container, leaves an already-running Web UI on its old setting
+  until `obai restart`, and the setup summary says so. The CLI and the gate
+  read the opt-in from `~/.obai/.env` even when `OBAI_HOME` points `setup.sh`
+  elsewhere, so a later `obai start` without that `OBAI_HOME` finds no opt-in
+  and removes the container.
 
 ## [1.7.0] - 2026-09-12
 
