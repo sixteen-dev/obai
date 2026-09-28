@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ def _preliminary(
     *,
     deterministic_failure: bool = False,
     expected_outcome: str = "success",
+    with_not_applicable: bool = False,
 ) -> dict:
     assertions: dict[str, object] = {"manual_assertions": ["verify arithmetic"]}
     if deterministic_failure:
@@ -33,9 +35,19 @@ def _preliminary(
         "expected_outcome": expected_outcome,
         "assertions": assertions,
     }
-    plan = run_suite.choose_cases([case], max_api_calls=1)
+    # An opted-out machine plans T2 but never runs it (ADR 0004 §8).
+    optional_case = {
+        "id": "T2",
+        "feature": "optional options backtest",
+        "query": "Backtest an XSP put credit spread.",
+        "tier": "core",
+        "estimated_api_calls": 1,
+        "requires": ["options_backtest"],
+    }
+    cases = [case, optional_case] if with_not_applicable else [case]
+    plan = run_suite.choose_cases(cases, max_api_calls=1)
     cases_bytes = yaml.safe_dump(
-        {"default_tier": "core", "test_cases": [case]}, sort_keys=False
+        {"default_tier": "core", "test_cases": cases}, sort_keys=False
     ).encode()
     snapshot_path = run_dir / run_suite.CASES_SNAPSHOT_NAME
     snapshot_path.write_bytes(cases_bytes)
@@ -120,19 +132,28 @@ def _preliminary(
     assert judgment["unexecuted_assertions"]
     (run_dir / "judgments").mkdir()
     (run_dir / "judgments" / "T1.json").write_text(json.dumps(judgment))
+    results = [judgment]
+    if with_not_applicable:
+        not_applicable = run_suite._not_applicable_result(
+            optional_case, run_id="run-1", reason=plan.not_applicable["T2"]
+        )
+        (run_dir / "judgments" / "T2.json").write_text(json.dumps(not_applicable))
+        results.append(not_applicable)
     preliminary = {
         "schema_version": 1,
         "run_id": "run-1",
         "mode": "execute",
         "status": "complete",
-        "planned_count": 1,
+        "planned_count": len(results),
         "attempted_count": 1,
         "resumed_count": 0,
         "packet_count": 1,
-        "judged_count": 1,
-        "completed_case_ids": ["T1"],
+        "judged_count": len(results),
+        "completed_case_ids": [result["case_id"] for result in results],
         "missing_case_ids": [],
-        "skipped": [],
+        "skipped": [
+            {"id": result["case_id"], "reason": result["reason"]} for result in results[1:]
+        ],
         "complete": True,
         "estimated_api_calls": 1,
         "estimated_model_requests": 1,
@@ -141,8 +162,8 @@ def _preliminary(
         "hard_model_request_cap_enforced": False,
         "model_request_accounting_complete": True,
         "abort_reason": None,
-        "results": [judgment],
-        "verdict_counts": {expected_verdict: 1},
+        "results": results,
+        "verdict_counts": dict(Counter(result["verdict"] for result in results)),
         "exit_code": run_suite.EXIT_PRODUCT_FAILURE,
     }
     (run_dir / "results.json").write_text(json.dumps(preliminary))
@@ -195,6 +216,16 @@ def test_complete_evidence_backed_review_can_finalize_pass(tmp_path: Path) -> No
     assert result["results"][0]["verdict"] == "pass"
     assert result["results"][0]["deterministic_verdict"] == "needs_semantic_review"
     assert result["semantic_review_complete"] is True
+    assert result["exit_code"] == 0
+
+
+def test_not_applicable_case_finalizes_unchanged_without_a_packet(tmp_path: Path) -> None:
+    preliminary = _preliminary(tmp_path, with_not_applicable=True)
+
+    result = finalize_results(preliminary, _reviews(preliminary), run_dir=tmp_path)
+
+    assert [case["verdict"] for case in result["results"]] == ["pass", "skipped_not_applicable"]
+    assert result["results"][1] == preliminary["results"][1]
     assert result["exit_code"] == 0
 
 

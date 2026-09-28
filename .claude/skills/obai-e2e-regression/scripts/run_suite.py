@@ -26,10 +26,11 @@ from typing import Any
 
 import yaml
 from judge_packet import JudgeResult, judge_packet
-from lint_cases import CASE_ID_RE, LintIssue, lint_suite
+from lint_cases import CASE_ID_RE, OPTIONAL_CAPABILITY_ENV, LintIssue, lint_suite
 from preflight import (
     CredentialConfigurationError,
     effective_openai_credential_identity,
+    effective_regression_environment,
     redact_sensitive_text,
 )
 from run_one import (
@@ -55,6 +56,9 @@ EXIT_CONFIGURATION = 2
 EXIT_INFRASTRUCTURE = 3
 CHAIN_CONTINUATION_VERDICTS = frozenset({"pass", "pass_degraded", "needs_semantic_review"})
 SKIPPED_VERDICT = "skipped_dependency"
+NOT_APPLICABLE_VERDICT = "skipped_not_applicable"
+# Verdicts recorded without a paid call, attempt marker, or packet.
+SKIP_VERDICTS = frozenset({SKIPPED_VERDICT, NOT_APPLICABLE_VERDICT})
 # Harness statuses that mean the harness itself can no longer bind a query to
 # its evidence. These stay suite-fatal on the first occurrence. Statuses scoped
 # to a single case (cli_failed, async_followup_failed) are contained instead.
@@ -125,6 +129,9 @@ class SuitePlan:
     selected_tiers: tuple[str, ...]
     estimated_api_calls: int
     max_api_calls: int
+    # Planned case id => why it is not run: an optional capability it
+    # requires is off on this machine (ADR 0004 §8).
+    not_applicable: dict[str, str]
 
 
 def _tier(case: dict[str, Any]) -> str:
@@ -151,6 +158,80 @@ def _case_api_calls(case: dict[str, Any]) -> int:
             "deduplicated cases exactly once"
         )
     return value
+
+
+def enabled_optional_capabilities(
+    effective_env: dict[str, str], mapping: dict[str, str]
+) -> frozenset[str]:
+    """Resolve which optional capabilities the effective environment enables.
+
+    Args:
+        effective_env: Environment resolved exactly as ``obai`` resolves it.
+        mapping: Capability name to the opt-in variable that enables it.
+
+    Returns:
+        Capabilities whose variable is exactly ``true``; ``false`` or absent
+        leaves a capability off.
+
+    Raises:
+        PlanError: A variable holds anything but ``true`` or ``false``.
+    """
+    enabled: set[str] = set()
+    for capability, variable in mapping.items():
+        value = effective_env.get(variable)
+        if value is None or value == "false":
+            continue
+        if value != "true":
+            raise PlanError(
+                f"{variable}={value!r} is not 'true' or 'false' (read from the shell "
+                "environment, then ~/.obai/.env); fix it before planning the gate"
+            )
+        enabled.add(capability)
+    return frozenset(enabled)
+
+
+def _not_applicable_reason(capability: str) -> str:
+    """Explain why a case that needs ``capability`` does not run on this machine."""
+    # setup.sh's opt-in flag is named after the capability (ADR 0004 §3).
+    flag = "--with-" + capability.replace("_", "-")
+    return (
+        f"requires {capability}; {OPTIONAL_CAPABILITY_ENV[capability]} is not true in the "
+        f"effective environment — opt in with `obai start {flag}`"
+    )
+
+
+def _not_applicable_cases(
+    cases: list[dict[str, Any]], enabled_capabilities: frozenset[str]
+) -> dict[str, str]:
+    """Map each case whose required optional capability is off to its reason.
+
+    Args:
+        cases: Planned cases, in plan order.
+        enabled_capabilities: Optional capabilities enabled on this machine.
+
+    Returns:
+        Case id to reason, in plan order.
+
+    Raises:
+        PlanError: A case's ``requires`` names an unknown capability.
+    """
+    not_applicable: dict[str, str] = {}
+    for case in cases:
+        requires = case.get("requires", [])
+        known = isinstance(requires, list) and all(
+            isinstance(item, str) and item in OPTIONAL_CAPABILITY_ENV for item in requires
+        )
+        if not known:
+            raise PlanError(f"case {case['id']!r} requires unknown capabilities {requires!r}")
+        missing = [item for item in requires if item not in enabled_capabilities]
+        if missing:
+            not_applicable[str(case["id"])] = _not_applicable_reason(missing[0])
+    return not_applicable
+
+
+def _not_applicable_entries(plan: SuitePlan) -> list[dict[str, str]]:
+    """List the plan's not-applicable cases in plan order, as artifacts record them."""
+    return [{"id": case_id, "reason": reason} for case_id, reason in plan.not_applicable.items()]
 
 
 def _topological_order(
@@ -190,8 +271,14 @@ def choose_cases(
     allow_expensive: bool = False,
     max_api_calls: int = DEFAULT_MAX_API_CALLS,
     suite_budgets: dict[str, Any] | None = None,
+    enabled_capabilities: frozenset[str] = frozenset(),
 ) -> SuitePlan:
-    """Select an exact tier or ID set, close dependencies, and enforce cost ceilings."""
+    """Select an exact tier or ID set, close dependencies, and enforce cost ceilings.
+
+    A selected case whose required optional capability is not in
+    ``enabled_capabilities`` stays planned and inside the tier budgets, but is
+    listed in ``not_applicable`` and left out of the spend estimate.
+    """
     enabled = [case for case in cases if not case.get("disabled")]
     cases_by_id: dict[str, dict[str, Any]] = {}
     yaml_order: list[str] = []
@@ -240,7 +327,10 @@ def choose_cases(
 
     ordered = _topological_order(selected_ids, cases_by_id, yaml_order)
     selected_tiers = tuple(sorted({_tier(case) for case in ordered}))
-    estimated = sum(_case_api_calls(case) for case in ordered)
+    not_applicable = _not_applicable_cases(ordered, enabled_capabilities)
+    case_costs = {str(case["id"]): _case_api_calls(case) for case in ordered}
+    # Estimate what will be spent: a not-applicable case is never run.
+    estimated = sum(cost for case_id, cost in case_costs.items() if case_id not in not_applicable)
 
     has_opt_in_tier = any(tier in {"extended", "live"} for tier in selected_tiers)
     if has_opt_in_tier and not allow_expensive:
@@ -278,7 +368,7 @@ def choose_cases(
         elif max_calls is not None:
             raise PlanError(f"suite_budgets.{tier}.max_estimated_api_calls must be an integer")
 
-    return SuitePlan(ordered, selected_tiers, estimated, max_api_calls)
+    return SuitePlan(ordered, selected_tiers, estimated, max_api_calls, not_applicable)
 
 
 def _json_default(value: object) -> str:
@@ -432,6 +522,7 @@ def build_manifest(
         "calendar_anchor": calendar_anchor,
         "selected_tiers": list(plan.selected_tiers),
         "planned_count": len(plan.cases),
+        "not_applicable": _not_applicable_entries(plan),
         "estimated_api_calls": plan.estimated_api_calls,
         "estimated_model_requests": plan.estimated_api_calls,
         "between_case_model_request_limit": plan.max_api_calls,
@@ -480,6 +571,11 @@ def validate_resume_manifest(
         raise PlanError("selected tiers differ from the run manifest")
     if manifest.get("planned_count") != len(plan.cases):
         raise PlanError("planned case count differs from the run manifest")
+    if manifest.get("not_applicable", []) != _not_applicable_entries(plan):
+        raise PlanError(
+            "cases not applicable under the current optional-capability opt-ins differ "
+            "from the run manifest"
+        )
     if manifest.get("estimated_api_calls") != plan.estimated_api_calls:
         raise PlanError("estimated model-request cost differs from the run manifest")
     if manifest.get("between_case_model_request_limit") != plan.max_api_calls:
@@ -812,6 +908,7 @@ def _load_resume_judgment(
     run_dir: Path,
     expected_skip: tuple[str, str] | None = None,
     expected_execution_binding: dict[str, Any] | None = None,
+    not_applicable_reason: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
     if not judgment_path.exists():
         return None
@@ -837,8 +934,14 @@ def _load_resume_judgment(
         "inconclusive_harness",
         "inconclusive_missing_evidence",
         SKIPPED_VERDICT,
+        NOT_APPLICABLE_VERDICT,
     }:
         raise PlanError(f"resume judgment has invalid verdict for {case.get('id')}")
+    if verdict == NOT_APPLICABLE_VERDICT or not_applicable_reason is not None:
+        validated = _validated_not_applicable_judgment(
+            case, result, run_id=run_id, reason=not_applicable_reason
+        )
+        return validated, None
     if verdict == SKIPPED_VERDICT:
         if expected_skip is None:
             raise PlanError(
@@ -1007,6 +1110,75 @@ def _skipped_dependency_result(
     }
 
 
+def _not_applicable_result(case: dict[str, Any], *, run_id: str, reason: str) -> dict[str, Any]:
+    """Record a case whose optional capability is off: planned, never run, never passed.
+
+    Same shape as a dependency skip, with the case's declared ``requires`` in
+    place of the dependency parent.
+
+    Args:
+        case: The planned case.
+        run_id: Run the record belongs to.
+        reason: Why the case is not applicable, from the plan.
+
+    Returns:
+        The immutable judgment for the case.
+    """
+    return {
+        "run_id": run_id,
+        "case_id": str(case["id"]),
+        "verdict": NOT_APPLICABLE_VERDICT,
+        "expected_outcome": str(case.get("expected_outcome", "success")),
+        "observed_outcome": "not_run",
+        "checks_passed": [],
+        "checks_failed": [],
+        "missing_evidence": [],
+        "observed_tools": [],
+        "observed_skills": [],
+        "unexecuted_assertions": [],
+        "reason": reason,
+        "required_capabilities": list(case.get("requires", [])),
+        "runner_exit_code": None,
+        "packet_path": None,
+        "case_fingerprint": fingerprint_case(case),
+        "feature": case.get("feature", ""),
+        "observed_model_requests": 0,
+    }
+
+
+def _validated_not_applicable_judgment(
+    case: dict[str, Any], result: dict[str, Any], *, run_id: str, reason: str | None
+) -> dict[str, Any]:
+    """Accept a stored judgment only as the exact not-applicable record the plan expects.
+
+    Args:
+        case: The planned case.
+        result: The stored judgment.
+        run_id: Run being resumed or authenticated.
+        reason: The plan's not-applicable reason, or None when the case applies.
+
+    Returns:
+        The stored judgment, unchanged.
+
+    Raises:
+        PlanError: The capability flipped since the judgment, or it is stale.
+    """
+    case_id = case.get("id")
+    if reason is None:
+        raise PlanError(
+            f"resume judgment for {case_id} is not applicable but its required capability "
+            "is now enabled"
+        )
+    if result.get("verdict") != NOT_APPLICABLE_VERDICT:
+        raise PlanError(
+            f"resume judgment for {case_id} is {result.get('verdict')!r} but its required "
+            "capability is not enabled"
+        )
+    if result != _not_applicable_result(case, run_id=run_id, reason=reason):
+        raise PlanError(f"resume not-applicable judgment is stale for {case_id}")
+    return result
+
+
 def _dependency_skip(
     case: dict[str, Any],
     *,
@@ -1149,10 +1321,16 @@ def _execute_plan(
         judgment_path = judgments_dir / f"{case_id}.json"
         attempt_path = attempts_dir / f"{case_id}.json"
         packet_path = run_dir / f"{case_id}.json"
-        skip_decision = _dependency_skip(
-            case,
-            verdict_by_id=verdict_by_id,
-            observed_outcome_by_id=observed_outcome_by_id,
+        # Not applicable outranks a dependency skip: the case cannot run here at all.
+        not_applicable_reason = plan.not_applicable.get(case_id)
+        skip_decision = (
+            None
+            if not_applicable_reason is not None
+            else _dependency_skip(
+                case,
+                verdict_by_id=verdict_by_id,
+                observed_outcome_by_id=observed_outcome_by_id,
+            )
         )
         loaded_attempt = (
             _load_attempt(
@@ -1174,19 +1352,20 @@ def _execute_plan(
                 run_dir=run_dir,
                 expected_skip=skip_decision,
                 expected_execution_binding=(loaded_attempt[1] if loaded_attempt else None),
+                not_applicable_reason=not_applicable_reason,
             )
             if loaded is not None:
                 prior_result, prior_packet = loaded
-                if prior_result["verdict"] != SKIPPED_VERDICT and loaded_attempt is None:
+                if prior_result["verdict"] not in SKIP_VERDICTS and loaded_attempt is None:
                     raise PlanError(f"resume judgment has no attempt marker for {case_id}")
-                if prior_result["verdict"] == SKIPPED_VERDICT and loaded_attempt is not None:
+                if prior_result["verdict"] in SKIP_VERDICTS and loaded_attempt is not None:
                     raise PlanError(f"resume skipped judgment has an attempt marker for {case_id}")
                 results.append(prior_result)
                 verdict_by_id[case_id] = str(prior_result["verdict"])
                 observed_outcome_by_id[case_id] = str(
                     prior_result.get("observed_outcome", "unknown")
                 )
-                if prior_result["verdict"] == SKIPPED_VERDICT:
+                if prior_result["verdict"] in SKIP_VERDICTS:
                     skipped.append(
                         {
                             "id": case_id,
@@ -1194,7 +1373,7 @@ def _execute_plan(
                         }
                     )
                 prior_requests = prior_result.get("observed_model_requests")
-                if prior_result["verdict"] != SKIPPED_VERDICT:
+                if prior_result["verdict"] not in SKIP_VERDICTS:
                     if (
                         isinstance(prior_requests, bool)
                         or not isinstance(prior_requests, int)
@@ -1234,6 +1413,20 @@ def _execute_plan(
                         )
                         break
                 continue
+
+        if not_applicable_reason is not None and loaded_attempt is not None:
+            raise PlanError(
+                f"case {case_id} has a paid attempt marker but its required capability "
+                "is not enabled; refusing to record it as not applicable"
+            )
+        if not_applicable_reason is not None:
+            skipped.append({"id": case_id, "reason": not_applicable_reason})
+            result = _not_applicable_result(case, run_id=run_id, reason=not_applicable_reason)
+            results.append(result)
+            verdict_by_id[case_id] = NOT_APPLICABLE_VERDICT
+            observed_outcome_by_id[case_id] = "not_run"
+            write_immutable_json(judgment_path, result)
+            continue
 
         if skip_decision is not None:
             parent, reason = skip_decision
@@ -1558,10 +1751,15 @@ def _validate_existing_results(
         case_id = str(case["id"])
         if stored_result.get("case_id") != case_id:
             raise PlanError(f"existing result order mismatch at {case_id}")
-        skip_decision = _dependency_skip(
-            case,
-            verdict_by_id=verdict_by_id,
-            observed_outcome_by_id=observed_outcome_by_id,
+        not_applicable_reason = plan.not_applicable.get(case_id)
+        skip_decision = (
+            None
+            if not_applicable_reason is not None
+            else _dependency_skip(
+                case,
+                verdict_by_id=verdict_by_id,
+                observed_outcome_by_id=observed_outcome_by_id,
+            )
         )
         attempt_path = run_dir / "attempts" / f"{case_id}.json"
         loaded_attempt = (
@@ -1582,15 +1780,16 @@ def _validate_existing_results(
             run_dir=run_dir,
             expected_skip=skip_decision,
             expected_execution_binding=(loaded_attempt[1] if loaded_attempt else None),
+            not_applicable_reason=not_applicable_reason,
         )
         if loaded is None:
             raise PlanError(f"existing result for {case_id} has no bound judgment")
         validated, _packet = loaded
         if stored_result != validated:
             raise PlanError(f"existing result differs from its judgment for {case_id}")
-        if validated["verdict"] != SKIPPED_VERDICT and loaded_attempt is None:
+        if validated["verdict"] not in SKIP_VERDICTS and loaded_attempt is None:
             raise PlanError(f"existing result has no attempt marker for {case_id}")
-        if validated["verdict"] == SKIPPED_VERDICT and loaded_attempt is not None:
+        if validated["verdict"] in SKIP_VERDICTS and loaded_attempt is not None:
             raise PlanError(f"existing skipped result has an attempt marker for {case_id}")
         observed = validated.get("observed_model_requests")
         if isinstance(observed, bool) or not isinstance(observed, int) or observed < 0:
@@ -1605,9 +1804,9 @@ def _validate_existing_results(
     skipped_entries = [
         {"id": str(result["case_id"]), "reason": str(result.get("reason", ""))}
         for result in validated_results
-        if result["verdict"] == SKIPPED_VERDICT
+        if result["verdict"] in SKIP_VERDICTS
     ]
-    non_skipped_count = sum(result["verdict"] != SKIPPED_VERDICT for result in validated_results)
+    non_skipped_count = sum(result["verdict"] not in SKIP_VERDICTS for result in validated_results)
     attempted = summary.get("attempted_count")
     resumed = summary.get("resumed_count")
     if (
@@ -1625,7 +1824,7 @@ def _validate_existing_results(
     expected_attempt_names = {
         f"{result['case_id']}.json"
         for result in validated_results
-        if result["verdict"] != SKIPPED_VERDICT
+        if result["verdict"] not in SKIP_VERDICTS
     }
     expected_claim_names = set(expected_attempt_names)
     actual_judgment_names = {
@@ -1691,6 +1890,7 @@ def _dry_run_summary(plan: SuitePlan) -> dict[str, Any]:
         "completed_case_ids": [],
         "missing_case_ids": [str(case["id"]) for case in plan.cases],
         "skipped": [],
+        "not_applicable": _not_applicable_entries(plan),
         "complete": False,
         "estimated_api_calls": plan.estimated_api_calls,
         "estimated_model_requests": plan.estimated_api_calls,
@@ -1807,6 +2007,16 @@ def main() -> int:
     # silently inheriting the much larger default-core allowance.
     planning_cap = explicit_max_calls if explicit_max_calls is not None else sys.maxsize
 
+    # Resolved from the same effective environment `obai status` and every paid
+    # query see, so a case never runs against a component this machine lacks.
+    try:
+        enabled_capabilities = enabled_optional_capabilities(
+            effective_regression_environment(), OPTIONAL_CAPABILITY_ENV
+        )
+    except ValueError as exc:
+        print(f"ERROR: {redact_sensitive_text(exc)}", file=sys.stderr)
+        return EXIT_CONFIGURATION
+
     try:
         suite_budgets = raw.get("suite_budgets")
         if not isinstance(suite_budgets, dict):
@@ -1827,10 +2037,13 @@ def main() -> int:
             allow_expensive=args.allow_expensive,
             max_api_calls=planning_cap,
             suite_budgets=suite_budgets,
+            enabled_capabilities=enabled_capabilities,
         )
     except PlanError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return EXIT_CONFIGURATION
+    for case_id, reason in plan.not_applicable.items():
+        print(f"WARNING: {case_id} is not applicable and will not run: {reason}", file=sys.stderr)
     if any(tier in {"live", "extended"} for tier in plan.selected_tiers) and (
         explicit_max_calls is None
     ):
@@ -1853,6 +2066,7 @@ def main() -> int:
             selected_tiers=plan.selected_tiers,
             estimated_api_calls=plan.estimated_api_calls,
             max_api_calls=plan.estimated_api_calls,
+            not_applicable=plan.not_applicable,
         )
 
     run_dir = args.run_dir or _default_run_dir()

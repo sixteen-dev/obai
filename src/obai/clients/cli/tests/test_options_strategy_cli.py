@@ -3,7 +3,9 @@
 `obai query` is what the E2E gate drives, so its `_run_query` must return the
 Options Strategy Agent's passthrough verbatim rather than hub-authored text,
 and `obai status` must check the options-backtest server so the paid gate
-refuses to start while it is down (ADR 0003 §2.8, §4.4).
+refuses to start while it is down (ADR 0003 §2.8, §4.4). The server is an
+opt-in component, so `status` checks it only when `ENABLE_OPTIONS_STRATEGY`
+is true and otherwise leaves it out entirely (ADR 0004 §6).
 """
 
 from __future__ import annotations
@@ -23,10 +25,10 @@ from typer.testing import CliRunner
 
 from clients.cli.chat import _run_query, cli
 from core_agents.central_hub_agent import OptionsStrategyPassthroughEvent
-from core_agents.config import get_config
+from core_agents.config import get_config, reset_config
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
 runner = CliRunner()
 
@@ -95,13 +97,24 @@ async def test_run_query_returns_the_options_strategy_passthrough(
     assert result["response"] == specialist
 
 
-def test_status_checks_the_options_backtest_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`obai status` lists the options-backtest server at its configured URL."""
+@pytest.fixture
+def opt_in_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
+    """Start from a fresh config with the options-backtest opt-in absent."""
+    monkeypatch.delenv("ENABLE_OPTIONS_STRATEGY", raising=False)
+    reset_config()
+    yield monkeypatch
+    reset_config()
+
+
+def test_status_checks_the_options_backtest_server(opt_in_env: pytest.MonkeyPatch) -> None:
+    """Opted in, `obai status` lists the options-backtest server at its configured URL."""
+    opt_in_env.setenv("ENABLE_OPTIONS_STRATEGY", "true")
+    reset_config()
 
     async def _reachable(client: Any, name: str, url: str) -> dict[str, Any]:
         return {"name": name, "url": url, "status": "ok", "latency_ms": 1}
 
-    monkeypatch.setattr("clients.cli.chat._check_server", _reachable)
+    opt_in_env.setattr("clients.cli.chat._check_server", _reachable)
 
     result = runner.invoke(cli, ["status", "--json"])
 
@@ -109,3 +122,22 @@ def test_status_checks_the_options_backtest_server(monkeypatch: pytest.MonkeyPat
     servers = json.loads(result.output)["servers"]
     checked = {entry["name"]: entry["url"] for entry in servers}
     assert checked["Options Backtest"] == get_config().mcp_options_backtest_url
+
+
+def test_default_status_omits_the_options_backtest_server(opt_in_env: pytest.MonkeyPatch) -> None:
+    """Opted out, the server is not listed, so it cannot fail `status` (ADR 0004 §0)."""
+    backtest_url = get_config().mcp_options_backtest_url
+
+    async def _only_backtest_down(client: Any, name: str, url: str) -> dict[str, Any]:
+        status = "connection_refused" if url == backtest_url else "ok"
+        return {"name": name, "url": url, "status": status, "latency_ms": 1}
+
+    opt_in_env.setattr("clients.cli.chat._check_server", _only_backtest_down)
+
+    result = runner.invoke(cli, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "Options Backtest" not in {entry["name"] for entry in payload["servers"]}
+    assert backtest_url not in {entry["url"] for entry in payload["servers"]}
+    assert payload["all_healthy"] is True

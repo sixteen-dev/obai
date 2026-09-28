@@ -146,10 +146,11 @@ class TestAgentConfig:
         with pytest.raises(ValidationError):
             AgentConfig(options_strategy_max_turns=101)
 
-    def test_options_strategy_is_enabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert AgentConfig().enable_options_strategy is True
-        monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "false")
+    def test_options_strategy_is_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Opt-in component: off unless ``ENABLE_OPTIONS_STRATEGY=true`` (ADR 0004 §1)."""
         assert AgentConfig().enable_options_strategy is False
+        monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "true")
+        assert AgentConfig().enable_options_strategy is True
 
     def test_default_compact_ratio(self) -> None:
         """Hub compaction is on by default at 90% of the model window."""

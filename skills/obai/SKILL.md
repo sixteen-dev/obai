@@ -183,7 +183,7 @@ uv run python -m evaluation evaluate --suite --category A
 
 **Auth error** (`exit 3`): Usually means `OPENAI_API_KEY` is not set. Check the environment.
 
-**MCP connection error** (`exit 3`): One or more servers are down. Run `obai status --json` to diagnose, then suggest `./setup.sh` or `docker compose up -d`.
+**MCP connection error** (`exit 3`): One or more servers are down. Run `obai status --json` to diagnose, then suggest `obai start`, which brings every enabled server back up — including the optional options-backtest server when it is opted in, which a bare `docker compose up -d` would miss.
 
 ## Configuration (Environment Variables)
 

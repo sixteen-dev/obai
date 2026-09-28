@@ -834,7 +834,9 @@ test_cases:
   # an honest refusal: the route, the service tool behind it, the typed codes
   # the service emits, and no performance figure. The figure guard is scoped
   # to asserting clauses so reporting that no return exists is not read as
-  # stating one.
+  # stating one. The server is an optional, opt-in component (ADR 0004 §8):
+  # without ENABLE_OPTIONS_STRATEGY=true these cases are recorded
+  # skipped_not_applicable, never run and never counted as passed.
   - id: CORE-OPTSTRAT-UNAVAILABLE
     feature: options_strategy_backtest_typed_unavailability
     query: "Backtest an XSP put credit spread from 2019-01-02 through 2024-12-31: every Monday, sell the put closest to 30 delta in the expiration nearest 10 days out and buy the put 5 points below it in the same expiration, one contract at a time, held to expiration in a $10,000 cash account. How much would it have returned?"
@@ -853,6 +855,7 @@ test_cases:
     data_contract_id: options-backtest-routing-slice-v1
     provider_revisions_allowed: true
     tier: core
+    requires: [options_backtest]
     estimated_api_calls: 6
     max_cli_turns: 1
     cost: {class: low, max_specialist_calls: 1}
@@ -885,6 +888,7 @@ test_cases:
     data_contract_id: options-backtest-routing-slice-v1
     provider_revisions_allowed: true
     tier: core
+    requires: [options_backtest]
     estimated_api_calls: 6
     max_cli_turns: 1
     cost: {class: low, max_specialist_calls: 1}
@@ -914,6 +918,7 @@ test_cases:
     data_contract_id: options-backtest-routing-slice-v1
     provider_revisions_allowed: true
     tier: core
+    requires: [options_backtest]
     estimated_api_calls: 6
     max_cli_turns: 1
     cost: {class: low, max_specialist_calls: 1}
@@ -952,6 +957,7 @@ test_cases:
     timezone: America/New_York
     max_age_seconds: 86400
     tier: core
+    requires: [options_backtest]
     estimated_api_calls: 8
     max_cli_turns: 1
     cost: {class: medium, max_specialist_calls: 2}

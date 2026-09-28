@@ -716,6 +716,23 @@ def test_skipped_dependency_cases_do_not_crash_the_walk(
     assert "CORE-SKIP" not in _read_report(session_dir)["intersection"]
 
 
+def test_skipped_not_applicable_is_not_a_decided_verdict() -> None:
+    """A case an opted-out machine never ran stays outside the scored intersection."""
+    results = [
+        br.CaseResult(
+            "CORE-OPTSTRAT-MIXED",
+            "skipped_not_applicable",
+            "skipped_not_applicable",
+            "options_strategy",
+            None,
+            None,
+        ),
+        br.CaseResult("CORE-FX", "pass", "pass", "fx", 10.0, None),
+    ]
+
+    assert br.decided_case_ids(results) == {"CORE-FX"}
+
+
 def test_ranking_prefers_strict_then_total_then_cost(
     tmp_path: Path, prices_path: Path, ledger_path: Path
 ):

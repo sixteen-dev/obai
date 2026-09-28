@@ -56,6 +56,10 @@ RELATIVE_TIME_RE = re.compile(
 )
 YEAR_RE = re.compile(r"\b(20\d{2})\b")
 CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+# Optional installed components a case may declare in ``requires``, each mapped
+# to the opt-in variable that enables it (ADR 0004 §8). A case whose component
+# is off is planned but recorded ``skipped_not_applicable``, never run.
+OPTIONAL_CAPABILITY_ENV: dict[str, str] = {"options_backtest": "ENABLE_OPTIONS_STRATEGY"}
 
 
 @dataclass(frozen=True)
@@ -477,6 +481,35 @@ def _validate_async_contract(case: dict[str, Any], issues: list[LintIssue], case
             "cost.max_async_polls",
         )
         return
+
+
+def _validate_requires(case: dict[str, Any], issues: list[LintIssue], case_id: str) -> None:
+    """Require ``requires``, when present, to name distinct known optional capabilities.
+
+    Args:
+        case: One parsed case mapping.
+        issues: Findings list this appends to.
+        case_id: Case id used in the finding.
+    """
+    if "requires" not in case:
+        return
+    requires = case["requires"]
+    valid = (
+        isinstance(requires, list)
+        and bool(requires)
+        and all(isinstance(item, str) and item in OPTIONAL_CAPABILITY_ENV for item in requires)
+        and len(set(requires)) == len(requires)
+    )
+    if not valid:
+        _issue(
+            issues,
+            "error",
+            "invalid-requires",
+            f"requires must be a non-empty list of distinct capabilities from "
+            f"{sorted(OPTIONAL_CAPABILITY_ENV)}",
+            case_id,
+            "requires",
+        )
 
 
 def _detect_cycles(cases_by_id: dict[str, dict[str, Any]], issues: list[LintIssue]) -> None:
@@ -973,6 +1006,7 @@ def lint_suite(raw: object, *, as_of: date | None = None, strict: bool = False) 
                 )
         _validate_assertions(entry, issues, case_id, strict=strict)
         _validate_async_contract(entry, issues, case_id)
+        _validate_requires(entry, issues, case_id)
 
     for case_id, case in cases_by_id.items():
         parent_id = case.get("chain_from")

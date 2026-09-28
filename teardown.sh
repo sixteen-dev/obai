@@ -44,7 +44,11 @@ fi
 
 # --- Stop MCP servers ---
 echo -e "\n${BOLD}=== Stopping MCP data servers ===${NC}\n"
-if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" down 2>/dev/null; then
+# Always name the optional server's profile, whatever the saved opt-in says:
+# `down` skips a container whose profile is inactive, so one left by an earlier
+# opt-in would keep running. With no such container the flag costs nothing
+# (ADR 0004 §5).
+if docker compose --profile options-backtest -p obai -f "$REPO_ROOT/docker-compose.yml" down 2>/dev/null; then
     info "MCP servers stopped"
 else
     fail "Could not stop MCP servers (may not be running)"

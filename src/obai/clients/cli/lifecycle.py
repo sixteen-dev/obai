@@ -15,7 +15,11 @@ Two checkout shapes are distinguished for `upgrade` only:
   reclone, or stash: only a clean, strictly-behind current branch is
   fast-forwarded; anything else refuses with guidance.
 
-`start`, `stop`, and `restart` behave identically for both shapes.
+`start`, `stop`, and `restart` behave identically for both shapes. `start`
+and `restart` forward the optional options-backtest opt-in to setup.sh, which
+persists it; a flag makes `start` a restart so a running web UI applies it.
+`stop` and `upgrade` take none, so an upgrade applies the saved choice
+(ADR 0004 §6).
 """
 
 from __future__ import annotations
@@ -66,12 +70,12 @@ def _run(cmd: list[str], cwd: Path) -> int:
     return completed.returncode
 
 
-def _run_script(repo_root: Path, script: str) -> None:
-    """Execute a lifecycle shell script, raising on a non-zero exit."""
+def _run_script(repo_root: Path, script: str, *args: str) -> None:
+    """Execute a lifecycle shell script with args, raising on a non-zero exit."""
     script_path = repo_root / script
     if not script_path.is_file():
         _fail(f"{script} not found in {repo_root} — the checkout looks incomplete.")
-    code = _run(["bash", str(script_path)], repo_root)
+    code = _run(["bash", str(script_path), *args], repo_root)
     if code != 0:
         raise typer.Exit(code)
 
@@ -258,8 +262,35 @@ def _upgrade_status(repo_root: Path, branch: str) -> str:
 # --- Command implementations ---
 
 
-def run_start() -> None:
-    """Bring up Docker services and the web UI via setup.sh."""
+def _setup_args(options_backtest: bool | None) -> list[str]:
+    """Translate the options-backtest opt-in into setup.sh arguments.
+
+    Args:
+        options_backtest: True/False to persist that choice, None to keep the
+            one already saved in ~/.obai/.env.
+
+    Returns:
+        The setup.sh flag for the choice, or no arguments for None.
+    """
+    if options_backtest is None:
+        return []
+    return ["--with-options-backtest" if options_backtest else "--without-options-backtest"]
+
+
+def run_start(*, options_backtest: bool | None = None) -> None:
+    """Bring up Docker services and the web UI via setup.sh.
+
+    With an opt-in flag this is a restart: setup.sh never relaunches a web UI
+    that is already running, and that UI's hub would keep the old
+    options-strategy route (ADR 0004 §6).
+
+    Args:
+        options_backtest: Opt in to (True) or out of (False) the optional
+            options-backtest server; None keeps the saved choice.
+    """
+    if options_backtest is not None:
+        run_restart(options_backtest=options_backtest)
+        return
     _run_script(_resolve_repo(), _SETUP_SCRIPT)
 
 
@@ -268,11 +299,16 @@ def run_stop() -> None:
     _run_script(_resolve_repo(), _TEARDOWN_SCRIPT)
 
 
-def run_restart() -> None:
-    """Stop everything, then start it back up."""
+def run_restart(*, options_backtest: bool | None = None) -> None:
+    """Stop everything, then start it back up.
+
+    Args:
+        options_backtest: Opt in to (True) or out of (False) the optional
+            options-backtest server; None keeps the saved choice.
+    """
     repo_root = _resolve_repo()
     _run_script(repo_root, _TEARDOWN_SCRIPT)
-    _run_script(repo_root, _SETUP_SCRIPT)
+    _run_script(repo_root, _SETUP_SCRIPT, *_setup_args(options_backtest))
 
 
 def run_upgrade(*, assume_yes: bool) -> None:

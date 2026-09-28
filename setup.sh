@@ -18,6 +18,10 @@
 #   ./setup.sh --skip-opik    # Skip Opik tracing stack
 #   ./setup.sh --skip-mcp     # Skip MCP servers (start later)
 #   ./setup.sh --prompt-keys  # Interactively prompt for missing API keys
+#   ./setup.sh --with-options-backtest     # Also install and enable the optional
+#                                          # options-backtest server (saved to ~/.obai/.env)
+#   ./setup.sh --without-options-backtest  # Turn it off again and remove its container (saved)
+#   ./setup.sh --help         # Show this help
 #
 # Prerequisites:
 #   - Docker + Docker Compose v2 (or Rancher Desktop exposing `docker` + `docker compose`)
@@ -47,7 +51,17 @@ SKIP_OPIK=false
 SKIP_MCP=false
 PROMPT_KEYS=false
 LOCAL_BUILD=false
+OPTIONS_BACKTEST_FLAG=""   # true|false when this run was given --with/--without-options-backtest
 export OBAI_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "unknown")"
+
+# Record --with/--without-options-backtest; the two together are ambiguous.
+set_options_backtest_flag() {
+    if [ -n "$OPTIONS_BACKTEST_FLAG" ] && [ "$OPTIONS_BACKTEST_FLAG" != "$1" ]; then
+        echo -e "${RED}Choose one: --with-options-backtest or --without-options-backtest${NC}"
+        exit 1
+    fi
+    OPTIONS_BACKTEST_FLAG="$1"
+}
 
 # --- Parse args ---
 for arg in "$@"; do
@@ -56,8 +70,11 @@ for arg in "$@"; do
         --skip-mcp)    SKIP_MCP=true ;;
         --local)       LOCAL_BUILD=true ;;
         --prompt-keys) PROMPT_KEYS=true ;;
+        --with-options-backtest)    set_options_backtest_flag true ;;
+        --without-options-backtest) set_options_backtest_flag false ;;
         --help|-h)
-            head -22 "$0" | tail -16
+            # The whole Usage block, however long it grows (ADR 0004 §3).
+            sed -n '/^# Usage:/,/^# Prerequisites:/p' "$0" | sed '$d;s/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -154,6 +171,60 @@ diagnose_install_failure() {
     echo "    obai upgrade         # or: ./setup.sh"
 }
 
+# A ~/.obai/.env line as load_env_file sees it before matching a key: no UTF-8
+# BOM, no trailing CR, no leading space.
+normalise_env_line() {
+    local line="${1#$'\xEF\xBB\xBF'}"
+    line="${line%$'\r'}"
+    printf '%s' "${line#"${line%%[![:space:]]*}"}"
+}
+
+# Count the lines of $OBAI_ENV_FILE that match REGEX once normalised.
+count_env_lines() {
+    local regex="$1"
+    local line count=0
+
+    [ -f "$OBAI_ENV_FILE" ] || { echo 0; return 0; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$(normalise_env_line "$line")" =~ $regex ]]; then
+            count=$((count + 1))
+        fi
+    done < "$OBAI_ENV_FILE"
+    echo "$count"
+}
+
+# Set NAME=VALUE in $OBAI_ENV_FILE. The first line any reader takes as NAME
+# (normalised as above; the CLI and the gate also accept space before `=`)
+# becomes NAME=VALUE and later ones are dropped, so setup.sh (last line wins)
+# and the CLI (first line wins) read the same value; with no such line, one is
+# appended. The only code in this script that writes the file (prompt_key and
+# the options-backtest opt-in both call it). Every other line is kept as-is; a
+# last line without a newline gets one, so an append never glues onto it. The
+# temp copy is owner-only before any key is written to it.
+save_env_key() {
+    local name="$1"
+    local value="$2"
+    local tmp="${OBAI_ENV_FILE}.tmp"
+    local line found=false
+
+    mkdir -p "$OBAI_DIR"
+    touch "$OBAI_ENV_FILE"
+    : > "$tmp"
+    chmod 600 "$tmp"
+    while IFS= read -r line || [ -n "$line" ]; do
+        if ! [[ "$(normalise_env_line "$line")" =~ ^${name}[[:space:]]*= ]]; then
+            printf '%s\n' "$line"
+        elif [ "$found" = false ]; then
+            printf '%s=%s\n' "$name" "$value"
+            found=true
+        fi
+    done < "$OBAI_ENV_FILE" > "$tmp"
+    if [ "$found" = false ]; then
+        printf '%s=%s\n' "$name" "$value" >> "$tmp"
+    fi
+    mv "$tmp" "$OBAI_ENV_FILE"
+}
+
 prompt_key() {
     local name="$1"
     local desc="$2"
@@ -163,25 +234,63 @@ prompt_key() {
     read -r value
     if [ -n "$value" ]; then
         export "$name=$value"
-        # Append or update in env file
-        mkdir -p "$OBAI_DIR"
-        if grep -q "^${name}=" "$OBAI_ENV_FILE" 2>/dev/null; then
-            local tmp="${OBAI_ENV_FILE}.tmp"
-            while IFS= read -r line; do
-                if [[ "$line" == "${name}="* ]]; then
-                    echo "${name}=${value}"
-                else
-                    echo "$line"
-                fi
-            done < "$OBAI_ENV_FILE" > "$tmp"
-            mv "$tmp" "$OBAI_ENV_FILE"
-        else
-            echo "${name}=${value}" >> "$OBAI_ENV_FILE"
-        fi
-        chmod 600 "$OBAI_ENV_FILE"
+        save_env_key "$name" "$value"
         ok "$name saved"
     fi
 }
+
+# Whether setup.sh and the CLI read the same opt-in from $OBAI_ENV_FILE: at
+# most one line assigns it, in the `KEY=` form both parse. Two lines split them
+# (setup.sh takes the last, the CLI the first), and so does space before `=`
+# (only the CLI reads that line).
+opt_in_lines_read_alike() {
+    local any exact
+    any="$(count_env_lines '^ENABLE_OPTIONS_STRATEGY[[:space:]]*=')"
+    exact="$(count_env_lines '^ENABLE_OPTIONS_STRATEGY=')"
+    [ "$any" -le 1 ] && [ "$any" -eq "$exact" ]
+}
+
+# Where the loaded opt-in came from, for an error message: load_env_file sets
+# it only from a line of the file, so with no line it is a shell export.
+opt_in_source() {
+    if [ "$(count_env_lines '^ENABLE_OPTIONS_STRATEGY=')" -gt 0 ]; then
+        echo "in $OBAI_ENV_FILE"
+    else
+        echo "exported in your shell ($OBAI_ENV_FILE has no line for it)"
+    fi
+}
+
+# Resolve the options-backtest opt-in (ADR 0004 §1, §3). A flag on this run
+# wins and is saved; otherwise ~/.obai/.env decides, and a missing line means
+# off (the file is not touched). Sets OPTIONS_BACKTEST=true|false and
+# OPTIONS_BACKTEST_CHANGED, and exports the value so the Web UI this run starts
+# routes by the same choice.
+resolve_options_backtest() {
+    OPTIONS_BACKTEST_CHANGED=false
+    if [ -n "$OPTIONS_BACKTEST_FLAG" ]; then
+        if [ "${ENABLE_OPTIONS_STRATEGY:-false}" != "$OPTIONS_BACKTEST_FLAG" ]; then
+            OPTIONS_BACKTEST_CHANGED=true
+        fi
+        OPTIONS_BACKTEST="$OPTIONS_BACKTEST_FLAG"
+        save_env_key ENABLE_OPTIONS_STRATEGY "$OPTIONS_BACKTEST"
+        ok "Saved ENABLE_OPTIONS_STRATEGY=$OPTIONS_BACKTEST to $OBAI_ENV_FILE"
+    elif ! opt_in_lines_read_alike; then
+        fail "$OBAI_ENV_FILE must set ENABLE_OPTIONS_STRATEGY on one line, as ENABLE_OPTIONS_STRATEGY=true or ENABLE_OPTIONS_STRATEGY=false."
+        info "Re-run with --with-options-backtest or --without-options-backtest to reset it."
+        exit 1
+    elif [ -z "${ENABLE_OPTIONS_STRATEGY+x}" ]; then
+        OPTIONS_BACKTEST=false
+    elif [ "$ENABLE_OPTIONS_STRATEGY" = true ] || [ "$ENABLE_OPTIONS_STRATEGY" = false ]; then
+        OPTIONS_BACKTEST="$ENABLE_OPTIONS_STRATEGY"
+    else
+        fail "ENABLE_OPTIONS_STRATEGY='${ENABLE_OPTIONS_STRATEGY}' $(opt_in_source) is not 'true' or 'false'."
+        info "Re-run with --with-options-backtest or --without-options-backtest to reset it."
+        exit 1
+    fi
+    export ENABLE_OPTIONS_STRATEGY="$OPTIONS_BACKTEST"
+}
+
+resolve_options_backtest
 
 # =============================================================================
 # Step 1: Prerequisites
@@ -422,24 +531,31 @@ fi
 if [ "$SKIP_MCP" = false ]; then
     step "5/8 Building and starting MCP servers"
 
+    # The optional options-backtest server sits behind a compose profile
+    # (ADR 0004 §2): only an opted-in run pulls, builds or starts it.
+    COMPOSE=(docker compose -p obai -f "$REPO_ROOT/docker-compose.yml")
+    if [ "$OPTIONS_BACKTEST" = true ]; then
+        COMPOSE+=(--profile options-backtest)
+    fi
+
     if [ "$LOCAL_BUILD" = true ]; then
         info "Building MCP server images from local source (--local)..."
-        docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
+        "${COMPOSE[@]}" build
     else
         info "Pulling pre-built images from GHCR..."
-        if docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" pull 2>/dev/null; then
+        if "${COMPOSE[@]}" pull 2>/dev/null; then
             ok "Pre-built images pulled successfully"
         else
             warn "Could not pull pre-built images — building locally"
-            info "Building 9 MCP server images (this may take a few minutes on first run)..."
-            docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" build
+            info "Building MCP server images (this may take a few minutes on first run)..."
+            "${COMPOSE[@]}" build
         fi
     fi
 
     info "Starting MCP servers..."
     # --remove-orphans drops containers (e.g. obai-qdrant) for services that
     # were removed from docker-compose.yml since the last run.
-    docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" up -d --remove-orphans
+    "${COMPOSE[@]}" up -d --remove-orphans
 
     # Health check
     info "Waiting for servers to become healthy..."
@@ -462,8 +578,10 @@ if [ "$SKIP_MCP" = false ]; then
         "backtest:8007"
         "research:8008"
         "prediction-markets:8009"
-        "options-backtest:8012"
     )
+    if [ "$OPTIONS_BACKTEST" = true ]; then
+        servers+=("options-backtest:8012")
+    fi
 
     # `/health` is liveness only — the server is up but may have no working
     # provider keys. `/health/ready` additionally verifies upstream
@@ -494,6 +612,23 @@ if [ "$SKIP_MCP" = false ]; then
     # fi
 else
     step "5/8 Skipping MCP servers (--skip-mcp)"
+fi
+
+# Opted out: remove a container left by an earlier opt-in. `down` and
+# --remove-orphans both skip it while its profile is inactive (ADR 0004 §2),
+# and --skip-mcp does not exempt it: opting out leaves nothing running. The
+# read-only query comes first, so a run with nothing to remove changes nothing.
+# Neither call is silenced: a failure must stop the run rather than report the
+# server as off.
+OPTIONS_BACKTEST_REMOVED=false
+if [ "$OPTIONS_BACKTEST" = false ]; then
+    leftover="$(docker ps -aq --filter label=com.docker.compose.project=obai \
+        --filter label=com.docker.compose.service=options-backtest-server)"
+    if [ -n "$leftover" ]; then
+        info "Removing the options-backtest container left by an earlier opt-in..."
+        docker compose -p obai -f "$REPO_ROOT/docker-compose.yml" rm --stop --force options-backtest-server
+        OPTIONS_BACKTEST_REMOVED=true
+    fi
 fi
 
 # =============================================================================
@@ -664,6 +799,23 @@ if [ "$SKIP_MCP" = false ]; then
     echo "    backtest        http://localhost:8007/mcp"
     echo "    research        http://localhost:8008/mcp"
     echo "    prediction-mkts http://localhost:8009/mcp"
+    if [ "$OPTIONS_BACKTEST" = true ]; then
+        echo "    options-backtest http://localhost:8012/mcp"
+    else
+        echo "  Options backtesting (optional) is off — enable with: obai start --with-options-backtest"
+    fi
+fi
+
+# Only a run that changed the saved choice, or removed a container a running
+# Web UI may still route to, has anything to add.
+if [ "$OPTIONS_BACKTEST_CHANGED" = true ] || [ "$OPTIONS_BACKTEST_REMOVED" = true ]; then
+    echo ""
+    echo "  Options backtesting is now $([ "$OPTIONS_BACKTEST" = true ] && echo on || echo off)."
+    echo "  OBaI sessions that were already running keep the old setting until relaunched (obai restart)."
+    if [ "$OPTIONS_BACKTEST" = false ]; then
+        echo "  Its Docker image was kept; to reclaim the space:"
+        echo "    docker image rm ghcr.io/sixteen-dev/obai/options-backtest-server:${OBAI_VERSION}"
+    fi
 fi
 
 echo ""

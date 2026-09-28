@@ -657,12 +657,16 @@ async def _initialize_unreachable(self: BaseAgent) -> None:
 
 @pytest.fixture
 def offline_hub_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
-    """Patch every specialist's ``initialize`` and the hub prompt; isolate config."""
+    """Patch every specialist's ``initialize`` and the hub prompt; isolate config.
+
+    The options-strategy route is opt-in (ADR 0004 §7), so the fixture opts in;
+    tests of the off state override or remove the variable themselves.
+    """
     for agent_class in _AGENT_CLASSES:
         monkeypatch.setattr(agent_class, "initialize", _initialize_offline)
     monkeypatch.setattr(central_hub_agent, "load_prompt", lambda *_a, **_k: "hub instructions")
     monkeypatch.setenv("ENABLE_GUARDRAILS", "false")
-    monkeypatch.delenv("ENABLE_OPTIONS_STRATEGY", raising=False)
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "true")
     reset_config()
     yield monkeypatch
     reset_config()
@@ -721,6 +725,21 @@ class TestOptionsStrategyInit:
         offline_hub_env.setenv("ENABLE_OPTIONS_STRATEGY", "false")
         reset_config()
         constructor = MagicMock(side_effect=AssertionError("constructed while disabled"))
+        offline_hub_env.setattr(central_hub_agent, "OptionsStrategyAgent", constructor)
+        hub = CentralHubAgent()
+
+        asyncio.run(hub.initialize())
+
+        constructor.assert_not_called()
+        assert hub.options_strategy_agent is None
+        assert hub.degraded_capabilities == []
+        assert "options_strategy_analysis" not in _tool_names(hub)
+
+    def test_unset_flag_is_the_default_off_state(self, offline_hub_env: pytest.MonkeyPatch) -> None:
+        """A fresh install never writes the opt-in, so the variable is absent (ADR 0004 §7)."""
+        offline_hub_env.delenv("ENABLE_OPTIONS_STRATEGY")
+        reset_config()
+        constructor = MagicMock(side_effect=AssertionError("constructed without the opt-in"))
         offline_hub_env.setattr(central_hub_agent, "OptionsStrategyAgent", constructor)
         hub = CentralHubAgent()
 
@@ -902,6 +921,19 @@ class TestOptionsStrategyRoutingFacts:
         assert "__TERMINAL_TOOL_OUTPUT__:options_strategy_analysis:" in skill
         assert "OPTIONS_STRATEGY_HANDOFF_ERROR:" in skill
         assert "e.g." not in skill
+
+    def test_new_skill_names_the_absent_route_as_an_optional_component(self) -> None:
+        """An absent tool is either not opted in or an opted-in server that is down.
+
+        The hub cannot tell the two apart, so the skill names both; no command (ADR 0004 §7).
+        """
+        skill = _read("hub_skills/obai-options-strategy-routing/SKILL.md")
+
+        assert "optional component" in skill
+        assert "not enabled in this installation" in skill
+        assert "its server is not running" in skill
+        assert "options backtest server is unavailable" not in skill
+        assert "--with-options-backtest" not in skill
 
     def test_strategy_routing_skill_excludes_options_structures(self) -> None:
         skill = _read("hub_skills/obai-strategy-routing/SKILL.md")

@@ -92,13 +92,21 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 curl -fsSL https://openbell.ai/install.sh | bash
 ```
 
-Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services (including the web UI), and installs the `obai` CLI.
+Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts the default services and the web UI (the optional options-backtest server only with `--with-options-backtest`), and installs the `obai` CLI.
 
 > **Note:** the key prompts read from stdin, which the pipe above is already using
 > for the script itself. To be prompted, download and run it in two steps instead:
 > `curl -fsSL https://openbell.ai/install.sh -o install.sh && bash install.sh`.
 > Piping still works — it just skips the prompts, and you add your keys to
 > `~/.obai/.env` afterwards.
+
+The options-backtest server (options-strategy validation) is optional and off by default. To install and enable it, pass the flag through the pipe (or append it to `bash install.sh` in the two-step form):
+
+```bash
+curl -fsSL https://openbell.ai/install.sh | bash -s -- --with-options-backtest
+```
+
+The choice is saved as `ENABLE_OPTIONS_STRATEGY` in `~/.obai/.env`, so later `obai start`, `obai restart`, and `obai upgrade` runs keep it; `--without-options-backtest` turns it off again and removes its container.
 
 Then chat with OBaI:
 
@@ -112,7 +120,12 @@ obai stop          # stop everything (Docker images and your data are preserved)
 obai start         # bring it back up
 obai restart       # stop, then start
 obai upgrade       # pull the latest version and restart on it (prompts first; -y to skip)
+
+obai start --with-options-backtest     # also run the optional options-backtest server (saved)
+obai start --without-options-backtest  # turn it off again and remove its container (saved)
 ```
+
+`obai restart` takes the same two flags. With either flag, both commands restart services that are already running so the web UI picks up the change; without one, the saved choice applies.
 
 `obai upgrade` fetches the latest release, re-pulls the versioned Docker images, and restarts the services and web UI automatically. The underlying `./setup.sh` / `./teardown.sh` scripts still work if you prefer running them from `~/.local/share/obai`.
 
@@ -153,7 +166,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 11 MCP servers (Docker Compose)
+5. Builds and starts the 10 default MCP servers, plus the optional options-backtest server when opted in (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
@@ -164,6 +177,8 @@ The setup script:
 | `--skip-opik` | Skip the Opik tracing stack |
 | `--skip-mcp` | Skip MCP servers (start them later) |
 | `--prompt-keys` | Interactively prompt for missing API keys |
+| `--with-options-backtest` | Also install and enable the optional options-backtest server; saved to `~/.obai/.env` for later runs |
+| `--without-options-backtest` | Turn the options-backtest server off again and remove its container; saved to `~/.obai/.env` |
 
 ### Pinning a Version
 
@@ -187,7 +202,7 @@ obai upgrade
 
 ## Running the System
 
-Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that all eleven servers are healthy:
+Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that every enabled server is healthy:
 
 ```bash
 obai status
@@ -205,8 +220,12 @@ docker compose -p obai ps                                           # list runni
 docker compose -p obai logs -f market-data-server                   # tail one server's logs
 docker compose -p obai restart                                      # restart all MCP servers
 docker compose -p obai up -d                                        # start just the MCP servers
+docker compose --profile options-backtest -p obai up -d             # ...including the optional options-backtest server
 docker compose -p obai-opik -f infra/opik/docker-compose.yml up -d  # start just Opik
 ```
+
+The options-backtest server sits behind the Compose profile `options-backtest`, so a raw `docker compose` command sees it only when you pass `--profile options-backtest`. `obai start` / `./setup.sh` add the profile for you when you have opted in.
+
 </details>
 
 ---
@@ -262,7 +281,7 @@ obai web         # serve the web UI
 | **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
 | **prediction-markets-server** | 8009 | Polymarket | Market discovery, executable pricing (bid/ask/depth), price history, trade flow, holder concentration, leaderboard, wallet tracing, setup-based backtesting |
 | **crypto-server** | 8010 | Coinbase Advanced Trade (public) | Spot product resolution, best bid/ask, order books, latest trades, OHLCV with source-quality checks, execution-grade spot backtests (trend/mean-reversion), trade logs, and internal paper-ledger strategy artifacts. No API key required. |
-| **options-backtest-server** | 8012 | None yet (no qualified historical options data) | Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP): verticals, iron condors, long straddles and strangles, single long options. Historical backtesting is reported unavailable until the historical data work package lands. No API key required; the port is bound to localhost (local single-user license). |
+| **options-backtest-server** | 8012 | None yet (no qualified historical options data) | **Optional, opt-in.** Off by default; install and enable it with `--with-options-backtest` (see [Install](#install)). Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP): verticals, iron condors, long straddles and strangles, single long options. Historical backtesting is reported unavailable until the historical data work package lands. No API key required; the port is bound to localhost (local single-user license). |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -417,6 +436,7 @@ Key environment variables (all have sensible defaults):
 | `STRATEGY_MODEL` | `gpt-6-sol` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `false` | Run faithfulness/completeness scoring on every query in the TUI/CLI |
+| `ENABLE_OPTIONS_STRATEGY` | `false` | Optional options-backtest server and the `options_strategy_analysis` route; written to `~/.obai/.env` by `setup.sh --with-options-backtest` |
 | `OPIK_ENABLED` | `true` | Enable Opik tracing |
 | `OPIK_URL` | `http://localhost:5173` | Opik server URL |
 | `MCP_TIMEOUT` | `180` | MCP request timeout (seconds), between 1 and 300 |

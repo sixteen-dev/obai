@@ -49,7 +49,7 @@ A result starting `OPTIONS_STRATEGY_HANDOFF_ERROR:` without the marker is a pre-
 
 Historical options backtesting is unavailable in this deployment. The specialist reports that with the service's typed reason. The Hub never substitutes a performance, drawdown, win-rate, or return figure, a proxy equity backtest through `strategy_analysis`, or current-market analysis through `options_analysis` for the unavailable result.
 
-If `options_strategy_analysis` is not among the available tools, say the options backtest server is unavailable. Do not route the request to `strategy_analysis` or `options_analysis`, and do not answer from training data.
+If `options_strategy_analysis` is not among the available tools, say that options-strategy backtesting is unavailable right now, and that either this optional component is not enabled in this installation (it is enabled at install or start time) or its server is not running. Do not route the request to `strategy_analysis` or `options_analysis`, and do not answer from training data.
 
 ## Follow-ups
 

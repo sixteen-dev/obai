@@ -80,6 +80,8 @@ Execution is serial. `run_suite.py` automatically runs the zero-model-call prefl
 
 Preflight resolves the inherited environment plus the CLI-managed `~/.obai/.env` with the same no-override precedence as `obai`. That effective environment is shared with `obai status` and paid query subprocesses, so Opik/model/MCP settings cannot point the helper and CLI at different services. `OPENAI_API_KEY` may come from either source; an inherited value has precedence. The key is never printed or copied into run artifacts.
 
+A case that declares `requires: [options_backtest]` needs the optional options-backtest server, whose opt-in `ENABLE_OPTIONS_STRATEGY` (written by `obai start --with-options-backtest`) is read from that same effective environment: exactly `true` runs the case; `false` or unset keeps it planned but records it `skipped_not_applicable` with its reason — no paid call, never counted as passed, left out of the spend estimate — and prints one stderr line per case in dry-run and paid modes alike; any other value exits 2 before a manifest is written. Dry-run results and the manifest list these cases under `not_applicable`, and a resume whose opt-in differs from the manifest's is refused.
+
 Before a paid subprocess can start, the runner writes `<run-dir>/cases.snapshot.yaml` once, binds its SHA-256 and path in the manifest, and passes only that snapshot to `run_one.py`. The manifest also binds the exact runner/preflight/judge-packet paths and bytes, prompt/runtime tree, the content digest of `~/.obai/.env`, effective model/MCP/cache/Opik/base-URL settings, `~/.obai/preferences.json`, `~/.obai/settings.json`, and domain-separated digests of active secret settings including the *effective* OpenAI credential (inherited environment first, then `~/.obai/.env`); no secret value is serialized. The snapshot, manifest, runtime, helper bytes, preferences, hub settings, and credential identity are rechecked before every case, and `run_one.py` rechecks its full input fingerprint before the initial request and each async poll.
 
 `~/.obai/settings.json` is where the web UI and `obai config` store the user-chosen hub model and reasoning effort, so binding it is what stops a hub swap from producing a byte-identical fingerprint and replaying a cached result for a configuration that never ran. An absent file is the normal state and hashes identically everywhere. Precedence is unchanged: `ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` in the environment still outrank the file, so the gate can pin the hub by injecting those variables, and both the injected value and the file it overrides stay bound in the fingerprint.
@@ -135,6 +137,7 @@ For `relative` and `live` cases, the manifest records one suite-wide calendar an
 - `needs_semantic_review`: deterministic checks passed, but one or more listed financial/qualitative assertions remain.
 - `inconclusive_provider`, `inconclusive_harness`, `inconclusive_missing_evidence`: no pass claim is allowed.
 - `skipped_dependency`: no paid child call occurred because its parent branch or verdict made it inapplicable.
+- `skipped_not_applicable`: no paid call occurred because the case `requires` an optional component this machine has not opted into. It proves nothing about that case.
 
 Every `required_text` / `forbidden_text` spec declares a `kind`. A `structural`
 spec pins a phrasing-independent fact — a ticker, currency code, ISO date,
@@ -221,7 +224,9 @@ This writes two human-readable reports from the same structured artifacts:
 Verdict | Reason | Trace | Latency |` row per case, plus a compact evidence
 block under each non-pass case) — and `<run-dir>/report.html` — the styled
 dashboard (stat cards, verdict bar, per-case cards). Cite both paths in the
-handoff. Do not use `--open` unless the user asks to open the browser. Report selected tiers, planned/attempted/skipped counts, estimated and observed model requests, every final verdict, abort reason, and artifact paths. Exit codes are `0` clean, `1` product failure or pending semantic review, `2` configuration/review artifact error, and `3` infrastructure/provider/missing-evidence incompleteness.
+handoff. Do not use `--open` unless the user asks to open the browser. Report selected tiers, planned/attempted/skipped counts, estimated and observed model requests, every final verdict, abort reason, and artifact paths. Name every `skipped_not_applicable` case and its reason: exit `0` means the cases that ran are clean, not that those cases were tested. Exit codes are `0` clean, `1` product failure or pending semantic review, `2` configuration/review artifact error, and `3` infrastructure/provider/missing-evidence incompleteness.
+
+Release gate for the options route: a core run with the four `CORE-OPTSTRAT-*` cases `skipped_not_applicable` is not the release gate for a release whose diff touches `src/options-backtest-server/`, `core_agents/options_strategy_agent.py`, `prompts/options_strategy.md`, the `obai-options-strategy-routing` skill, or those four cases; run such a release's gate opted in (`ENABLE_OPTIONS_STRATEGY=true`) and require `skipped: []`. For any other release the 22-case run is the gate, and the handoff names the four skipped ids.
 
 ## Maintaining cases
 

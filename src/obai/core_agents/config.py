@@ -363,9 +363,10 @@ class AgentConfig(BaseSettings):
 
     # Options strategy route (design §17.3 enable flag). Disabled means the
     # agent is never constructed and the hub gets no options_strategy_analysis
-    # tool; it is not reported as a degraded capability.
+    # tool; it is not reported as a degraded capability. Opt-in component; the
+    # installer writes ENABLE_OPTIONS_STRATEGY=true to ~/.obai/.env (ADR 0004 §1).
     enable_options_strategy: bool = Field(
-        default=True,
+        default=False,
         description="Enable the options strategy specialist and its hub tool",
     )
 

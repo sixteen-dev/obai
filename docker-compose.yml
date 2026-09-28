@@ -339,6 +339,10 @@ services:
       start_period: 30s
 
   options-backtest-server:
+    # Optional, opt-in component (ADR 0004 §2): excluded from pull/build/up
+    # unless the profile is active. setup.sh passes it only when
+    # ENABLE_OPTIONS_STRATEGY=true; teardown always passes it.
+    profiles: ["options-backtest"]
     image: ghcr.io/sixteen-dev/obai/options-backtest-server:${OBAI_VERSION:-latest}
     build:
       context: ./src/options-backtest-server

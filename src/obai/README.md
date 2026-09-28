@@ -59,7 +59,8 @@ OBaI/
 ### 1. Start MCP Servers
 
 ```bash
-# Using Docker Compose (recommended)
+# Using Docker Compose (recommended). The optional options-backtest server
+# starts only with its profile: docker compose --profile options-backtest up -d
 docker compose up -d
 
 # Or start individually
@@ -72,7 +73,7 @@ cd src/portfolio-server && uv run fastmcp run server.py      # :8006
 cd src/backtest-server && uv run fastmcp run server.py       # :8007
 cd src/research-server && uv run fastmcp run server.py       # :8008
 cd src/prediction-markets-server && uv run python -m src.server  # :8009
-cd src/options-backtest-server && uv run python -m options_backtest.server  # :8012
+cd src/options-backtest-server && uv run python -m options_backtest.server  # :8012 (optional; ENABLE_OPTIONS_STRATEGY=true)
 ```
 
 ### 2. Set Environment Variables
@@ -88,7 +89,7 @@ export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
 export MCP_BACKTEST_URL=http://localhost:8007/mcp
 export MCP_RESEARCH_URL=http://localhost:8008/mcp
 export MCP_PREDICTION_MARKETS_URL=http://localhost:8009/mcp
-export MCP_OPTIONS_BACKTEST_URL=http://localhost:8012/mcp
+export MCP_OPTIONS_BACKTEST_URL=http://localhost:8012/mcp  # optional; with ENABLE_OPTIONS_STRATEGY=true
 export EXA_API_KEY=...                                    # research-server
 ```
 
@@ -164,7 +165,7 @@ uv run python test_connection.py
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
 10. **Crypto Agent** (:8010): Coinbase spot markets — quotes, order books, OHLCV, execution-grade spot backtests, paper-ledger artifacts. Uses public market data (no keys required).
-11. **Options Strategy Agent** (:8012): Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP). Compiles the user's rules into a strategy document, validates it against options-backtest-server, and is a terminal author the hub relays verbatim. Historical backtesting is reported unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) until qualified data exists; it never produces a performance figure. Follows the Strategy Agent's model and reasoning effort.
+11. **Options Strategy Agent** (:8012; optional, `ENABLE_OPTIONS_STRATEGY=true`): Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP). Compiles the user's rules into a strategy document, validates it against options-backtest-server, and is a terminal author the hub relays verbatim. Historical backtesting is reported unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) until qualified data exists; it never produces a performance figure. Follows the Strategy Agent's model and reasoning effort.
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)

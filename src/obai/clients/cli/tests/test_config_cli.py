@@ -287,3 +287,92 @@ def test_show_matches_a_lowercase_env_var(
     assert (
         _row(result.output, "hub model") == "hub model gpt-5.6-terra (from env ORCHESTRATOR_MODEL)"
     )
+
+
+# --- show: the optional options-backtest component (ADR 0004 §6) ---
+
+
+@pytest.fixture
+def env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point `config show` at a temp ~/.obai/.env with the opt-in absent from the env."""
+    path = tmp_path / ".env"
+    monkeypatch.setattr("clients.cli.chat._ENV_FILE", path)
+    monkeypatch.delenv("ENABLE_OPTIONS_STRATEGY", raising=False)
+    return path
+
+
+def test_show_reports_options_backtest_disabled_by_default(
+    settings_file: Path, env_file: Path
+) -> None:
+    """No file line and no env var: the shipped default, with the command that enables it."""
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert _row(result.output, "options backtest") == (
+        "options backtest disabled (from default) enable with: obai start --with-options-backtest"
+    )
+
+
+def test_show_reports_the_env_file_opt_in(settings_file: Path, env_file: Path) -> None:
+    """setup.sh's persisted `true` reads as enabled and is attributed to the file."""
+    env_file.write_text("OPENAI_API_KEY=sk-test\nENABLE_OPTIONS_STRATEGY=true\n")
+
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert _row(result.output, "options backtest") == (
+        "options backtest enabled (from ~/.obai/.env)"
+    )
+    assert "Warning" not in result.output
+
+
+def test_show_attributes_the_loaded_file_value_to_the_file(
+    settings_file: Path,
+    env_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`obai` copies the file into the environment first; an equal value is the file's own."""
+    env_file.write_text("ENABLE_OPTIONS_STRATEGY=true\n")
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "true")
+
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert _row(result.output, "options backtest") == (
+        "options backtest enabled (from ~/.obai/.env)"
+    )
+    assert "Warning" not in result.output
+
+
+def test_show_warns_when_the_environment_outranks_the_env_file(
+    settings_file: Path,
+    env_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shell export that differs from the file is what the hub reads; say so."""
+    env_file.write_text("ENABLE_OPTIONS_STRATEGY=true\n")
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "false")
+
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert _row(result.output, "options backtest") == (
+        "options backtest disabled (from env ENABLE_OPTIONS_STRATEGY) "
+        "enable with: obai start --with-options-backtest"
+    )
+    assert "Warning: ENABLE_OPTIONS_STRATEGY=false" in result.output
+    assert "outranks" in result.output
+
+
+def test_show_rejects_an_opt_in_value_the_hub_cannot_parse(
+    settings_file: Path, env_file: Path
+) -> None:
+    """A hand-edited non-boolean fails loudly instead of reading as disabled."""
+    env_file.write_text("ENABLE_OPTIONS_STRATEGY=maybe\n")
+
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 1
+    assert "ENABLE_OPTIONS_STRATEGY='maybe'" in result.output
+    assert "--without-options-backtest" in result.output
+    assert "Traceback" not in result.output
