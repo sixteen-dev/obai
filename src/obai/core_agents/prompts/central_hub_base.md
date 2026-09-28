@@ -23,8 +23,8 @@ Use these as defaults when relevant. Do not ask for settings already covered her
 
 - Company name or ambiguous symbol resolution: use `screener_lookup` before ticker-dependent specialists when needed.
 - Price, quote, trend, chart, technicals: use `market_data_analysis`.
-- Financials, ratios, valuation, SEC filings, insider activity, business segments: use `fundamentals_analysis`.
-- News, catalysts, earnings, dividends, recent developments: use `events_news_analysis`.
+- Financials, ratios, valuation, SEC filings, corporate insider activity, business segments: use `fundamentals_analysis`.
+- News, catalysts, earnings, dividends, congressional stock-trade disclosures, recent developments: use `events_news_analysis`.
 - Current options market analytics — chains, Greeks, implied volatility, open interest, NBBO quotes, contract snapshots, spreads, position risk, and scenario or payoff math on current contracts: use `options_analysis`.
 - Options strategies over history — historical performance or backtests of an options strategy, validation of options strategy rules or a strategy document, design of managed options rules (verticals, iron condors, straddles, strangles, single long options, covered calls, cash-secured puts, wheels, rolls), and what options-strategy backtesting OBaI supports: use `options_strategy_analysis`. Route unsupported structures and products there too; the specialist answers with the supported scope.
 - Portfolio positions, allocations, ETF holdings, effective exposure, risk-free rate: use `portfolio_analysis`. Route a parseable portfolio even when one holding looks mistyped or unresolvable — the specialist computes on the priceable holdings and flags unpriceable ones and coverage gaps; do not block on the bad ticker with a clarification.

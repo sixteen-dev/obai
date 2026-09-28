@@ -1618,8 +1618,10 @@ class CentralHubAgent:
                             "Get AI-scored company news with impact ratings, "
                             "earnings history (dates, EPS estimates vs actual, revenue), "
                             "dividend schedules (ex-dates, payment dates, yield), "
+                            "congressional stock-trade disclosures, "
                             "and market-moving catalysts. "
-                            "Use for news, earnings, dividends, or event-related questions."
+                            "Use for news, earnings, dividends, congressional trading, "
+                            "or event-related questions."
                         ),
                         on_stream=_create_stream_handler(
                             "events_news_analysis", "Events & News Agent"
