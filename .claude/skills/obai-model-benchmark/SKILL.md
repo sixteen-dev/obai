@@ -13,7 +13,7 @@ Every combo is one full paid run. Two combos on `core` is two release gates. Dis
 
 ## Scope limits
 
-- Valid combos are `HUB_MODELS` x `HUB_REASONING_EFFORTS` from `core_agents.hub_settings` — today `{gpt-5.6-sol, gpt-5.6-terra}` x `{medium, high, xhigh, max}`. Anything else is rejected, not coerced.
+- Valid combos are `HUB_MODELS` x `HUB_REASONING_EFFORTS` from `core_agents.hub_settings` — today `{gpt-6-sol, gpt-5.6-sol, gpt-5.6-terra}` x `{medium, high, xhigh, max}`. Anything else is rejected, not coerced.
 - Tiers are `smoke` and `core` only. The `live` tier is refused: it is a provider-freshness canary whose outcomes move with the market, so it cannot separate two models.
 - The hub is pinned per run by injecting `ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` into each child process. Those outrank `~/.obai/settings.json` by design. **Never edit `~/.obai/settings.json` during a benchmark session** — the incumbent is resolved once, before any injection, and the gate binds that file into every run fingerprint. Changing it mid-session invalidates the comparison and can break resume.
 - Recommendation only. Changing the shipped default is a separate, separately reviewed edit.
@@ -37,8 +37,8 @@ Zero paid calls. This validates combos, tier, environment, and prints the plan:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-model-benchmark/scripts/benchmark_suite.py \
-  --combos gpt-5.6-sol:high,gpt-5.6-terra:high --tier core \
-  --session-dir <new-session-dir> --max-api-calls-per-combo 187 --dry-run
+  --combos gpt-6-sol:xhigh,gpt-5.6-terra:max --tier core \
+  --session-dir <new-session-dir> --max-api-calls-per-combo 220 --dry-run
 ```
 
 No mode flag also means dry-run. Nothing is written and no subprocess is spawned. Confirm the combo order, the tier, the per-combo cap, the total cap, and the incumbent line before proposing execution.
@@ -56,8 +56,8 @@ Get explicit authorization for that disclosed total. Authorization for one stage
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-model-benchmark/scripts/benchmark_suite.py \
-  --combos gpt-5.6-sol:high,gpt-5.6-terra:high --tier core \
-  --session-dir <new-session-dir> --max-api-calls-per-combo 187 --execute
+  --combos gpt-6-sol:xhigh,gpt-5.6-terra:max --tier core \
+  --session-dir <new-session-dir> --max-api-calls-per-combo 220 --execute
 ```
 
 Combos run one at a time into `<session-dir>/<model>@<effort>/`, each a normal gate run directory. Child output streams through. The orchestrator adds nothing to the gate's own preflight, snapshotting, or budget accounting; it records a `source_digest` of the runtime tree per combo so the final report can prove the code and prompts did not drift between runs.

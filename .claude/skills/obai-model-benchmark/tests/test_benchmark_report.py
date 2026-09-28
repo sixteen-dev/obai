@@ -19,13 +19,13 @@ if TYPE_CHECKING:
 
 HUB_MODEL = "gpt-5.6-sol"
 ALT_MODEL = "gpt-5.6-terra"
-SPECIALIST_MODEL = "gpt-5.6-luna"
+SPECIALIST_MODEL = "gpt-6-luna"
 
 PRICES = {
     "prices": {
         "gpt-5.6-sol": {"input": 2.0, "cached_input": 0.5, "output": 8.0},
         "gpt-5.6-terra": {"input": 4.0, "cached_input": 1.0, "output": 16.0},
-        "gpt-5.6-luna": {"input": 1.0, "cached_input": 0.25, "output": 4.0},
+        "gpt-6-luna": {"input": 1.0, "cached_input": 0.25, "output": 4.0},
     }
 }
 

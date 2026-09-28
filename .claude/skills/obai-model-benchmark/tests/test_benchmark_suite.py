@@ -90,6 +90,7 @@ if __name__ == "__main__":
 
 SOL = "gpt-5.6-sol"
 TERRA = "gpt-5.6-terra"
+SOL6 = "gpt-6-sol"
 TWO_COMBOS = f"{SOL}:medium,{TERRA}:high"
 
 
@@ -407,19 +408,19 @@ def test_execute_injects_the_hub_pin_and_runs_from_the_repo_root(
 
 def test_execute_writes_a_complete_session_manifest(tmp_path: Path, stub_suite: StubSuite) -> None:
     session = tmp_path / "session"
-    # Includes the shipped incumbent (terra/max) so the manifest's
+    # Includes the shipped incumbent (gpt-6-sol/xhigh) so the manifest's
     # incumbent_included flag is exercised in its True state.
-    combos = f"{SOL}:medium,{TERRA}:max"
+    combos = f"{SOL}:medium,{SOL6}:xhigh"
     assert bs.main(execute_argv(session_dir=session, stub=stub_suite, combos=combos)) == 0
     manifest = read_session(session)
     assert manifest["schema_version"] == 1
     assert manifest["tier"] == "smoke"
     assert manifest["max_api_calls_per_combo"] == 45
-    assert manifest["incumbent"] == {"model": TERRA, "effort": "max"}
+    assert manifest["incumbent"] == {"model": SOL6, "effort": "xhigh"}
     assert manifest["incumbent_included"] is True
     assert [combo["run_dir"] for combo in manifest["combos"]] == [
         f"{SOL}@medium",
-        f"{TERRA}@max",
+        f"{SOL6}@xhigh",
     ]
     assert [combo["status"] for combo in manifest["combos"]] == ["complete", "complete"]
     digests = {combo["source_digest"] for combo in manifest["combos"]}

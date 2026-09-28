@@ -15,6 +15,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   upstream commit into in-memory DuckDB and rechecked hourly. Each trade links
   its official House or Senate filing and carries the disclosure lag.
 
+### Changed
+
+- **Default models move to the GPT-6 family.** The Hub now ships on
+  `gpt-6-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
+  fundamentals, events/news, options, screener, portfolio, and research run
+  `gpt-6-luna` at `xhigh` (was `gpt-5.6-luna` / `medium`). Strategy, crypto, and
+  prediction markets run `gpt-6-sol`, still at `medium`, and the guardrail runs
+  `gpt-6-luna`. `gpt-5.6-sol` and `gpt-5.6-terra` remain selectable hub models.
+  An existing `~/.obai/settings.json` or `ORCHESTRATOR_*` env pin still wins
+  over the new hub default.
+- Hub compaction falls back to a documented input window for `gpt-6-sol`, which
+  the installed Agents SDK does not know yet, instead of disabling compaction.
+
 ## [1.7.0] - 2026-09-12
 
 Minor: AutoTrader becomes safe to schedule. Paper orders now submit exactly once

@@ -86,11 +86,11 @@ class TestAgentConfig:
     def test_default_models(self) -> None:
         """Test default model values."""
         config = AgentConfig()
-        assert config.orchestrator_model == "gpt-5.6-terra"
-        assert config.specialist_model == "gpt-5.6-luna"
+        assert config.orchestrator_model == "gpt-6-sol"
+        assert config.specialist_model == "gpt-6-luna"
 
-    def test_every_default_model_is_gpt_5_6(self) -> None:
-        """No OpenAI-facing default may drift off the gpt-5.6 price tier.
+    def test_every_default_model_is_gpt_6(self) -> None:
+        """No OpenAI-facing default may drift off the gpt-6 price tier.
 
         Every model default we ship bills the user per query. Pinning the
         whole set here means a stale model name shows up as a test failure
@@ -109,15 +109,15 @@ class TestAgentConfig:
             "guardrail": config.guardrail_model,
         }
         off_tier = {
-            name: model for name, model in defaults.items() if not model.startswith("gpt-5.6-")
+            name: model for name, model in defaults.items() if not model.startswith("gpt-6-")
         }
-        assert not off_tier, f"default models off the gpt-5.6 tier: {off_tier}"
+        assert not off_tier, f"default models off the gpt-6 tier: {off_tier}"
 
     def test_default_reasoning_effort(self) -> None:
-        """The hub ships at max; every specialist tier stays at medium."""
+        """Hub and luna specialists ship at xhigh; the sol specialists at medium."""
         config = AgentConfig()
-        assert config.orchestrator_reasoning_effort == "max"
-        assert config.specialist_reasoning_effort == "medium"
+        assert config.orchestrator_reasoning_effort == "xhigh"
+        assert config.specialist_reasoning_effort == "xhigh"
         assert config.strategy_reasoning_effort == "medium"
         assert config.crypto_reasoning_effort == "medium"
         assert config.prediction_markets_reasoning_effort == "medium"
@@ -309,8 +309,8 @@ class TestHubSettingsFilePrecedence:
     def test_missing_file_falls_back_to_shipped_defaults(self) -> None:
         """Fresh install and upgraded install both land here — no migration."""
         config = get_config()
-        assert config.orchestrator_model == "gpt-5.6-terra"
-        assert config.orchestrator_reasoning_effort == "max"
+        assert config.orchestrator_model == "gpt-6-sol"
+        assert config.orchestrator_reasoning_effort == "xhigh"
 
     def test_settings_file_does_not_touch_specialists(self, tmp_path: Path) -> None:
         """The toggle is hub-only; specialist tiers stay code-owned."""
@@ -320,8 +320,8 @@ class TestHubSettingsFilePrecedence:
         reset_config()
 
         config = get_config()
-        assert config.specialist_model == "gpt-5.6-luna"
-        assert config.specialist_reasoning_effort == "medium"
+        assert config.specialist_model == "gpt-6-luna"
+        assert config.specialist_reasoning_effort == "xhigh"
         assert config.get_agent_reasoning_effort("strategy") == "medium"
 
 
