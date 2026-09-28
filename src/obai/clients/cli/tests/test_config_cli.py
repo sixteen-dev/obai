@@ -191,8 +191,10 @@ def test_show_reports_shipped_defaults_without_a_settings_file(settings_file: Pa
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-5.6-terra (from shipped default)"
-    assert _row(result.output, "reasoning effort") == "reasoning effort max (from shipped default)"
+    assert _row(result.output, "hub model") == "hub model gpt-6-sol (from shipped default)"
+    assert (
+        _row(result.output, "reasoning effort") == "reasoning effort xhigh (from shipped default)"
+    )
 
 
 def test_show_reports_the_settings_file_as_the_source(settings_file: Path) -> None:
@@ -204,20 +206,22 @@ def test_show_reports_the_settings_file_as_the_source(settings_file: Path) -> No
     assert result.exit_code == 0
     assert str(settings_file) in result.output
     assert _row(result.output, "hub model") == "hub model gpt-5.6-sol (from settings file)"
-    assert _row(result.output, "reasoning effort") == "reasoning effort max (from settings file)"
+    assert _row(result.output, "reasoning effort") == "reasoning effort xhigh (from settings file)"
 
 
 def test_show_distinguishes_a_chosen_default_from_the_shipped_default(
     settings_file: Path,
 ) -> None:
     """A field written to the file reads as chosen even when it equals the default."""
-    settings_file.write_text(json.dumps({"hub_model": "gpt-5.6-terra"}))
+    settings_file.write_text(json.dumps({"hub_model": "gpt-6-sol"}))
 
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-5.6-terra (from settings file)"
-    assert _row(result.output, "reasoning effort") == "reasoning effort max (from shipped default)"
+    assert _row(result.output, "hub model") == "hub model gpt-6-sol (from settings file)"
+    assert (
+        _row(result.output, "reasoning effort") == "reasoning effort xhigh (from shipped default)"
+    )
 
 
 def test_show_reports_env_vars_as_the_source(

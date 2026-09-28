@@ -43,7 +43,7 @@ SESSION_MANIFEST_NAME = "benchmark_session.json"
 # The guardrail agent/tool span pair RECON pinned in every captured packet.
 GUARDRAIL_SPAN_NAMES = frozenset({"obai_financial_query_guardrail", "financial_query_guardrail"})
 # Shipped specialist/guardrail models; they are legitimate in any combo's run.
-SHIPPED_NON_HUB_MODELS = frozenset({"gpt-5.6-luna", "gpt-5.6-terra"})
+SHIPPED_NON_HUB_MODELS = frozenset({"gpt-6-luna", "gpt-6-sol"})
 # Real ancestor chains are <= 5 deep; anything past this is a cycle or corruption.
 MAX_ANCESTOR_DEPTH = 50
 STRICT_VERDICT = "pass"

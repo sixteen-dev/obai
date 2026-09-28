@@ -977,7 +977,7 @@ def _echo_hub_saved(label: str, value: str, path: Path, env_var: str) -> None:
 def config_set_model(
     model: str = typer.Argument(
         ...,
-        help="Hub model name (e.g., gpt-5.6-sol, gpt-5.6-terra)",
+        help="Hub model name (e.g., gpt-6-sol, gpt-5.6-terra)",
     ),
 ) -> None:
     """Set the hub model in ~/.obai/settings.json."""

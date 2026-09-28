@@ -3,12 +3,21 @@
 #
 # Standard-tier, short-context rates from
 # https://developers.openai.com/api/docs/pricing as of 2026-08-15 (reflects
-# the 2026-07-30 terra/luna price cut). Each model also has a long-context
-# tier (~2x input, ~1.5x output) that no gate turn has ever approached
+# the 2026-07-30 terra/luna price cut); gpt-6 rates from the per-model pages
+# on 2026-09-25. Each model also has a long-context tier (2x input, 1.5x
+# output; gpt-6 above 272K input tokens) that no gate turn has ever approached
 # (largest observed case: ~52k total tokens); if a benchmarked case ever
 # crosses that threshold, these rates undercount and the tier split needs
 # modeling. Reasoning tokens bill as `output` and need no separate rate.
 prices:
+  gpt-6-sol:
+    input: 2.00
+    cached_input: 0.20
+    output: 10.00
+  gpt-6-luna:
+    input: 0.10
+    cached_input: 0.01
+    output: 0.50
   gpt-5.6-sol:
     input: 5.00
     cached_input: 0.50

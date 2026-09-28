@@ -1307,6 +1307,16 @@ def clear_agent_activity_tracking() -> None:
     _clear_active_agents()
 
 
+# Hub models the installed openai-agents SDK has no context window for yet,
+# mapped to the largest input OpenAI accepts for them. The SDK's table wins
+# whenever it knows the model. Uses the input limit, not the full window:
+# past it the request is refused, so a threshold above it would never fire.
+# gpt-6-sol: 1,050,000-token window, 922,000 max input tokens
+# (developers.openai.com/api/docs/models/gpt-6-sol, checked 2026-09-25;
+# openai-agents 0.22.3 still lacks it).
+_HUB_INPUT_WINDOWS_MISSING_FROM_SDK: dict[str, int] = {"gpt-6-sol": 922_000}
+
+
 def _hub_context_management(
     *,
     model: str,
@@ -1327,7 +1337,12 @@ def _hub_context_management(
         return None
 
     model_info = CompactionModelInfo.maybe_for_model(model)
-    if model_info is None:
+    window = (
+        model_info.context_window
+        if model_info is not None
+        else _HUB_INPUT_WINDOWS_MISSING_FROM_SDK.get(model)
+    )
+    if window is None:
         # No window means no defensible threshold. Skipping compaction only
         # costs us the optimisation; guessing a token count could compact a
         # 1M-token window at 20% and shred context every turn.
@@ -1337,13 +1352,13 @@ def _hub_context_management(
         )
         return None
 
-    threshold = int(model_info.context_window * compact_ratio)
+    threshold = int(window * compact_ratio)
     logger.info(
         "Hub compaction at %d tokens (%.0f%% of %s's %d-token window)",
         threshold,
         compact_ratio * 100,
         model,
-        model_info.context_window,
+        window,
     )
     return [ContextManagement(type="compaction", compact_threshold=threshold)]
 
