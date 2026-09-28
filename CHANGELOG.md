@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Congressional stock-trade disclosures** on the events-news server
+  (`events_news_get_congress_trades_tool`), filterable by ticker, member,
+  chamber and a disclosure-date window. Backed by the public Hugging Face
+  dataset `austin-starks/congressional-stock-trades`, loaded in full per
+  upstream commit into in-memory DuckDB and rechecked hourly. Each trade links
+  its official House or Senate filing and carries the disclosure lag.
+
 ## [1.7.0] - 2026-09-12
 
 Minor: AutoTrader becomes safe to schedule. Paper orders now submit exactly once

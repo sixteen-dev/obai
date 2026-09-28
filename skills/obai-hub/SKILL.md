@@ -50,8 +50,8 @@ requires.
 | Intent | Skill | Server (port) |
 |---|---|---|
 | Price, quote, trend, candles, technicals, movers, market hours, commodities | `obai-market-data` | obai-market-data (8002) |
-| Financials, ratios, valuation, analyst outlook, SEC filings, insider activity, segments | `obai-fundamentals` | obai-fundamentals (8001) |
-| News, catalysts, earnings calendar, dividends | `obai-events-news` | obai-events-news (8003) |
+| Financials, ratios, valuation, analyst outlook, SEC filings, corporate insider activity, segments | `obai-fundamentals` | obai-fundamentals (8001) |
+| News, catalysts, earnings calendar, dividends, congressional stock-trade disclosures | `obai-events-news` | obai-events-news (8003) |
 | Options chains, Greeks, IV, open interest, spreads, scenario P&L | `obai-options` | obai-options (8004) |
 | Stock screening, company-name → ticker, symbol validation | `obai-screening` | obai-screening (8005) |
 | Portfolio positions, exposure, risk metrics, allocation, ETF holdings, treasury rates | `obai-portfolio` | obai-portfolio (8006) |
@@ -67,6 +67,8 @@ Boundary calls that are easy to get wrong:
 - Crypto spot backtests go to `obai-crypto`, not `obai-strategy`.
 - Recent headlines/earnings results → `obai-events-news`, not `obai-research`.
   Research is for qualitative synthesis, not current data.
+- Trades by members of Congress (STOCK Act disclosures) → `obai-events-news`;
+  corporate insider (Form 4) trades → `obai-fundamentals`.
 - User-preference questions (risk tolerance, profile): answer directly, no
   server call needed.
 

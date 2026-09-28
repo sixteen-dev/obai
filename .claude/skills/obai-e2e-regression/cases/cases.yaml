@@ -39,8 +39,8 @@ suite:
     live: "Only opt-in current-provider canaries whose tier is live."
   smoke_max_cases: 8
   smoke_max_api_calls: 45
-  core_max_cases: 25
-  core_max_api_calls: 215
+  core_max_cases: 26
+  core_max_api_calls: 220
   live_max_cases: 8
   live_max_api_calls: 48
 
@@ -803,6 +803,31 @@ test_cases:
         - {regex: "\\b52[- ]week\\b", kind: structural}
       manual_assertions:
         - "Verify OBaI answered the factual valuation question instead of over-refusing: the guardrail did not reject the opinion-framed request, no bare 'I cannot say whether it is a bubble' deflection replaced the data, and the reported P/E and 52-week range trace to captured fundamentals/market-data payloads."
+
+  - id: CORE-CONGRESS-TRADES
+    feature: congressional_trade_disclosure_grounding
+    query: "Has anyone in Congress been trading NVDA over the last three months? Who bought or sold, how much, when they traded versus when it was disclosed, and link the filings."
+    expected_tools: [events_news_analysis]
+    expected_outcome: success
+    date_policy: relative
+    timezone: America/New_York
+    max_age_seconds: 86400
+    tier: core
+    estimated_api_calls: 5
+    max_cli_turns: 1
+    # One events-news call answers it. A fundamentals call means the hub read
+    # congressional trading as corporate insider (Form 4) activity.
+    cost: {class: low, max_specialist_calls: 1}
+    assertions:
+      required_text:
+        - {regex: "\\bNVDA\\b", kind: structural}
+        # The tool returns the official filing URL for every trade, and the
+        # query asks for the links.
+        - {regex: "https?://(?:disclosures-clerk\\.house\\.gov|efdsearch\\.senate\\.gov)/", kind: structural}
+        - {regex: "\\b(?:20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+20\\d{2})\\b", kind: structural}
+      manual_assertions:
+        - "Verify the request routed to events_news_analysis and its congressional-trades tool, not fundamentals_analysis (corporate Form 4 insiders), and that every named member, chamber, buy/sell action, account owner, amount range, trade date, disclosure date, and filing link matches a row in the captured events_news_get_congress_trades_tool payload."
+        - "Verify amounts are given as the disclosed dollar ranges rather than exact trade sizes, each trade's trade date and disclosure date are kept distinct, the answer does not present a truncated page as the complete match count, and no motive or non-public-information claim goes beyond the filings."
 
   # Options strategy route (options-backtest-server ADR 0003 §4.4). Historical
   # options backtesting is unavailable in this deployment, so every case pins
