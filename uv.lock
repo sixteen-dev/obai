@@ -19,35 +19,36 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-05T07:02:13.754327353Z"
+exclude-newer = "2026-10-02T01:29:58.358507445Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-setuptools = { timestamp = "2026-09-12T07:02:13.754346169Z", span = "PT0S" }
-pytest = { timestamp = "2026-09-12T07:02:13.754344285Z", span = "PT0S" }
-pillow = { timestamp = "2026-09-12T07:02:13.754344486Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-09-12T07:02:13.754345157Z", span = "PT0S" }
-h2 = { timestamp = "2026-09-12T07:02:13.754343053Z", span = "PT0S" }
-opik = { timestamp = "2026-09-12T07:02:13.754346369Z", span = "PT0S" }
-starlette = { timestamp = "2026-09-12T07:02:13.754345538Z", span = "PT0S" }
-authlib = { timestamp = "2026-09-12T07:02:13.754344917Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-09-12T07:02:13.754343304Z", span = "PT0S" }
-cryptography = { timestamp = "2026-09-12T07:02:13.754342803Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-09-12T07:02:13.754344055Z", span = "PT0S" }
-click = { timestamp = "2026-09-12T07:02:13.754345949Z", span = "PT0S" }
-onnx = { timestamp = "2026-09-12T07:02:13.754342232Z", span = "PT0S" }
-idna = { timestamp = "2026-09-12T07:02:13.754345738Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-09-12T07:02:13.754344716Z", span = "PT0S" }
-anthropic = { timestamp = "2026-09-12T07:02:13.754342472Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-09-12T07:02:13.75433619Z", span = "PT0S" }
-pygments = { timestamp = "2026-09-12T07:02:13.754343845Z", span = "PT0S" }
-mcp = { timestamp = "2026-09-12T07:02:13.754343524Z", span = "PT0S" }
-requests = { timestamp = "2026-09-12T07:02:13.754341991Z", span = "PT0S" }
+setuptools = { timestamp = "2026-10-09T01:29:58.358528675Z", span = "PT0S" }
+pytest = { timestamp = "2026-10-09T01:29:58.358526752Z", span = "PT0S" }
+pillow = { timestamp = "2026-10-09T01:29:58.358526962Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-10-09T01:29:58.358527654Z", span = "PT0S" }
+h2 = { timestamp = "2026-10-09T01:29:58.358525469Z", span = "PT0S" }
+opik = { timestamp = "2026-10-09T01:29:58.358528896Z", span = "PT0S" }
+starlette = { timestamp = "2026-10-09T01:29:58.358528014Z", span = "PT0S" }
+authlib = { timestamp = "2026-10-09T01:29:58.358527433Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-10-09T01:29:58.35852574Z", span = "PT0S" }
+cryptography = { timestamp = "2026-10-09T01:29:58.358525219Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-10-09T01:29:58.358526511Z", span = "PT0S" }
+click = { timestamp = "2026-10-09T01:29:58.358528445Z", span = "PT0S" }
+onnx = { timestamp = "2026-10-09T01:29:58.358524608Z", span = "PT0S" }
+idna = { timestamp = "2026-10-09T01:29:58.358528235Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-10-09T01:29:58.358527203Z", span = "PT0S" }
+anthropic = { timestamp = "2026-10-09T01:29:58.358524848Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-10-09T01:29:58.358519278Z", span = "PT0S" }
+pygments = { timestamp = "2026-10-09T01:29:58.358526301Z", span = "PT0S" }
+mcp = { timestamp = "2026-10-09T01:29:58.35852597Z", span = "PT0S" }
+requests = { timestamp = "2026-10-09T01:29:58.358524337Z", span = "PT0S" }
 
 [manifest]
 constraints = [
     { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "anthropic", specifier = ">=0.87.0" },
+    { name = "anyio", specifier = ">=4.14.2" },
     { name = "authlib", specifier = ">=1.7.2" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "cryptography", specifier = ">=50.0.0" },
@@ -55,17 +56,18 @@ constraints = [
     { name = "h2", specifier = ">=4.4.1" },
     { name = "idna", specifier = ">=3.15" },
     { name = "joserfc", specifier = ">=1.6.8" },
-    { name = "litellm", specifier = ">=1.85.0" },
+    { name = "litellm", specifier = ">=1.88.6" },
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pygments", specifier = ">=2.20.0" },
-    { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "pyjwt", specifier = ">=2.15.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "setuptools", specifier = ">=83.0.0" },
     { name = "starlette", specifier = ">=1.3.1" },
-    { name = "urllib3", specifier = ">=2.7.0" },
+    { name = "urllib3", specifier = ">=2.8.0" },
+    { name = "virtualenv", specifier = ">=21.7.13" },
 ]
 
 [[package]]
@@ -119,15 +121,15 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.12.1"
+version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/f0/5eb65b2bb0d09ac6776f2eb54adee6abe8228ea05b20a5ad0e4945de8aac/anyio-4.12.1.tar.gz", hash = "sha256:41cfcc3a4c85d3f05c932da7c26d0201ac36f72abd4435ba90d0464a3ffed703", size = 228685, upload-time = "2026-01-06T11:45:21.246Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/0e/27be9fdef66e72d64c0cdc3cc2823101b80585f8119b5c112c2e8f5f7dab/anyio-4.12.1-py3-none-any.whl", hash = "sha256:d405828884fc140aa80a3c667b8beed277f1dfedec42ba031bd6ac3db606ab6c", size = 113592, upload-time = "2026-01-06T11:45:19.497Z" },
+    { url = "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl", hash = "sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494", size = 125813, upload-time = "2026-07-12T20:29:05.763Z" },
 ]
 
 [[package]]
@@ -1850,11 +1852,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.13.0"
+version = "2.15.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3b/81/58d0ac84e1ef3a3843791d6954d94c0b33d526c75eeb1efbce9d0a4c4077/pyjwt-2.13.0.tar.gz", hash = "sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423", size = 107515, upload-time = "2026-05-21T19:54:36.618Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728", size = 31274, upload-time = "2026-05-21T19:54:35.362Z" },
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
 ]
 
 [package.optional-dependencies]
@@ -2014,15 +2016,14 @@ wheels = [
 
 [[package]]
 name = "python-discovery"
-version = "1.2.0"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
-    { name = "platformdirs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/90/bcce6b46823c9bec1757c964dc37ed332579be512e17a30e9698095dcae4/python_discovery-1.2.0.tar.gz", hash = "sha256:7d33e350704818b09e3da2bd419d37e21e7c30db6e0977bb438916e06b41b5b1", size = 58055, upload-time = "2026-03-19T01:43:08.248Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/57/250bd238b966cece44328235eb85290045d059265fdaf7527a3a958123db/python_discovery-1.6.1.tar.gz", hash = "sha256:cf87d3627dfb4412437fdd5b13eae402607722998d21567993aedbc59b23c15e", size = 84338, upload-time = "2026-09-18T01:31:53.971Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/3c/2005227cb951df502412de2fa781f800663cccbef8d90ec6f1b371ac2c0d/python_discovery-1.2.0-py3-none-any.whl", hash = "sha256:1e108f1bbe2ed0ef089823d28805d5ad32be8e734b86a5f212bf89b71c266e4a", size = 31524, upload-time = "2026-03-19T01:43:07.045Z" },
+    { url = "https://files.pythonhosted.org/packages/16/7d/e9ffbadfbf89c93848412d04594135c4ae8c1d37d9e053b9c3ed718fabc4/python_discovery-1.6.1-py3-none-any.whl", hash = "sha256:d43fcdef879fe795352bd13ccf8d185ba5a9f86f36cfcd00529f596e737442b3", size = 38664, upload-time = "2026-09-18T01:31:52.448Z" },
 ]
 
 [[package]]
@@ -2623,11 +2624,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.7.0"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]
@@ -2688,17 +2689,18 @@ wheels = [
 
 [[package]]
 name = "virtualenv"
-version = "21.2.0"
+version = "21.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "distlib" },
     { name = "filelock" },
+    { name = "packaging" },
     { name = "platformdirs" },
     { name = "python-discovery" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/92/58199fe10049f9703c2666e809c4f686c54ef0a68b0f6afccf518c0b1eb9/virtualenv-21.2.0.tar.gz", hash = "sha256:1720dc3a62ef5b443092e3f499228599045d7fea4c79199770499df8becf9098", size = 5840618, upload-time = "2026-03-09T17:24:38.013Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/59/5ebdaa984350ae7ef1dc14b4d0bd618f6e0d3fb13e7b336939433eebf37b/virtualenv-21.14.3.tar.gz", hash = "sha256:cb5cd3a87f12a6cfdc0cef6bc8bead6138221767f7718e0c00fee5fb907f9858", size = 5464634, upload-time = "2026-10-01T22:55:31.895Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/59/7d02447a55b2e55755011a647479041bc92a82e143f96a8195cb33bd0a1c/virtualenv-21.2.0-py3-none-any.whl", hash = "sha256:1bd755b504931164a5a496d217c014d098426cddc79363ad66ac78125f9d908f", size = 5825084, upload-time = "2026-03-09T17:24:35.378Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/dc/33782ebe90eb4e582295642c5c13e874b5a8c9c75d482988c54f1c21a5d4/virtualenv-21.14.3-py3-none-any.whl", hash = "sha256:4acc848a57a3bdb2ae0873d0689664bccad2230784de3753f57128eb126d3934", size = 5487108, upload-time = "2026-10-01T22:55:29.913Z" },
 ]
 
 [[package]]
