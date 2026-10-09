@@ -96,9 +96,11 @@ def _stub_script(log: Path, body: str) -> str:
         The stub's script text.
     """
     # `printf ' %q'` with no arguments still prints one empty `''`, hence the guard.
+    # The line is built first and appended by one printf, so one write: setup.sh
+    # backgrounds the Web UI, and stubs logging at once must not interleave.
     header = (
-        "{ printf '%s' \"${0##*/}\"; [ \"$#\" -eq 0 ] || printf ' %q' \"$@\"; printf '\\n'; }"
-        ' >> "$log"'
+        'line="${0##*/}"; [ "$#" -eq 0 ] || line+="$(printf \' %q\' "$@")"\n'
+        'printf \'%s\\n\' "$line" >> "$log"'
     )
     return f"#!/usr/bin/env bash\nlog={shlex.quote(str(log))}\n{header}\n{body}\n"
 
@@ -243,6 +245,29 @@ def _case_flags(script: str) -> set[str]:
     assert block is not None, f'{script}: no `case "$arg" in` block'
     labels = re.findall(r"^\s*([-\w|]+)\)", block.group(1), re.MULTILINE)
     return {flag for label in labels for flag in label.split("|") if flag.startswith("--")}
+
+
+# --- The harness itself ------------------------------------------------------
+
+
+def test_concurrent_stub_calls_each_log_one_whole_line(sandbox: Sandbox) -> None:
+    """Stubs running at once (setup.sh backgrounds the Web UI) never garble the log."""
+    calls = 40
+    script = 'for i in {1..%d}; do curl -sf "http://127.0.0.1:$i" web --port "$i" & done; wait'
+    subprocess.run(
+        ["bash", "-c", script % calls],
+        env={"PATH": f"{sandbox.stubs}{os.pathsep}{os.defpath}"},
+        stdin=subprocess.DEVNULL,
+        timeout=RUN_TIMEOUT_S,
+        check=True,
+    )
+
+    logged = [shlex.split(line) for line in sandbox.log.read_text(encoding="utf-8").splitlines()]
+    expected = [
+        ["curl", "-sf", f"http://127.0.0.1:{i}", "web", "--port", str(i)]
+        for i in range(1, calls + 1)
+    ]
+    assert sorted(logged) == sorted(expected)
 
 
 # --- Default (opted out): nothing about the server is touched --------------
