@@ -14,7 +14,7 @@
   <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
 
-> ⚡ **OBaI now runs on the GPT-6 family.** The Hub runs `gpt-6-sol` at `xhigh` reasoning effort; Strategy, Crypto, and Prediction Markets run `gpt-6-sol` at `medium`; the remaining specialists run `gpt-6-luna` at `xhigh`, and the guardrail runs `gpt-6-luna`. `gpt-5.6-sol` and `gpt-5.6-terra` stay selectable for the Hub — switch model or effort tier any time from [Settings](#hub-model--reasoning-effort).
+> ⚡ **OBaI now runs on the GPT-6 family.** The Hub runs `gpt-6.1-sol` at `xhigh` reasoning effort; Strategy, Crypto, and Prediction Markets run `gpt-6.1-sol` at `medium`; the remaining specialists run `gpt-6-luna` at `xhigh`, and the guardrail runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol`, and `gpt-5.6-terra` stay selectable for the Hub — switch model or effort tier any time from [Settings](#hub-model--reasoning-effort).
 
 > 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
@@ -38,7 +38,7 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-6-sol` at `xhigh` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-6-sol` at `medium` for stronger analysis, and the remaining specialists use `gpt-6-luna` at `xhigh`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-6.1-sol` at `xhigh` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-6.1-sol` at `medium` for stronger analysis, and the remaining specialists use `gpt-6-luna` at `xhigh`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
 
 The Options Strategy Agent is a fourth terminal specialist, relayed verbatim the same way. It compiles an options strategy into a strategy document, validates it against options-backtest-server, and states what OBaI supports. Until qualified historical options data exists it reports a historical backtest as unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) and never produces a performance figure. It runs on the Strategy Agent's model and reasoning effort.
 
@@ -314,7 +314,7 @@ Strategy Agent workflow:
   Final strategy JSON: { ... }
 ```
 
-The agent uses `gpt-6-sol` at `medium` effort by default (not `gpt-6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
+The agent uses `gpt-6.1-sol` at `medium` effort by default (not `gpt-6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
 
 **Backtest server tools:** `backtest_run_strategy_tool`, `backtest_get_job_status_tool`, `backtest_get_supported_indicators_tool`, `backtest_download_data_tool`, `backtest_list_available_data_tool`, `backtest_manage_storage_tool`, `backtest_get_trade_log_tool`, `backtest_compare_strategies_tool`, `backtest_clear_cache_tool`, `backtest_walk_forward_tool`
 
@@ -430,10 +430,10 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-6-sol` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
+| `ORCHESTRATOR_MODEL` | `gpt-6.1-sol` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
 | `ORCHESTRATOR_REASONING_EFFORT` | `xhigh` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Overrides `~/.obai/settings.json` |
 | `SPECIALIST_MODEL` | `gpt-6-luna` | Model for specialist agents |
-| `STRATEGY_MODEL` | `gpt-6-sol` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
+| `STRATEGY_MODEL` | `gpt-6.1-sol` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `false` | Run faithfulness/completeness scoring on every query in the TUI/CLI |
 | `ENABLE_OPTIONS_STRATEGY` | `false` | Optional options-backtest server and the `options_strategy_analysis` route; written to `~/.obai/.env` by `setup.sh --with-options-backtest` |
@@ -444,7 +444,7 @@ Key environment variables (all have sensible defaults):
 
 Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`. `OPTIONS_STRATEGY_MODEL` and `OPTIONS_STRATEGY_REASONING_EFFORT` pin the Options Strategy Agent; unset, it follows the Strategy Agent's resolved model and effort.
 
-Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists (`xhigh`), and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent (all three ship at `medium`). Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` and `gpt-6` model, so OBaI does not accept it.)
+Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists (`xhigh`), and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent (all three ship at `medium`). Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` and `gpt-6` model, so OBaI does not accept it. `gpt-6.1-sol` also rejects `none`, so use that tier only on agents running another model.)
 
 ---
 
@@ -454,17 +454,17 @@ The Central Hub's model and reasoning effort are the two knobs worth changing wi
 
 ```json
 {
-  "hub_model": "gpt-6-sol",
+  "hub_model": "gpt-6.1-sol",
   "hub_reasoning_effort": "xhigh"
 }
 ```
 
 | Field | Default | Choices |
 |-------|---------|---------|
-| `hub_model` | `gpt-6-sol` | `gpt-6-sol` (shipped default, also used by the strategy, crypto, and prediction-markets specialists), `gpt-5.6-terra` (the previous default), `gpt-5.6-sol` (previous-generation balanced model) |
+| `hub_model` | `gpt-6.1-sol` | `gpt-6.1-sol` (shipped default, also used by the strategy, crypto, and prediction-markets specialists), `gpt-6-sol` (its predecessor), `gpt-5.6-terra` (the previous default), `gpt-5.6-sol` (previous-generation balanced model) |
 | `hub_reasoning_effort` | `xhigh` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
 
-OBaI ships the Hub on `gpt-6-sol` / `xhigh`. That pairing has not yet been
+OBaI ships the Hub on `gpt-6.1-sol` / `xhigh`. That pairing has not yet been
 through the paid `core` benchmark that chose the previous default —
 [Why the Hub defaulted to `gpt-5.6-terra` at `max`
 effort](docs/hub-default-model-rationale.md) records that gpt-5.6 comparison.

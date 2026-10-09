@@ -86,7 +86,7 @@ class TestAgentConfig:
     def test_default_models(self) -> None:
         """Test default model values."""
         config = AgentConfig()
-        assert config.orchestrator_model == "gpt-6-sol"
+        assert config.orchestrator_model == "gpt-6.1-sol"
         assert config.specialist_model == "gpt-6-luna"
 
     def test_every_default_model_is_gpt_6(self) -> None:
@@ -109,7 +109,9 @@ class TestAgentConfig:
             "guardrail": config.guardrail_model,
         }
         off_tier = {
-            name: model for name, model in defaults.items() if not model.startswith("gpt-6-")
+            name: model
+            for name, model in defaults.items()
+            if not model.startswith(("gpt-6-", "gpt-6.1-"))
         }
         assert not off_tier, f"default models off the gpt-6 tier: {off_tier}"
 
@@ -310,7 +312,7 @@ class TestHubSettingsFilePrecedence:
     def test_missing_file_falls_back_to_shipped_defaults(self) -> None:
         """Fresh install and upgraded install both land here — no migration."""
         config = get_config()
-        assert config.orchestrator_model == "gpt-6-sol"
+        assert config.orchestrator_model == "gpt-6.1-sol"
         assert config.orchestrator_reasoning_effort == "xhigh"
 
     def test_settings_file_does_not_touch_specialists(self, tmp_path: Path) -> None:

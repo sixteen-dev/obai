@@ -18,15 +18,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - **Default models move to the GPT-6 family.** The Hub now ships on
-  `gpt-6-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
+  `gpt-6.1-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
   fundamentals, events/news, options, screener, portfolio, and research run
   `gpt-6-luna` at `xhigh` (was `gpt-5.6-luna` / `medium`). Strategy, crypto, and
-  prediction markets run `gpt-6-sol`, still at `medium`, and the guardrail runs
-  `gpt-6-luna`. `gpt-5.6-sol` and `gpt-5.6-terra` remain selectable hub models.
-  An existing `~/.obai/settings.json` or `ORCHESTRATOR_*` env pin still wins
-  over the new hub default.
-- Hub compaction falls back to a documented input window for `gpt-6-sol`, which
-  the installed Agents SDK does not know yet, instead of disabling compaction.
+  prediction markets run `gpt-6.1-sol`, still at `medium`, and the guardrail
+  runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol` and `gpt-5.6-terra` remain
+  selectable hub models. An existing `~/.obai/settings.json` or
+  `ORCHESTRATOR_*` env pin still wins over the new hub default. `gpt-6.1-sol`
+  rejects the `none` effort tier, so a `none` override on the Hub, strategy,
+  crypto, or prediction markets now fails at request time.
+- Hub compaction falls back to a documented input window for `gpt-6.1-sol` and
+  `gpt-6-sol`, which the installed Agents SDK does not know yet, instead of
+  disabling compaction.
 - **The options-backtest server and `options_strategy_analysis` are opt-in.**
   A default install, start, upgrade or `obai status` no longer pulls, builds,
   starts or checks `options-backtest-server`, and the Hub has no

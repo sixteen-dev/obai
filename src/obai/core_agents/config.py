@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 # `minimal` is deliberately absent: it is a valid value in the OpenAI SDK's own
 # type but every gpt-5.6 and gpt-6 model rejects it at request time (verified
 # live for gpt-6-sol and gpt-6-luna on 2026-09-25), so accepting it here
-# would only trade a config-time error for a mid-query one.
+# would only trade a config-time error for a mid-query one. gpt-6.1-sol also
+# rejects `none` (verified live 2026-10-02); it stays in the type because the
+# gpt-6-luna specialists accept it.
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 Verbosity = Literal["low", "medium", "high"]
 
@@ -200,7 +202,7 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-6-sol",
+        default="gpt-6.1-sol",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
@@ -232,7 +234,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-6-sol",
+        default="gpt-6.1-sol",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -240,11 +242,11 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default="gpt-6-sol",
+        default="gpt-6.1-sol",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
     crypto_model: str | None = Field(
-        default="gpt-6-sol",
+        default="gpt-6.1-sol",
         description="Override model for crypto agent (uses specialist_model if None)",
     )
     options_strategy_model: str | None = Field(
@@ -305,7 +307,7 @@ class AgentConfig(BaseSettings):
 
     # Per-agent reasoning effort overrides. Mirror the per-agent model fields
     # above: an override wins, else the specialist tier applies. Strategy,
-    # crypto, and prediction markets run the larger gpt-6-sol model at medium
+    # crypto, and prediction markets run the larger gpt-6.1-sol model at medium
     # while the gpt-6-luna specialists run at xhigh. These three carry the
     # longest multi-turn loops (backtest iteration, executable pricing, setup
     # evaluation), where effort multiplies across every turn, so they are
