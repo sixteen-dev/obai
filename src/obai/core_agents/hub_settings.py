@@ -23,16 +23,17 @@ import openai
 from openai.types.shared.reasoning_effort import ReasoningEffort as SdkReasoningEffort
 from pydantic import BaseModel, ValidationError, field_validator
 
-# The choices offered in the UI and CLI. gpt-6-sol is the shipped hub default —
+# The choices offered in the UI and CLI. gpt-6.1-sol is the shipped hub default —
 # the same model strategy, crypto, and prediction markets run — paired with
-# `xhigh` effort below. The gpt-5.6 pair stays selectable so a settings file
-# that pinned one keeps working. Luna is deliberately absent: it is the
-# specialist tier, not a sensible hub.
-HubModel = Literal["gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra"]
+# `xhigh` effort below. gpt-6-sol and the gpt-5.6 pair stay selectable so a
+# settings file that pinned one keeps working. Luna is deliberately absent: it
+# is the specialist tier, not a sensible hub.
+HubModel = Literal["gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra"]
 
 # Verified against the live API: every gpt-5.6 and gpt-6 model accepts none/
-# low/medium/high/xhigh/max and rejects `minimal`. We offer only the top four; none and
-# low are valid but too shallow for hub routing and synthesis.
+# low/medium/high/xhigh/max and rejects `minimal`; gpt-6.1-sol rejects `none`
+# as well (2026-10-02). We offer only the top four, which every hub model
+# accepts; none and low are too shallow for hub routing and synthesis.
 HubReasoningEffort = Literal["medium", "high", "xhigh", "max"]
 
 HUB_MODELS: tuple[str, ...] = get_args(HubModel)
@@ -74,7 +75,7 @@ def default_hub_settings_path() -> Path:
 class HubSettings(BaseModel, extra="forbid"):
     """Hub model and reasoning effort as chosen by the user."""
 
-    hub_model: HubModel = "gpt-6-sol"
+    hub_model: HubModel = "gpt-6.1-sol"
     hub_reasoning_effort: HubReasoningEffort = "xhigh"
 
     @field_validator("hub_reasoning_effort")

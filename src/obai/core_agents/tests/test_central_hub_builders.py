@@ -157,15 +157,16 @@ def test_compaction_omitted_when_ratio_is_none() -> None:
     assert _hub_context_management(model="gpt-5.6-sol", compact_ratio=None) is None
 
 
-def test_compaction_uses_documented_input_window_when_sdk_lacks_model() -> None:
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol"])
+def test_compaction_uses_documented_input_window_when_sdk_lacks_model(model: str) -> None:
     """The shipped hub model must keep compaction even before the SDK knows it.
 
-    No openai-agents release through 0.22.3 lists gpt-6-sol, so without the
-    fallback the default hub would silently run with compaction off. The
-    threshold is 90% of the 922,000-token maximum input, not of the
+    No openai-agents release through 0.22.3 lists gpt-6.1-sol or gpt-6-sol, so
+    without the fallback the default hub would silently run with compaction
+    off. The threshold is 90% of the 922,000-token maximum input, not of the
     1,050,000-token window: past the input limit the request is refused.
     """
-    assert _hub_context_management(model="gpt-6-sol", compact_ratio=0.9) == [
+    assert _hub_context_management(model=model, compact_ratio=0.9) == [
         {"type": "compaction", "compact_threshold": 829800}
     ]
 

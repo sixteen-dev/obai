@@ -191,7 +191,7 @@ def test_show_reports_shipped_defaults_without_a_settings_file(settings_file: Pa
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-6-sol (from shipped default)"
+    assert _row(result.output, "hub model") == "hub model gpt-6.1-sol (from shipped default)"
     assert (
         _row(result.output, "reasoning effort") == "reasoning effort xhigh (from shipped default)"
     )
@@ -213,12 +213,12 @@ def test_show_distinguishes_a_chosen_default_from_the_shipped_default(
     settings_file: Path,
 ) -> None:
     """A field written to the file reads as chosen even when it equals the default."""
-    settings_file.write_text(json.dumps({"hub_model": "gpt-6-sol"}))
+    settings_file.write_text(json.dumps({"hub_model": "gpt-6.1-sol"}))
 
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert _row(result.output, "hub model") == "hub model gpt-6-sol (from settings file)"
+    assert _row(result.output, "hub model") == "hub model gpt-6.1-sol (from settings file)"
     assert (
         _row(result.output, "reasoning effort") == "reasoning effort xhigh (from shipped default)"
     )

@@ -1,6 +1,6 @@
 # Why the Hub defaulted to `gpt-5.6-terra` at `max` effort
 
-> **Superseded 2026-09-25.** The shipped Hub default is now `gpt-6-sol` at
+> **Superseded 2026-09-25.** The shipped Hub default is now `gpt-6.1-sol` at
 > `xhigh` effort. That pairing has not been through this benchmark; this note
 > stays as the record of the gpt-5.6 comparison.
 

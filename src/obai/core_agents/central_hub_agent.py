@@ -1314,7 +1314,12 @@ def clear_agent_activity_tracking() -> None:
 # gpt-6-sol: 1,050,000-token window, 922,000 max input tokens
 # (developers.openai.com/api/docs/models/gpt-6-sol, checked 2026-09-25;
 # openai-agents 0.22.3 still lacks it).
-_HUB_INPUT_WINDOWS_MISSING_FROM_SDK: dict[str, int] = {"gpt-6-sol": 922_000}
+# gpt-6.1-sol: same window and input limit
+# (developers.openai.com/api/docs/models/gpt-6.1-sol, checked 2026-10-02).
+_HUB_INPUT_WINDOWS_MISSING_FROM_SDK: dict[str, int] = {
+    "gpt-6.1-sol": 922_000,
+    "gpt-6-sol": 922_000,
+}
 
 
 def _hub_context_management(

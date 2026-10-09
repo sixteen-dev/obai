@@ -753,7 +753,7 @@ class TestStrategyConfig:
     def test_strategy_model_default(self) -> None:
         """Strategy model should default to the dedicated strategy model."""
         config = AgentConfig()
-        assert config.strategy_model == "gpt-6-sol"
+        assert config.strategy_model == "gpt-6.1-sol"
 
     def test_strategy_max_turns_default(self) -> None:
         """Strategy run loop default must accommodate multi-step design+backtest flows."""

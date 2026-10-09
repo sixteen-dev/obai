@@ -27,12 +27,12 @@ class TestHubSettings:
     def test_defaults_match_shipped_config(self) -> None:
         """Defaults are the values the hub ships with today."""
         settings = HubSettings()
-        assert settings.hub_model == "gpt-6-sol"
+        assert settings.hub_model == "gpt-6.1-sol"
         assert settings.hub_reasoning_effort == "xhigh"
 
     def test_choice_tuples_match_the_literals(self) -> None:
         """The UI/CLI choice lists are the same set the model validates."""
-        assert HUB_MODELS == ("gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra")
+        assert HUB_MODELS == ("gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra")
         assert HUB_REASONING_EFFORTS == ("medium", "high", "xhigh", "max")
 
     def test_every_offered_effort_is_accepted_by_the_installed_sdk(self) -> None:
@@ -189,7 +189,7 @@ class TestHubSettingsStore:
 
         loaded = HubSettingsStore(path=path).load()
         assert loaded.hub_reasoning_effort == "high"
-        assert loaded.hub_model == "gpt-6-sol"
+        assert loaded.hub_model == "gpt-6.1-sol"
 
     def test_save_is_atomic_leaving_no_temp_files(self, tmp_path: Path) -> None:
         """A crash mid-write must not leave a half-written settings file."""
