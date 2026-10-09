@@ -10,33 +10,34 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-19T20:41:09.029365091Z"
+exclude-newer = "2026-10-02T01:30:01.473432506Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-09-26T20:41:09.029383626Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-09-26T20:41:09.029384398Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-09-26T20:41:09.029383867Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-09-26T20:41:09.02937534Z", span = "PT0S" }
-starlette = { timestamp = "2026-09-26T20:41:09.029384608Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-09-26T20:41:09.029382594Z", span = "PT0S" }
-pygments = { timestamp = "2026-09-26T20:41:09.029383045Z", span = "PT0S" }
-mcp = { timestamp = "2026-09-26T20:41:09.029382815Z", span = "PT0S" }
-cryptography = { timestamp = "2026-09-26T20:41:09.029383376Z", span = "PT0S" }
-authlib = { timestamp = "2026-09-26T20:41:09.029384077Z", span = "PT0S" }
-idna = { timestamp = "2026-09-26T20:41:09.029384818Z", span = "PT0S" }
+pytest = { timestamp = "2026-10-09T01:30:01.473451371Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-10-09T01:30:01.473452343Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-10-09T01:30:01.473451672Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-10-09T01:30:01.473444719Z", span = "PT0S" }
+starlette = { timestamp = "2026-10-09T01:30:01.473452624Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-10-09T01:30:01.473450129Z", span = "PT0S" }
+pygments = { timestamp = "2026-10-09T01:30:01.47345074Z", span = "PT0S" }
+mcp = { timestamp = "2026-10-09T01:30:01.47345046Z", span = "PT0S" }
+cryptography = { timestamp = "2026-10-09T01:30:01.473451121Z", span = "PT0S" }
+authlib = { timestamp = "2026-10-09T01:30:01.473451922Z", span = "PT0S" }
+idna = { timestamp = "2026-10-09T01:30:01.473452874Z", span = "PT0S" }
 
 [manifest]
 constraints = [
+    { name = "anyio", specifier = ">=4.14.2" },
     { name = "authlib", specifier = ">=1.7.2" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "idna", specifier = ">=3.15" },
     { name = "joserfc", specifier = ">=1.6.8" },
     { name = "mcp", specifier = ">=1.28.1" },
-    { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "pyjwt", specifier = ">=2.15.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "starlette", specifier = ">=1.3.1" },
-    { name = "urllib3", specifier = ">=2.7.0" },
+    { name = "urllib3", specifier = ">=2.8.0" },
 ]
 
 [[package]]
@@ -1341,11 +1342,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.14.0"
+version = "2.15.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/af/c3/8a3b59c25070cc61dc517fbdfa5dc0904670c96f605cc69759dc09166b99/pyjwt-2.14.0.tar.gz", hash = "sha256:77283c83fb56ecf566a886c757a714bc83668e38156de2cce8263302f42e0b86", size = 113177, upload-time = "2026-09-11T13:11:54.638Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/97/672cb32ce0dfea44b740cb7b4f97038463b9cf7c0ead1aacf595572851d6/pyjwt-2.14.0-py3-none-any.whl", hash = "sha256:ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc", size = 32896, upload-time = "2026-09-11T13:11:53.409Z" },
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
 ]
 
 [package.optional-dependencies]
