@@ -185,7 +185,7 @@ The setup script:
 OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
 
 ```bash
-git checkout v1.8.0
+git checkout v1.7.0
 ./setup.sh
 ```
 

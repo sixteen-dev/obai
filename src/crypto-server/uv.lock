@@ -10,21 +10,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-04T03:13:25.736882964Z"
+exclude-newer = "2026-10-02T01:30:00.861956459Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pytest = { timestamp = "2026-10-11T03:13:25.736919743Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-10-11T03:13:25.736922649Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-10-11T03:13:25.736921306Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-10-11T03:13:25.736900347Z", span = "PT0S" }
-starlette = { timestamp = "2026-10-11T03:13:25.736923019Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-10-11T03:13:25.736918731Z", span = "PT0S" }
-pygments = { timestamp = "2026-10-11T03:13:25.736920324Z", span = "PT0S" }
-mcp = { timestamp = "2026-10-11T03:13:25.736919242Z", span = "PT0S" }
-cryptography = { timestamp = "2026-10-11T03:13:25.736920835Z", span = "PT0S" }
-authlib = { timestamp = "2026-10-11T03:13:25.736921717Z", span = "PT0S" }
-idna = { timestamp = "2026-10-11T03:13:25.73692343Z", span = "PT0S" }
+pytest = { timestamp = "2026-10-09T01:30:00.861976527Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-10-09T01:30:00.86197799Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-10-09T01:30:00.861977409Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-10-09T01:30:00.861970596Z", span = "PT0S" }
+starlette = { timestamp = "2026-10-09T01:30:00.86197823Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-10-09T01:30:00.861976006Z", span = "PT0S" }
+pygments = { timestamp = "2026-10-09T01:30:00.861976878Z", span = "PT0S" }
+mcp = { timestamp = "2026-10-09T01:30:00.861976257Z", span = "PT0S" }
+cryptography = { timestamp = "2026-10-09T01:30:00.861977118Z", span = "PT0S" }
+authlib = { timestamp = "2026-10-09T01:30:00.861977639Z", span = "PT0S" }
+idna = { timestamp = "2026-10-09T01:30:00.861978451Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -285,7 +285,7 @@ wheels = [
 
 [[package]]
 name = "crypto-server"
-version = "1.8.0"
+version = "1.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
