@@ -6,89 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [1.8.0] - 2026-10-10
+## [1.7.0] - 2026-10-10
 
-Minor: an opt-in options-strategy specialist, congressional trade disclosures,
-and the GPT-6 model family as the default. This is the first release since
-1.6.1, so it also ships everything listed under [1.7.0] below, which was never
-released on its own.
-
-### Added
-
-- **Options strategy specialist (opt-in).** A new `options_strategy_analysis`
-  Hub route is backed by the local `options-backtest-server` on port 8012,
-  which has two read-only tools: one reports capabilities and one validates a
-  strategy. Historical options backtests are not available yet. The
-  specialist says so with the server's typed reason
-  (`DATA_ENTITLEMENT_MISSING`), and the Hub never substitutes an equity
-  proxy, current-market analysis or invented performance figures. The route
-  is off by default; see the opt-in entry under Changed.
-- **Congressional stock-trade disclosures** on the events-news server
-  (`events_news_get_congress_trades_tool`), filterable by ticker, member,
-  chamber and a disclosure-date window. Backed by the public Hugging Face
-  dataset `austin-starks/congressional-stock-trades`, loaded in full per
-  upstream commit into in-memory DuckDB and rechecked hourly. Each trade links
-  its official House or Senate filing and carries the disclosure lag.
-
-### Changed
-
-- **Default models move to the GPT-6 family.** The Hub now ships on
-  `gpt-6.1-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
-  fundamentals, events/news, options, screener, portfolio, and research run
-  `gpt-6-luna` at `xhigh` (was `gpt-5.6-luna` / `medium`). Strategy, crypto, and
-  prediction markets run `gpt-6.1-sol`, still at `medium`, and the guardrail
-  runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol` and `gpt-5.6-terra` remain
-  selectable hub models. An existing `~/.obai/settings.json` or
-  `ORCHESTRATOR_*` env pin still wins over the new hub default. `gpt-6.1-sol`
-  rejects the `none` effort tier, so a `none` override on the Hub, strategy,
-  crypto, or prediction markets now fails at request time.
-- Hub compaction falls back to a documented input window for `gpt-6.1-sol` and
-  `gpt-6-sol`, which the installed Agents SDK does not know yet, instead of
-  disabling compaction.
-- **The options-backtest server and `options_strategy_analysis` are opt-in.**
-  A default install, start, upgrade or `obai status` no longer pulls, builds,
-  starts or checks `options-backtest-server`, and the Hub has no
-  options-strategy route: `ENABLE_OPTIONS_STRATEGY` now defaults to `false`.
-  Opt in with `--with-options-backtest` on `install.sh`, `setup.sh`,
-  `obai start` or `obai restart`; `setup.sh` saves the choice to
-  `~/.obai/.env`, later runs and `obai upgrade` keep it, and
-  `--without-options-backtest` turns it off and removes the container.
-  `teardown.sh`, `obai stop` and `obai teardown` remove the server in both
-  states. Without the opt-in, the E2E gate records the four `CORE-OPTSTRAT-*`
-  cases `skipped_not_applicable` instead of running them. A machine already
-  running the server has its container removed by the next `obai start`,
-  `obai restart` or `obai upgrade` unless it opts in. `obai start` with either
-  flag restarts running services so the Web UI's Hub applies the change; a
-  flag passed straight to `setup.sh` or `install.sh`, or a run that removes a
-  leftover container, leaves an already-running Web UI on its old setting
-  until `obai restart`, and the setup summary says so. The CLI and the gate
-  read the opt-in from `~/.obai/.env` even when `OBAI_HOME` points `setup.sh`
-  elsewhere, so a later `obai start` without that `OBAI_HOME` finds no opt-in
-  and removes the container.
-
-### Fixed
-
-- Opik's ClickHouse container, which kept crashing, gets more memory (6 GB,
-  with swap held to the same cap) and at most four CPU cores. Its 18
-  self-monitoring log tables are no longer created, so they stop adding
-  inserts and disk use forever, and crash reports stay pinned off. The config
-  reaches ClickHouse through a Docker volume, so run `obai upgrade` (or
-  `./infra/opik/setup-volumes.sh` before recreating the container) to apply
-  it.
-
-### Security
-
-- All open Dependabot alerts are cleared by raising the dependency floors in
-  every service: `pyjwt>=2.15.0`, `anyio>=4.14.2`, `urllib3>=2.8.0`,
-  `virtualenv>=21.7.13` (root) and `litellm` 1.88.6 (`src/obai`).
-
-## [1.7.0] - 2026-09-12
-
-Minor: AutoTrader becomes safe to schedule. Paper orders now submit exactly once
-per intent across crashes, timeouts and concurrent jobs; signals are evaluated
-in code from verified completed bars instead of from prose; and every specialist
-skill routes through MCP directly, so the bundle runs on a host that has no OBaI
-CLI. A standalone MCP/paper-trading setup reference ships with it.
+Minor: AutoTrader becomes safe to schedule, the GPT-6 model family becomes the
+default, an opt-in options-strategy specialist arrives, and the events-news
+server gains congressional trade disclosures. AutoTrader paper orders now
+submit exactly once per intent across crashes, timeouts and concurrent jobs;
+signals are evaluated in code from verified completed bars instead of from
+prose; and every specialist skill routes through MCP directly, so the bundle
+runs on a host that has no OBaI CLI. A standalone MCP/paper-trading setup
+reference ships with it.
 
 ### Added
 
@@ -125,6 +52,20 @@ CLI. A standalone MCP/paper-trading setup reference ships with it.
   MCP server registers must be named in its specialist skill. The guard
   cross-checks that it recognized every registration form, so a new form cannot
   make it vacuous.
+- **Options strategy specialist (opt-in).** A new `options_strategy_analysis`
+  Hub route is backed by the local `options-backtest-server` on port 8012,
+  which has two read-only tools: one reports capabilities and one validates a
+  strategy. Historical options backtests are not available yet. The
+  specialist says so with the server's typed reason
+  (`DATA_ENTITLEMENT_MISSING`), and the Hub never substitutes an equity
+  proxy, current-market analysis or invented performance figures. The route
+  is off by default; see the opt-in entry under Changed.
+- **Congressional stock-trade disclosures** on the events-news server
+  (`events_news_get_congress_trades_tool`), filterable by ticker, member,
+  chamber and a disclosure-date window. Backed by the public Hugging Face
+  dataset `austin-starks/congressional-stock-trades`, loaded in full per
+  upstream commit into in-memory DuckDB and rechecked hourly. Each trade links
+  its official House or Senate filing and carries the disclosure lag.
 
 ### Changed
 
@@ -145,6 +86,39 @@ CLI. A standalone MCP/paper-trading setup reference ships with it.
   only (position risk profiles report per-position Greeks with no units field),
   research results can carry a `future` freshness value, and the prediction
   market leaderboard takes `time_period`/`order_by`, not `period`.
+- **Default models move to the GPT-6 family.** The Hub now ships on
+  `gpt-6.1-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
+  fundamentals, events/news, options, screener, portfolio, and research run
+  `gpt-6-luna` at `xhigh` (was `gpt-5.6-luna` / `medium`). Strategy, crypto, and
+  prediction markets run `gpt-6.1-sol`, still at `medium`, and the guardrail
+  runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol` and `gpt-5.6-terra` remain
+  selectable hub models. An existing `~/.obai/settings.json` or
+  `ORCHESTRATOR_*` env pin still wins over the new hub default. `gpt-6.1-sol`
+  rejects the `none` effort tier, so a `none` override on the Hub, strategy,
+  crypto, or prediction markets now fails at request time.
+- Hub compaction falls back to a documented input window for `gpt-6.1-sol` and
+  `gpt-6-sol`, which the installed Agents SDK does not know yet, instead of
+  disabling compaction.
+- **The options-backtest server and `options_strategy_analysis` are opt-in.**
+  A default install, start, upgrade or `obai status` no longer pulls, builds,
+  starts or checks `options-backtest-server`, and the Hub has no
+  options-strategy route: `ENABLE_OPTIONS_STRATEGY` now defaults to `false`.
+  Opt in with `--with-options-backtest` on `install.sh`, `setup.sh`,
+  `obai start` or `obai restart`; `setup.sh` saves the choice to
+  `~/.obai/.env`, later runs and `obai upgrade` keep it, and
+  `--without-options-backtest` turns it off and removes the container.
+  `teardown.sh`, `obai stop` and `obai teardown` remove the server in both
+  states. Without the opt-in, the E2E gate records the four `CORE-OPTSTRAT-*`
+  cases `skipped_not_applicable` instead of running them. A machine already
+  running the server has its container removed by the next `obai start`,
+  `obai restart` or `obai upgrade` unless it opts in. `obai start` with either
+  flag restarts running services so the Web UI's Hub applies the change; a
+  flag passed straight to `setup.sh` or `install.sh`, or a run that removes a
+  leftover container, leaves an already-running Web UI on its old setting
+  until `obai restart`, and the setup summary says so. The CLI and the gate
+  read the opt-in from `~/.obai/.env` even when `OBAI_HOME` points `setup.sh`
+  elsewhere, so a later `obai start` without that `OBAI_HOME` finds no opt-in
+  and removes the container.
 
 ### Fixed
 
@@ -169,6 +143,19 @@ CLI. A standalone MCP/paper-trading setup reference ships with it.
   The default state directory is also gitignored, so routine git commands can no
   longer destroy intents the skill forbids deleting.
 - A pending-order price of zero no longer discards a usable limit or stop price.
+- Opik's ClickHouse container, which kept crashing, gets more memory (6 GB,
+  with swap held to the same cap) and at most four CPU cores. Its 18
+  self-monitoring log tables are no longer created, so they stop adding
+  inserts and disk use forever, and crash reports stay pinned off. The config
+  reaches ClickHouse through a Docker volume, so run `obai upgrade` (or
+  `./infra/opik/setup-volumes.sh` before recreating the container) to apply
+  it.
+
+### Security
+
+- All open Dependabot alerts are cleared by raising the dependency floors in
+  every service: `pyjwt>=2.15.0`, `anyio>=4.14.2`, `urllib3>=2.8.0`,
+  `virtualenv>=21.7.13` (root) and `litellm` 1.88.6 (`src/obai`).
 
 ## [1.6.1] - 2026-09-07
 
