@@ -19,30 +19,30 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-02T01:29:58.358507445Z"
+exclude-newer = "2026-10-04T03:13:23.903208922Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-setuptools = { timestamp = "2026-10-09T01:29:58.358528675Z", span = "PT0S" }
-pytest = { timestamp = "2026-10-09T01:29:58.358526752Z", span = "PT0S" }
-pillow = { timestamp = "2026-10-09T01:29:58.358526962Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-10-09T01:29:58.358527654Z", span = "PT0S" }
-h2 = { timestamp = "2026-10-09T01:29:58.358525469Z", span = "PT0S" }
-opik = { timestamp = "2026-10-09T01:29:58.358528896Z", span = "PT0S" }
-starlette = { timestamp = "2026-10-09T01:29:58.358528014Z", span = "PT0S" }
-authlib = { timestamp = "2026-10-09T01:29:58.358527433Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-10-09T01:29:58.35852574Z", span = "PT0S" }
-cryptography = { timestamp = "2026-10-09T01:29:58.358525219Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-10-09T01:29:58.358526511Z", span = "PT0S" }
-click = { timestamp = "2026-10-09T01:29:58.358528445Z", span = "PT0S" }
-onnx = { timestamp = "2026-10-09T01:29:58.358524608Z", span = "PT0S" }
-idna = { timestamp = "2026-10-09T01:29:58.358528235Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-10-09T01:29:58.358527203Z", span = "PT0S" }
-anthropic = { timestamp = "2026-10-09T01:29:58.358524848Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-10-09T01:29:58.358519278Z", span = "PT0S" }
-pygments = { timestamp = "2026-10-09T01:29:58.358526301Z", span = "PT0S" }
-mcp = { timestamp = "2026-10-09T01:29:58.35852597Z", span = "PT0S" }
-requests = { timestamp = "2026-10-09T01:29:58.358524337Z", span = "PT0S" }
+setuptools = { timestamp = "2026-10-11T03:13:23.903827329Z", span = "PT0S" }
+pytest = { timestamp = "2026-10-11T03:13:23.903819865Z", span = "PT0S" }
+pillow = { timestamp = "2026-10-11T03:13:23.903820587Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-10-11T03:13:23.90382267Z", span = "PT0S" }
+h2 = { timestamp = "2026-10-11T03:13:23.903810878Z", span = "PT0S" }
+opik = { timestamp = "2026-10-11T03:13:23.90382778Z", span = "PT0S" }
+starlette = { timestamp = "2026-10-11T03:13:23.903825786Z", span = "PT0S" }
+authlib = { timestamp = "2026-10-11T03:13:23.90382218Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-10-11T03:13:23.903811419Z", span = "PT0S" }
+cryptography = { timestamp = "2026-10-11T03:13:23.903809997Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-10-11T03:13:23.903818863Z", span = "PT0S" }
+click = { timestamp = "2026-10-11T03:13:23.903826828Z", span = "PT0S" }
+onnx = { timestamp = "2026-10-11T03:13:23.90380642Z", span = "PT0S" }
+idna = { timestamp = "2026-10-11T03:13:23.903826297Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-10-11T03:13:23.903821628Z", span = "PT0S" }
+anthropic = { timestamp = "2026-10-11T03:13:23.903807602Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-10-11T03:13:23.903613876Z", span = "PT0S" }
+pygments = { timestamp = "2026-10-11T03:13:23.903814064Z", span = "PT0S" }
+mcp = { timestamp = "2026-10-11T03:13:23.90381193Z", span = "PT0S" }
+requests = { timestamp = "2026-10-11T03:13:23.903805378Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -1314,7 +1314,7 @@ wheels = [
 
 [[package]]
 name = "obai"
-version = "1.7.0"
+version = "1.8.0"
 source = { virtual = "." }
 dependencies = [
     { name = "qdrant-client" },

@@ -6,8 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-10
+
+Minor: an opt-in options-strategy specialist, congressional trade disclosures,
+and the GPT-6 model family as the default. This is the first release since
+1.6.1, so it also ships everything listed under [1.7.0] below, which was never
+released on its own.
+
 ### Added
 
+- **Options strategy specialist (opt-in).** A new `options_strategy_analysis`
+  Hub route is backed by the local `options-backtest-server` on port 8012,
+  which has two read-only tools: one reports capabilities and one validates a
+  strategy. Historical options backtests are not available yet. The
+  specialist says so with the server's typed reason
+  (`DATA_ENTITLEMENT_MISSING`), and the Hub never substitutes an equity
+  proxy, current-market analysis or invented performance figures. The route
+  is off by default; see the opt-in entry under Changed.
 - **Congressional stock-trade disclosures** on the events-news server
   (`events_news_get_congress_trades_tool`), filterable by ticker, member,
   chamber and a disclosure-date window. Backed by the public Hugging Face
@@ -50,6 +65,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   read the opt-in from `~/.obai/.env` even when `OBAI_HOME` points `setup.sh`
   elsewhere, so a later `obai start` without that `OBAI_HOME` finds no opt-in
   and removes the container.
+
+### Fixed
+
+- Opik's ClickHouse container, which kept crashing, gets more memory (6 GB,
+  with swap held to the same cap) and at most four CPU cores. Its 18
+  self-monitoring log tables are no longer created, so they stop adding
+  inserts and disk use forever, and crash reports stay pinned off. The config
+  reaches ClickHouse through a Docker volume, so run `obai upgrade` (or
+  `./infra/opik/setup-volumes.sh` before recreating the container) to apply
+  it.
+
+### Security
+
+- All open Dependabot alerts are cleared by raising the dependency floors in
+  every service: `pyjwt>=2.15.0`, `anyio>=4.14.2`, `urllib3>=2.8.0`,
+  `virtualenv>=21.7.13` (root) and `litellm` 1.88.6 (`src/obai`).
 
 ## [1.7.0] - 2026-09-12
 
