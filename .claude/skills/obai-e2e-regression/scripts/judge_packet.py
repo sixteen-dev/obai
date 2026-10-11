@@ -305,6 +305,7 @@ FINANCIAL_SPECIALIST_TOOLS = frozenset(
         "strategy_analysis",
         "prediction_market_analysis",
         "crypto_analysis",
+        "options_strategy_analysis",
         "screener_lookup",
     }
 )

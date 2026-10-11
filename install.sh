@@ -5,6 +5,13 @@
 # Installs OBaI multi-agent financial research system with a single command:
 #   curl -fsSL https://raw.githubusercontent.com/sixteen-dev/obai/main/install.sh | bash
 #
+# Options (forwarded to setup.sh, which saves the choice to ~/.obai/.env):
+#   --with-options-backtest     Also install and enable the optional options-backtest server
+#   --without-options-backtest  Turn it off again and remove its container
+# Pass one through the pipe with `bash -s --`:
+#   curl -fsSL https://raw.githubusercontent.com/sixteen-dev/obai/main/install.sh | bash -s -- --with-options-backtest
+# Without a flag, a new install leaves the server off and a re-run keeps the saved choice.
+#
 # What this script does:
 #   1. Checks prerequisites (Docker, Python 3.12+, uv, git)
 #   2. Clones OBaI to ~/.local/share/obai (or updates if already installed)
@@ -75,6 +82,19 @@ OBAI_SRC="${OBAI_SRC:-$HOME/.local/share/obai}"
 OBAI_REPO="${OBAI_REPO:-https://github.com/sixteen-dev/obai.git}"
 OBAI_BRANCH="${OBAI_BRANCH:-main}"
 OBAI_ENV_FILE="$OBAI_HOME/.env"
+
+# --- Arguments: forwarded to setup.sh, the only writer of the opt-in (ADR 0004 §4) ---
+SETUP_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --with-options-backtest|--without-options-backtest) SETUP_ARGS+=("$arg") ;;
+        *)
+            fail "Unknown argument: $arg"
+            echo "  Accepted: --with-options-backtest, --without-options-backtest"
+            exit 1
+            ;;
+    esac
+done
 
 # --- Banner ---
 echo ""
@@ -332,4 +352,5 @@ load_env_file "$OBAI_ENV_FILE"
 
 # Mark this as a managed install so `obai upgrade` may fast-forward it to the
 # release branch (a developer's source clone is left untouched by comparison).
-OBAI_MANAGED=1 ./setup.sh
+# The ${arr[@]+...} form: under set -u, bash 3.2 (macOS) calls an empty array unbound.
+OBAI_MANAGED=1 ./setup.sh ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}

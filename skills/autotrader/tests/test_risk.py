@@ -104,9 +104,7 @@ class TestCheckOrderAllowed:
             long_market_value="90000.00",  # 90% exposure
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 
@@ -454,9 +452,7 @@ class TestMarketOrderNoPriceEstimate:
             last_equity="100000.00",
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 
@@ -570,9 +566,7 @@ class TestShortSideRiskChecks:
             long_market_value="20000.00",
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 

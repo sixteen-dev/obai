@@ -1,0 +1,187 @@
+# G05: a take-profit exit whose limit is missed at F1, F2 and F3. The order is cancelled and the
+# exposure is kept; the next session re-decides and fills.
+id = "G05"
+proves = ["failed_exit"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-07" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { take_profit = { basis = "initial_credit", fraction = 0.05 } } } }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05: take-profit at DEC; the short put's ask moves 0.05 against the limit at F1-F3.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["F1", "F2", "F3"]
+bid = "1.05"
+ask = "1.25"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-06: a new decision at the 2024-03-05 DEC prices; F1 fills.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_UNFILLED"]
+open_positions = []
+derivation = """
+Conventions as G01. P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04: entry as G01: D = -90, fees 2, limit -90, basis 90, entry_debit_incl_fees -88.
+Account 2024-03-04: cash 10000, receivable 90, payable 2, encumbrance 502, headroom 9496.
+2024-03-05 OPEN: cash = 10000 + 90 - 2 = 10088.
+2024-03-05 DEC: close D = 100*1.20 - 100*0.40 = 80; LiquidationPnL = 0 + 88 - 80 - 2 = 6 >= 0.05*90
+  = 4.5 -> EXIT (TAKE_PROFIT); limit = 80 + 0.00 = 80.
+2024-03-05 F1, F2, F3: D = 100*1.25 - 100*0.40 = 85 > 80 -> LIMIT at each attempt (checks 1-3 pass:
+  fresh, observed after DEC, VALID, sides > 0; closing orders have no direction check);
+  net_debit 85.00 is reported. The F3 nonfill cancels the order: ORDER_CANCELLED + EXIT_UNFILLED.
+  The position is kept.
+Account 2024-03-05: cash 10088; receivable 0; payable 0; encumbrance 502 (still held);
+  headroom = 10088 - 502 = 9586.
+2024-03-06 DEC: held 3 < 252, dte 9 > 0; close D = 80, LiquidationPnL = 6 >= 4.5 -> EXIT
+  (TAKE_PROFIT); limit 80.
+2024-03-06 F1: D = 80 <= 80 -> fill; fees 2; post-fill headroom = 10088 - 82 = 10006.
+Account 2024-03-06: cash 10088; payable 82; encumbrance 0; headroom 10006; mid_nlv 10006.
+2024-03-07 (final; Thursday, flat): OPEN cash = 10088 - 82 = 10006; final_equity_usd = 10006.
+Campaign c1: realized_pnl = -(-80 + 70) = 10 (as G01); fees 4; net 6.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_UNFILLED (2024-03-05 F3).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+
+[[expected.fills]]
+session = "2024-03-06"
+slot = "F1"
+purpose = "exit"
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+
+[[expected.nonfills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+reason = "LIMIT"
+net_debit = "85.00"
+
+[[expected.nonfills]]
+session = "2024-03-05"
+slot = "F2"
+purpose = "exit"
+reason = "LIMIT"
+net_debit = "85.00"
+
+[[expected.nonfills]]
+session = "2024-03-05"
+slot = "F3"
+purpose = "exit"
+reason = "LIMIT"
+net_debit = "85.00"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[expected.account."2024-03-06"]
+cash = "10088.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-03-07"]
+cash = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-06"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "take_profit"

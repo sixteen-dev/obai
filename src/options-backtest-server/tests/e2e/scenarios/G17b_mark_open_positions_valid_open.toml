@@ -1,0 +1,126 @@
+# G17b: G17a's market under end_policy mark_open_positions (C36). No FINAL order is submitted;
+# the held package is marked at the final CLOSE and the run is valid with an open position:
+# final equity is the mid NLV, and an open run is never headline-eligible.
+id = "G17b"
+proves = ["C36"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { end_policy = "mark_open_positions" } }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# As G17a; nothing reads these slots here, since no order is submitted on the final session.
+[[market.overrides]]
+kind = "quote_drop"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["F1", "F2", "F3"]
+
+# Final CLOSE marks, read by mid_nlv, natural_nlv and final_equity_usd (item 45).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["CLOSE"]
+bid = "1.50"
+ask = "1.70"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["CLOSE"]
+bid = "0.70"
+ask = "0.80"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = false
+final_equity_usd = "10003.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = [["SPXW:2024-03-15:P:4895", 1], ["SPXW:2024-03-15:P:4900", -1]]
+retired_contracts = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. take_profit and stop_loss null,
+exit_dte 0, max_holding_sessions 252, end_policy mark_open_positions; final session 2024-03-06.
+
+2024-03-04: entry as G01: D = -90, fees 2, limit -90, basis 90.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash 10088. DEC: dte 10, held session 2: no trigger -> hold.
+2024-03-06 DEC (final session): mark_open_positions submits no FINAL; dte 9 > 0, held session
+  3 < 252, no profit rules -> no trigger -> no order. No fill slot is read.
+2024-03-06 CLOSE (pins): mids P4900 (1.50 + 1.70)/2 = 1.60, P4895 (0.70 + 0.80)/2 = 0.75.
+  mid_nlv = 10088 + 0 - 0 + 100*(-1*1.60 + 1*0.75) = 10088 - 85 = 10003.
+  natural_nlv (short at ask, long at bid) = 10088 + 100*(-1*1.70 + 1*0.70) = 10088 - 100 = 9988.
+Account 2024-03-06: cash 10088; receivable 0; payable 0; encumbrance 502; headroom 9586;
+  mid_nlv 10003; natural_nlv 9988.
+End: valid (an open position is allowed under mark_open_positions); final_equity_usd =
+  mid_nlv(2024-03-06) = 10003; headline_eligible false (a position is open).
+  open_positions, sorted by contract id: [(P4895, +1), (P4900, -1)]. Nothing retired.
+Campaign c1: OPEN, end_session and exit_trigger null; basis 90, realized_pnl 0, fees 2.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-06"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+mid_nlv = "10003.00"
+natural_nlv = "9988.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+basis = "90.00"
+realized_pnl = "0.00"
+fees = "2.00"
+rolls = 0
+outcome = "open"

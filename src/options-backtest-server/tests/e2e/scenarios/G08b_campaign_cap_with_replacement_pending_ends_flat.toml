@@ -1,0 +1,150 @@
+# G08b: the roll close fills in campaign session 4. On session 5, max_campaign_sessions (5) has
+# been reached with the replacement pending, so no replacement is submitted and the campaign
+# ends flat.
+id = "G08b"
+proves = ["C37"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-11" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { roll = { mode = "sequential", trigger_dte = 8, max_rolls = 1, max_campaign_sessions = 5 } } }
+
+[market]
+weekly_dtes = [11, 17]   # 2024-03-15 and 2024-03-21, as G08a
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-07"
+slots = ["DEC", "F1"]
+bid = "1.20"
+ask = "1.40"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-07"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-08: G08a's openable replacement quotes, so only the campaign cap prevents the roll open.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4900"
+session = "2024-03-08"
+slots = ["DEC", "F1"]
+bid = "2.40"
+ask = "2.60"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-21:P:4895"
+session = "2024-03-08"
+slots = ["DEC", "F1"]
+bid = "1.10"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "9986.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01. Roll: sequential, trigger_dte 8, max_rolls 1, max_campaign_sessions 5;
+take_profit and stop_loss null. A = SPXW:2024-03-15:P:{4900,4895}.
+
+2024-03-04: ENTRY as G08a (D -90, fees 2); campaign session 1 = 2024-03-04. 2024-03-05 cash 10088.
+2024-03-07 DEC: campaign session 4 (03-04, 05, 06, 07) < 5, so CAMPAIGN_CAP is false;
+  RollTrigger (dte 8 <= 8), rolls 0 < 1 -> ROLL_CLOSE; close D = 140 - 40 = 100; limit 100.
+  Fill F1: D 100, fees 2; c1.g1 P&L = -(-60 + 70) - 4 = -14.
+Account 2024-03-07: cash 10088; receivable 0; payable 102; encumbrance 0; headroom 9986.
+2024-03-08 OPEN: cash = 10088 - 102 = 9986. DEC: roll_open_due, not the final session, campaign
+  session 5 >= max_campaign_sessions 5 -> END_CAMPAIGN (CAMPAIGN_CAP): no selection, no order,
+  flat (design §10.4: a pending replacement is not submitted once the cap is reached).
+Account 2024-03-08: cash 9986; receivable 0; payable 0; encumbrance 0; headroom 9986; mid_nlv 9986.
+2024-03-11 (final; Monday, scheduled): flat -> ENTRY_SKIPPED (FINAL_SESSION), no warning.
+  Account cash 9986, mid_nlv 9986; final_equity_usd = 9986 = 10000 - 14.
+Campaign c1: one generation, closed by its roll close and not reopened -> outcome closed,
+  exit_trigger roll_not_reopened, end_session = 2024-03-07 (its last position's close);
+  realized_pnl = -(-60 + 70) = -10; fees 4; rolls 0; basis 90.
+Fills: exactly the entry and the roll close (no roll open).
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-07"
+slot = "F1"
+purpose = "roll_close"
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.40"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "100.00"
+fees = "2.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-07"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "102.00"
+encumbrance = "0.00"
+headroom = "9986.00"
+
+[expected.account."2024-03-08"]
+cash = "9986.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "9986.00"
+mid_nlv = "9986.00"
+
+[expected.account."2024-03-11"]
+cash = "9986.00"
+mid_nlv = "9986.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-07"
+basis = "90.00"
+realized_pnl = "-10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "roll_not_reopened"

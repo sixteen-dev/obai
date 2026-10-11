@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import run_suite
+from lint_cases import OPTIONAL_CAPABILITY_ENV
 from run_suite import (
     CHAIN_CONTINUATION_VERDICTS,
     EXIT_CONFIGURATION,
@@ -997,6 +998,252 @@ def test_resume_revalidates_skipped_dependency_reason(
             run_one_path=tmp_path / "run_one.py",
             resume=True,
         )
+
+
+OPTIONS_BACKTEST = frozenset({"options_backtest"})
+
+
+def _optional_case(case_id: str = "O1", **extra: object) -> dict:
+    return _case(case_id, requires=["options_backtest"], **extra)
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, frozenset()),
+        ({"ENABLE_OPTIONS_STRATEGY": "false"}, frozenset()),
+        ({"ENABLE_OPTIONS_STRATEGY": "true"}, OPTIONS_BACKTEST),
+    ],
+)
+def test_enabled_optional_capabilities_reads_the_canonical_opt_in(
+    environment: dict[str, str], expected: frozenset[str]
+) -> None:
+    enabled = run_suite.enabled_optional_capabilities(environment, OPTIONAL_CAPABILITY_ENV)
+
+    assert enabled == expected
+
+
+@pytest.mark.parametrize("value", ["1", "TRUE", "yes", ""])
+def test_enabled_optional_capabilities_rejects_non_canonical_values(value: str) -> None:
+    with pytest.raises(PlanError, match=r"ENABLE_OPTIONS_STRATEGY.*~/\.obai/\.env"):
+        run_suite.enabled_optional_capabilities(
+            {"ENABLE_OPTIONS_STRATEGY": value}, OPTIONAL_CAPABILITY_ENV
+        )
+
+
+def test_disabled_capability_case_is_planned_not_applicable_and_not_estimated() -> None:
+    cases = [_case("C1"), _optional_case("O1", estimated_api_calls=5)]
+
+    plan = choose_cases(cases, max_api_calls=3, enabled_capabilities=frozenset())
+
+    assert [case["id"] for case in plan.cases] == ["C1", "O1"]
+    assert list(plan.not_applicable) == ["O1"]
+    reason = plan.not_applicable["O1"]
+    assert "requires options_backtest" in reason
+    assert "ENABLE_OPTIONS_STRATEGY is not true" in reason
+    assert "obai start --with-options-backtest" in reason
+    assert plan.estimated_api_calls == 3
+
+
+def test_enabled_capability_case_is_planned_and_estimated() -> None:
+    cases = [_case("C1"), _optional_case("O1", estimated_api_calls=5)]
+
+    plan = choose_cases(cases, max_api_calls=8, enabled_capabilities=OPTIONS_BACKTEST)
+
+    assert plan.not_applicable == {}
+    assert plan.estimated_api_calls == 8
+
+
+def test_not_applicable_cases_still_count_against_exact_tier_budgets() -> None:
+    cases = [_case("C1"), _optional_case("O1")]
+    budgets = {"core": {"max_cases": 1, "max_estimated_api_calls": 3}}
+
+    with pytest.raises(ExpensivePlanError, match="core selects 2 cases"):
+        choose_cases(cases, suite_budgets=budgets, enabled_capabilities=frozenset())
+
+
+def test_planner_rejects_an_unknown_required_capability() -> None:
+    with pytest.raises(PlanError, match="requires"):
+        choose_cases([_case("O1", requires=["typo"])])
+
+
+def test_execute_records_not_applicable_case_without_paid_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cases = [_case("C1"), _optional_case("O1")]
+    plan = choose_cases(cases, max_api_calls=3, enabled_capabilities=frozenset())
+    run_dir = tmp_path / "run"
+    spawned: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        spawned.append(command[command.index("--id") + 1])
+        _write_runner_packet(command, case=cases[0], response="completed answer", llm_spans=2)
+        return run_suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_suite.subprocess, "run", fake_run)
+    summary = run_suite._execute_plan(
+        plan,
+        run_id="run-na",
+        cases_path=tmp_path / "cases.yaml",
+        run_dir=run_dir,
+        run_one_path=tmp_path / "run_one.py",
+    )
+
+    reason = plan.not_applicable["O1"]
+    skipped = summary["results"][1]
+    assert spawned == ["C1"]
+    assert skipped["verdict"] == "skipped_not_applicable"
+    assert skipped["observed_outcome"] == "not_run"
+    assert skipped["observed_model_requests"] == 0
+    assert skipped["required_capabilities"] == ["options_backtest"]
+    assert skipped["reason"] == reason
+    assert json.loads((run_dir / "judgments" / "O1.json").read_text()) == skipped
+    assert not (run_dir / "attempts" / "O1.json").exists()
+    assert summary["skipped"] == [{"id": "O1", "reason": reason}]
+    assert summary["complete"] is True
+    assert summary["exit_code"] == EXIT_SUCCESS
+    run_suite._validate_existing_results(summary, plan, run_id="run-na", run_dir=run_dir)
+
+
+@pytest.mark.parametrize("first_enabled", [True, False])
+def test_resume_fails_closed_when_the_optional_capability_flips(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, first_enabled: bool
+) -> None:
+    cases = [_case("C1"), _optional_case("O1")]
+    cases_by_id = {case["id"]: case for case in cases}
+    enabled = choose_cases(cases, max_api_calls=6, enabled_capabilities=OPTIONS_BACKTEST)
+    disabled = choose_cases(cases, max_api_calls=6, enabled_capabilities=frozenset())
+    first_plan, resumed_plan = (enabled, disabled) if first_enabled else (disabled, enabled)
+    run_dir = tmp_path / "run"
+
+    def first_run(command: list[str], **_kwargs: object) -> object:
+        case_id = command[command.index("--id") + 1]
+        _write_runner_packet(command, case=cases_by_id[case_id], response="done", llm_spans=2)
+        return run_suite.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_suite.subprocess, "run", first_run)
+    run_suite._execute_plan(
+        first_plan,
+        run_id="run-flip",
+        cases_path=tmp_path / "cases.yaml",
+        run_dir=run_dir,
+        run_one_path=tmp_path / "run_one.py",
+    )
+    monkeypatch.setattr(
+        run_suite.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a flipped resume must fail before any paid call")
+        ),
+    )
+
+    with pytest.raises(PlanError, match="required capability"):
+        run_suite._execute_plan(
+            resumed_plan,
+            run_id="run-flip",
+            cases_path=tmp_path / "cases.yaml",
+            run_dir=run_dir,
+            run_one_path=tmp_path / "run_one.py",
+            resume=True,
+        )
+
+
+def test_resume_manifest_binds_the_not_applicable_cases(tmp_path: Path) -> None:
+    cases = [_case("C1"), _optional_case("O1")]
+    disabled = choose_cases(cases, enabled_capabilities=frozenset())
+    enabled = choose_cases(cases, enabled_capabilities=OPTIONS_BACKTEST)
+    run_dir = tmp_path / "run"
+    snapshot = run_dir / "cases.snapshot.yaml"
+    run_suite.write_immutable_bytes(snapshot, b"suite-v1")
+    manifest = build_manifest(
+        disabled,
+        cases_path=tmp_path / "cases.yaml",
+        cases_bytes=b"suite-v1",
+        cases_snapshot_path=snapshot,
+        mode="execute",
+    )
+
+    assert manifest["not_applicable"] == [{"id": "O1", "reason": disabled.not_applicable["O1"]}]
+    assert manifest["estimated_api_calls"] == 3
+    validate_resume_manifest(manifest, disabled, cases_bytes=b"suite-v1", run_dir=run_dir)
+    with pytest.raises(PlanError, match="not applicable"):
+        validate_resume_manifest(manifest, enabled, cases_bytes=b"suite-v1", run_dir=run_dir)
+
+
+def _write_optional_suite(path: Path) -> None:
+    path.write_text(
+        json.dumps({"default_tier": "core", "test_cases": [_case("C1"), _optional_case("O1")]})
+    )
+
+
+def _dry_run_argv(cases_path: Path, run_dir: Path) -> list[str]:
+    return ["run_suite.py", "--dry-run", "--cases", str(cases_path), "--run-dir", str(run_dir)]
+
+
+def test_dry_run_without_opt_in_reports_not_applicable_cases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cases_path = tmp_path / "cases.yaml"
+    run_dir = tmp_path / "run"
+    _write_optional_suite(cases_path)
+    monkeypatch.delenv("ENABLE_OPTIONS_STRATEGY", raising=False)
+    monkeypatch.setattr("sys.argv", _dry_run_argv(cases_path, run_dir))
+
+    assert run_suite.main() == EXIT_SUCCESS
+
+    results = json.loads((run_dir / "results.json").read_text())
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert results["planned_count"] == 2
+    assert results["attempted_count"] == 0
+    assert results["estimated_api_calls"] == 3
+    assert [entry["id"] for entry in results["not_applicable"]] == ["O1"]
+    assert manifest["not_applicable"] == results["not_applicable"]
+    stderr_lines = [line for line in capsys.readouterr().err.splitlines() if "O1" in line]
+    assert len(stderr_lines) == 1
+    assert "ENABLE_OPTIONS_STRATEGY" in stderr_lines[0]
+
+
+@pytest.mark.parametrize("source", ["environment", "cli_env_file"])
+def test_dry_run_with_opt_in_plans_every_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
+) -> None:
+    cases_path = tmp_path / "cases.yaml"
+    run_dir = tmp_path / "run"
+    _write_optional_suite(cases_path)
+    monkeypatch.delenv("ENABLE_OPTIONS_STRATEGY", raising=False)
+    if source == "environment":
+        monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "true")
+    else:
+        env_file = Path.home() / ".obai" / ".env"
+        env_file.write_text("ENABLE_OPTIONS_STRATEGY=true\n")
+    monkeypatch.setattr("sys.argv", _dry_run_argv(cases_path, run_dir))
+
+    assert run_suite.main() == EXIT_SUCCESS
+
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["not_applicable"] == []
+    assert results["estimated_api_calls"] == 6
+    assert results["attempted_count"] == 0
+
+
+@pytest.mark.parametrize("mode", ["--dry-run", "--execute"])
+def test_main_rejects_non_canonical_opt_in_before_writing_a_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    cases_path = tmp_path / "cases.yaml"
+    run_dir = tmp_path / "run"
+    _write_optional_suite(cases_path)
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "1")
+    monkeypatch.setattr(
+        run_suite,
+        "_run_preflight",
+        lambda _path: (_ for _ in ()).throw(AssertionError("configuration must fail first")),
+    )
+    argv = ["run_suite.py", mode, "--cases", str(cases_path), "--run-dir", str(run_dir)]
+    monkeypatch.setattr("sys.argv", [*argv, "--max-api-calls", "6"])
+
+    assert run_suite.main() == EXIT_CONFIGURATION
+    assert not (run_dir / "manifest.json").exists()
 
 
 def test_case_fingerprint_is_stable_and_content_sensitive() -> None:

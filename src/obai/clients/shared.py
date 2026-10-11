@@ -21,6 +21,7 @@ SPECIALIST_TOOLS: dict[str, str] = {
     "research_analysis": "Research Agent",
     "prediction_market_analysis": "Prediction Markets Agent",
     "crypto_analysis": "Crypto Agent",
+    "options_strategy_analysis": "Options Strategy Agent",
 }
 
 

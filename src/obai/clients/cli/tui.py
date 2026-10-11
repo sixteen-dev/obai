@@ -53,6 +53,7 @@ from clients.cli.widgets import (
 from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
 from core_agents.central_hub_agent import (
     CryptoPassthroughEvent,
+    OptionsStrategyPassthroughEvent,
     PredictionPassthroughEvent,
     StrategyPassthroughEvent,
     get_inner_tool_outputs,
@@ -632,7 +633,10 @@ class OBaIApp(App[None]):
                 # Terminal passthrough: use specialist output directly
                 if isinstance(
                     event,
-                    PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+                    PredictionPassthroughEvent
+                    | CryptoPassthroughEvent
+                    | StrategyPassthroughEvent
+                    | OptionsStrategyPassthroughEvent,
                 ):
                     response.append(event.content)
                     passthrough = event.content

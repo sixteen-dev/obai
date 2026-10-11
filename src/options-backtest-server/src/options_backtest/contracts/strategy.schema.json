@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:obai:options:strategy:1",
+  "title": "OBaI Options StrategySpec — R1",
+  "description": "Syntactic contract for the first release in options-backtesting-system-v3.md. Semantic, data, product and account validation are also mandatory. This is a specification, not an implemented API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "name", "product", "structure", "legs", "clock_profile",
+    "entry", "exits", "roll", "account", "sizing", "liquidity", "execution",
+    "fee_schedule_id", "funding_policy_id", "comparison_policy_id", "end_policy"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 160},
+    "product": {"$ref": "#/$defs/product"},
+    "structure": {"enum": ["single_long", "vertical", "iron_condor", "long_straddle", "long_strangle"]},
+    "legs": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/leg"}},
+    "clock_profile": {"const": "scheduled_daily_v1"},
+    "entry": {"$ref": "#/$defs/entry"},
+    "exits": {"$ref": "#/$defs/exits"},
+    "roll": {"$ref": "#/$defs/roll"},
+    "account": {"$ref": "#/$defs/account"},
+    "sizing": {"$ref": "#/$defs/sizing"},
+    "liquidity": {"$ref": "#/$defs/liquidity"},
+    "execution": {"$ref": "#/$defs/execution"},
+    "fee_schedule_id": {"$ref": "#/$defs/policyId"},
+    "funding_policy_id": {"$ref": "#/$defs/policyId"},
+    "comparison_policy_id": {"$ref": "#/$defs/policyId"},
+    "end_policy": {"enum": ["liquidate_at_final_session", "mark_open_positions"]}
+  },
+  "$defs": {
+    "unsignedDecimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,14})(\\.[0-9]{1,9})?$",
+      "description": "Exact nonnegative decimal; semantic validation enforces positive values where required. Units belong to the containing field."
+    },
+    "signedDecimal": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]{0,14})(\\.[0-9]{1,9})?$"
+    },
+    "policyId": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-z][a-z0-9_:-]*$"},
+    "legId": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[a-z][a-z0-9_]*$"},
+    "symbol": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[A-Z][A-Z0-9.]*$"},
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["underlying_symbol", "allowed_option_roots", "family"],
+      "properties": {
+        "underlying_symbol": {"$ref": "#/$defs/symbol"},
+        "allowed_option_roots": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"$ref": "#/$defs/symbol"}},
+        "family": {"const": "us_european_pm_cash_index"}
+      }
+    },
+    "leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg_id", "side", "option_type", "ratio", "expiry_selection", "strike_selection"],
+      "properties": {
+        "leg_id": {"$ref": "#/$defs/legId"},
+        "side": {"enum": ["buy", "sell"]},
+        "option_type": {"enum": ["call", "put"]},
+        "ratio": {"type": "integer", "const": 1},
+        "expiry_selection": {"$ref": "#/$defs/expirySelection"},
+        "strike_selection": {"$ref": "#/$defs/strikeSelection"}
+      }
+    },
+    "expirySelection": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "target_dte", "min_dte", "max_dte"],
+          "properties": {
+            "method": {"const": "target_dte"},
+            "target_dte": {"type": "integer", "minimum": 7, "maximum": 365},
+            "min_dte": {"type": "integer", "minimum": 7, "maximum": 365},
+            "max_dte": {"type": "integer", "minimum": 7, "maximum": 365}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "anchor_leg_id"],
+          "properties": {"method": {"const": "same_as"}, "anchor_leg_id": {"$ref": "#/$defs/legId"}}
+        }
+      ]
+    },
+    "strikeSelection": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "target_delta", "tolerance"],
+          "properties": {
+            "method": {"const": "delta"},
+            "target_delta": {"type": "number", "exclusiveMinimum": -1, "exclusiveMaximum": 1, "not": {"const": 0}},
+            "tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.25}
+          },
+          "description": "Signed long-option normalized spot delta: call positive, put negative; not a position dollar delta. Semantic validation checks the option type and model convention."
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "anchor_leg_id", "offset_price_units"],
+          "properties": {
+            "method": {"const": "strike_offset"},
+            "anchor_leg_id": {"$ref": "#/$defs/legId"},
+            "offset_price_units": {"$ref": "#/$defs/signedDecimal"}
+          },
+          "description": "Exact strike offset in the underlying's quote units, not contract dollars. Zero is permitted for same-strike structures."
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "target_strike_to_spot", "tolerance"],
+          "properties": {
+            "method": {"const": "moneyness"},
+            "target_strike_to_spot": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+            "tolerance": {"type": "number", "minimum": 0, "maximum": 0.25}
+          }
+        }
+      ]
+    },
+    "schedule": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["frequency"], "properties": {"frequency": {"const": "daily"}}},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["frequency", "weekday", "holiday_policy"],
+          "properties": {
+            "frequency": {"const": "weekly"},
+            "weekday": {"type": "integer", "minimum": 1, "maximum": 5},
+            "holiday_policy": {"const": "next_session_same_week"}
+          },
+          "description": "ISO weekday. If no later eligible session exists in that week, skip; do not move into a new week."
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["frequency", "session_ordinal"],
+          "properties": {
+            "frequency": {"const": "monthly"},
+            "session_ordinal": {"type": "integer", "minimum": 1, "maximum": 20}
+          },
+          "description": "Nth eligible common session of the calendar month; absent ordinal means no entry that month."
+        }
+      ]
+    },
+    "condition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["feature", "operator", "value"],
+      "properties": {
+        "feature": {"enum": ["underlying.return_20s", "underlying.close_to_sma_50s", "options.atm30_iv_rank_252s", "options.atm30_iv_percentile_252s"]},
+        "operator": {"enum": ["gt", "gte", "lt", "lte"]},
+        "value": {"type": "number"}
+      },
+      "description": "Features are from the prior completed session. Return and close/SMA-1 are decimal ratios; IV rank/percentile use percentage points. Missing inputs never become zero."
+    },
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schedule", "all_conditions"],
+      "properties": {
+        "schedule": {"$ref": "#/$defs/schedule"},
+        "all_conditions": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/condition"}}
+      },
+      "description": "An empty condition list is true; schedule, funding and position-cap gates still apply."
+    },
+    "profitRule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis", "fraction"],
+      "properties": {"basis": {"enum": ["initial_credit", "initial_debit"]}, "fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 10}}
+    },
+    "lossRule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis", "multiple"],
+      "properties": {"basis": {"enum": ["initial_credit", "initial_debit"]}, "multiple": {"type": "number", "exclusiveMinimum": 0, "maximum": 100}}
+    },
+    "exits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["take_profit", "stop_loss", "exit_dte", "max_holding_sessions"],
+      "properties": {
+        "take_profit": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/profitRule"}]},
+        "stop_loss": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/lossRule"}]},
+        "exit_dte": {"type": "integer", "minimum": 0, "maximum": 365},
+        "max_holding_sessions": {"type": "integer", "minimum": 1, "maximum": 252}
+      }
+    },
+    "roll": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "disabled"}}},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "trigger_dte", "max_rolls", "max_campaign_sessions"],
+          "properties": {
+            "mode": {"const": "sequential"},
+            "trigger_dte": {"type": "integer", "minimum": 1, "maximum": 365},
+            "max_rolls": {"type": "integer", "minimum": 1, "maximum": 12},
+            "max_campaign_sessions": {"type": "integer", "minimum": 1, "maximum": 756}
+          }
+        }
+      ]
+    },
+    "account": {
+      "type": "object", "additionalProperties": false,
+      "required": ["currency", "initial_cash_usd", "policy", "max_campaign_risk_fraction", "max_total_risk_fraction", "max_concurrent_campaigns"],
+      "properties": {
+        "currency": {"const": "USD"},
+        "initial_cash_usd": {"$ref": "#/$defs/unsignedDecimal"},
+        "policy": {"const": "fully_funded_v1"},
+        "max_campaign_risk_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "max_total_risk_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "max_concurrent_campaigns": {"type": "integer", "const": 1}
+      }
+    },
+    "sizing": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["method", "contracts"],
+          "properties": {"method": {"const": "fixed_contracts"}, "contracts": {"type": "integer", "minimum": 1, "maximum": 10}}
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["method", "max_contracts"],
+          "properties": {"method": {"const": "risk_budget"}, "max_contracts": {"type": "integer", "minimum": 1, "maximum": 10}}
+        }
+      ]
+    },
+    "liquidity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["min_open_interest", "min_cumulative_volume", "max_absolute_spread_price_units", "max_relative_spread", "require_positive_bid_for_entry"],
+      "properties": {
+        "min_open_interest": {"type": "integer", "minimum": 0},
+        "min_cumulative_volume": {"type": "integer", "minimum": 0},
+        "max_absolute_spread_price_units": {"$ref": "#/$defs/unsignedDecimal"},
+        "max_relative_spread": {"type": "number", "exclusiveMinimum": 0, "maximum": 5},
+        "require_positive_bid_for_entry": {"type": "boolean"}
+      },
+      "description": "A zero minimum disables that activity filter; a positive minimum requires an available observation. Relative spread=(ask-bid)/mid when mid>0. Execution still requires a valid side price and positive side size."
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "participation_fraction", "max_contracts_per_order", "price_allowance_usd", "fill_attempts", "quantity_policy"],
+      "properties": {
+        "model": {"const": "natural_package_limit_v1"},
+        "participation_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "max_contracts_per_order": {"type": "integer", "minimum": 1, "maximum": 10},
+        "price_allowance_usd": {"$ref": "#/$defs/unsignedDecimal"},
+        "fill_attempts": {"type": "integer", "const": 3},
+        "quantity_policy": {"const": "all_or_none_complete_packages"}
+      }
+    }
+  }
+}

@@ -43,9 +43,11 @@ class OptionsAgent(BaseAgent):
     def handoff_description(self) -> str:
         """Description for orchestrator handoff decisions."""
         return (
-            "Specialist for options and derivatives: real-time options chains, "
+            "Specialist for current options market data: real-time options chains, "
             "Greeks (delta, gamma, theta, vega), implied volatility, open interest, "
-            "NBBO quotes, and contract snapshots. Use for any options-related queries."
+            "NBBO quotes, contract snapshots, and scenario or payoff math on current "
+            "contracts. Not for historical options-strategy backtests, options strategy "
+            "validation, or managed options rules (options_strategy_analysis)."
         )
 
 

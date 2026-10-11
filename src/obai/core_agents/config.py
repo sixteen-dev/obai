@@ -25,10 +25,13 @@ logger = logging.getLogger(__name__)
 # every agent. Two tiers (orchestrator + specialist) live as fields on
 # AgentConfig below — same pattern as the model name fields.
 #
-# The effort tiers are the set the gpt-5.6 API actually accepts. `minimal`
-# is deliberately absent: it is a valid value in the OpenAI SDK's own type
-# but every gpt-5.6 model rejects it at request time, so accepting it here
-# would only trade a config-time error for a mid-query one.
+# The effort tiers are the set the gpt-5.6 and gpt-6 APIs actually accept.
+# `minimal` is deliberately absent: it is a valid value in the OpenAI SDK's own
+# type but every gpt-5.6 and gpt-6 model rejects it at request time (verified
+# live for gpt-6-sol and gpt-6-luna on 2026-09-25), so accepting it here
+# would only trade a config-time error for a mid-query one. gpt-6.1-sol also
+# rejects `none` (verified live 2026-10-02); it stays in the type because the
+# gpt-6-luna specialists accept it.
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 Verbosity = Literal["low", "medium", "high"]
 
@@ -199,11 +202,11 @@ class AgentConfig(BaseSettings):
 
     # Agent Models
     orchestrator_model: str = Field(
-        default="gpt-5.6-terra",
+        default="gpt-6.1-sol",
         description="Model for orchestrator agent (needs strong reasoning)",
     )
     specialist_model: str = Field(
-        default="gpt-5.6-luna",
+        default="gpt-6-luna",
         description="Model for specialist agents (can reason about tool selection)",
     )
     market_data_model: str | None = Field(
@@ -231,7 +234,7 @@ class AgentConfig(BaseSettings):
         description="Override model for portfolio agent (uses specialist_model if None)",
     )
     strategy_model: str | None = Field(
-        default="gpt-5.6-terra",
+        default="gpt-6.1-sol",
         description="Override model for strategy agent (uses orchestrator_model if None)",
     )
     research_model: str | None = Field(
@@ -239,15 +242,21 @@ class AgentConfig(BaseSettings):
         description="Override model for research agent (uses specialist_model if None)",
     )
     prediction_markets_model: str | None = Field(
-        default="gpt-5.6-terra",
+        default="gpt-6.1-sol",
         description="Override model for prediction markets agent (uses specialist_model if None)",
     )
     crypto_model: str | None = Field(
-        default="gpt-5.6-terra",
+        default="gpt-6.1-sol",
         description="Override model for crypto agent (uses specialist_model if None)",
     )
+    options_strategy_model: str | None = Field(
+        default=None,
+        description=(
+            'Override model for options strategy agent (uses get_agent_model("strategy") if None)'
+        ),
+    )
     guardrail_model: str = Field(
-        default="gpt-5.6-luna",
+        default="gpt-6-luna",
         description=(
             "Model for input guardrail validation. Pick a small, cheap model — "
             "guardrails run on every query."
@@ -260,7 +269,7 @@ class AgentConfig(BaseSettings):
     # additionally settable from the web UI and `obai config`, which write
     # ~/.obai/settings.json (see _HubSettingsSource).
     orchestrator_reasoning_effort: ReasoningEffort = Field(
-        default="max",
+        default="xhigh",
         description="Hub reasoning effort: none|low|medium|high|xhigh|max",
     )
     orchestrator_verbosity: Verbosity = Field(
@@ -268,7 +277,7 @@ class AgentConfig(BaseSettings):
         description="Hub output verbosity: low|medium|high",
     )
     specialist_reasoning_effort: ReasoningEffort = Field(
-        default="medium",
+        default="xhigh",
         description="Specialist reasoning effort: none|low|medium|high|xhigh|max",
     )
     specialist_verbosity: Verbosity = Field(
@@ -284,7 +293,7 @@ class AgentConfig(BaseSettings):
     # off the front.
     #
     # Expressed as a fraction of the hub model's context window rather than a
-    # token count. The whole gpt-5.6 line is ~1.05M, but ORCHESTRATOR_MODEL is
+    # token count. The gpt-5.6 and gpt-6 lines are ~1.05M, but ORCHESTRATOR_MODEL is
     # env-overridable and windows across candidates span an order of magnitude
     # (gpt-5.1 is 400k), so a fixed count would compact far too eagerly on the
     # larger ones. 0.9 matches the SDK's own DynamicCompactionPolicy default.
@@ -298,11 +307,11 @@ class AgentConfig(BaseSettings):
 
     # Per-agent reasoning effort overrides. Mirror the per-agent model fields
     # above: an override wins, else the specialist tier applies. Strategy,
-    # crypto, and prediction markets previously ran a tier above the rest;
-    # they now sit at medium, the balanced starting point, alongside every
-    # other agent. The fields stay because these three carry the heaviest
-    # analysis (backtest iteration, executable pricing, setup evaluation) and
-    # are therefore the first knobs to turn back up if answer quality slips.
+    # crypto, and prediction markets run the larger gpt-6.1-sol model at medium
+    # while the gpt-6-luna specialists run at xhigh. These three carry the
+    # longest multi-turn loops (backtest iteration, executable pricing, setup
+    # evaluation), where effort multiplies across every turn, so they are
+    # the first knobs to turn up if answer quality slips.
     strategy_reasoning_effort: ReasoningEffort | None = Field(
         default="medium",
         description="Override reasoning effort for strategy agent (uses specialist tier if None)",
@@ -314,6 +323,13 @@ class AgentConfig(BaseSettings):
     prediction_markets_reasoning_effort: ReasoningEffort | None = Field(
         default="medium",
         description="Reasoning effort for prediction markets agent (uses specialist tier if None)",
+    )
+    options_strategy_reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for options strategy agent "
+            '(uses get_agent_reasoning_effort("strategy") if None)'
+        ),
     )
 
     # Guardrails
@@ -337,6 +353,23 @@ class AgentConfig(BaseSettings):
         ge=5,
         le=100,
         description="Max turns for the crypto_analysis tool's inner Runner.run loop",
+    )
+    # Capabilities, validate, at most two re-validations and the answer, with
+    # headroom. This is the hard bound behind the prompt's re-validation rule.
+    options_strategy_max_turns: int = Field(
+        default=12,
+        ge=5,
+        le=100,
+        description="Max turns for the options_strategy_analysis tool's inner Runner.run loop",
+    )
+
+    # Options strategy route (design §17.3 enable flag). Disabled means the
+    # agent is never constructed and the hub gets no options_strategy_analysis
+    # tool; it is not reported as a degraded capability. Opt-in component; the
+    # installer writes ENABLE_OPTIONS_STRATEGY=true to ~/.obai/.env (ADR 0004 §1).
+    enable_options_strategy: bool = Field(
+        default=False,
+        description="Enable the options strategy specialist and its hub tool",
     )
 
     # MCP Server URLs
@@ -379,6 +412,10 @@ class AgentConfig(BaseSettings):
     mcp_crypto_url: str = Field(
         default="http://localhost:8010/mcp",
         description="Crypto MCP server URL",
+    )
+    mcp_options_backtest_url: str = Field(
+        default="http://localhost:8012/mcp",
+        description="Options backtest MCP server URL",
     )
 
     # MCP Client Settings

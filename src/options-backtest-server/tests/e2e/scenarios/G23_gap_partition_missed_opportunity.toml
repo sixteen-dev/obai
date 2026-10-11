@@ -1,0 +1,53 @@
+# G23 (GAP): the quote-chain partition of a scheduled, flat session is a declared GAP. The due
+# entry is a disclosed missed opportunity (DATA_COVERAGE_GAP warning) and the run stays valid.
+# Its twin, G23_unknown_partition_invalid.toml, marks the same partition UNKNOWN.
+id = "G23"
+proves = ["coverage"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged; no quote is pinned, since no selection runs.
+
+[[market.overrides]]
+kind = "coverage_status"
+table = "quotes"
+session = "2024-03-04"
+status = "gap"
+note = "feed outage"
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10000.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "DATA_COVERAGE_GAP"]
+open_positions = []
+campaigns = []
+derivation = """
+Conventions as G01. Weekly entry on Mondays; every partition COMPLETE except quotes on
+2024-03-04, which is GAP ("feed outage").
+
+2024-03-04 DEC (Monday, scheduled, flat, not final): the chain partition is GAP -> the due entry
+  is skipped before selection: ENTRY_SKIPPED (DATA_COVERAGE_GAP) with a DATA_COVERAGE_GAP warning;
+  no CandidateDecision, no order. A GAP is not UNKNOWN: the run stays valid.
+Account 2024-03-04: cash 10000; receivable 0; payable 0; encumbrance 0; headroom 10000;
+  mid_nlv 10000.
+2024-03-05, 2024-03-06 (final): unscheduled, flat: no decision.
+final_equity_usd = 10000; flat and valid -> headline-eligible. No campaign.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, DATA_COVERAGE_GAP (2024-03-04).
+"""
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "10000.00"
+mid_nlv = "10000.00"
+
+[expected.account."2024-03-06"]
+cash = "10000.00"
+headroom = "10000.00"
+mid_nlv = "10000.00"

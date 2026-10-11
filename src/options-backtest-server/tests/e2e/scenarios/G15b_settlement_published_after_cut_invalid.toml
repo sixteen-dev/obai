@@ -1,0 +1,121 @@
+# G15b: the held package's PM settlement value is published only after CUT (C21): it exists in the
+# dataset but is not available by the cutoff, so the run is invalid exactly as G15a. A value
+# available after CUT is never read back into the session it settles.
+id = "G15b"
+proves = ["C21"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-18" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged. Take-profit and stop-loss are null.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# Expiry session: the long put's closing sell meets bid 0 (NO_BID), so the TIME_EXIT close is
+# deferred and the package reaches settlement (item 40).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-15"
+slots = ["DEC"]
+bid = "0.00"
+ask = "0.05"
+bid_size = 0
+ask_size = 50
+
+# The 2024-03-15 settlement exists, but becomes available at midnight after the 23:59:59 cutoff.
+[[market.overrides]]
+kind = "late_availability"
+selector = "s:SPX_PM:2024-03-15:c0"
+available_at = "2024-03-16T00:00:00-04:00"
+
+[expected]
+calculation_status = "invalid"
+headline_eligible = false
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_DEFERRED"]
+retired_contracts = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. take_profit and stop_loss null,
+exit_dte 0, max_holding_sessions 252; final session 2024-03-18.
+
+2024-03-04: entry as G02: D = -90, fees 2, limit -90, basis 90.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash 10088. Account 2024-03-05: cash 10088, receivable 0, payable 0,
+  encumbrance 502, headroom 9586.
+2024-03-05 .. 2024-03-14: no trigger (dte 10..1 > 0; held sessions < 252): hold; the CLOSE
+  marks are generated quotes (fresh, VALID or NO_BID).
+2024-03-15 DEC (expiry, not final): dte 0 -> TIME_EXIT; P4895's closing sell needs a bid, its
+  DEC quote is NO_BID -> no quote_ok -> EXIT_DEFERRED (warning), no order. No CLOSE mark: the
+  legs expire this session (no quote at the expiry session's CLOSE).
+2024-03-15 CUT (23:59:59 EDT): the package expires today and must settle; the only SPX_PM
+  observation for 2024-03-15, s:SPX_PM:2024-03-15:c0, is available at 2024-03-16 00:00:00 EDT,
+  one second after the cutoff, so none is visible -> INVALIDATED (MISSING_SETTLEMENT). The loop
+  stops: no SETTLED event, no settlement cash, no 2024-03-15 SNAPSHOT, no 2024-03-18 session.
+  The later availability is never used to settle 2024-03-15 after the fact.
+Campaign c1: held when the run stopped -> INCOMPLETE, end_session and exit_trigger null;
+  basis 90, realized_pnl 0, fees 2, rolls 0. No contract was retired.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_DEFERRED (2024-03-15).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[expected.account."2024-03-14"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+basis = "90.00"
+realized_pnl = "0.00"
+fees = "2.00"
+rolls = 0
+outcome = "incomplete"

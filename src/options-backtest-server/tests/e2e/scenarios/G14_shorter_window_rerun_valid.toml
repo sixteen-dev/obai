@@ -1,0 +1,146 @@
+# G14 (shorter window): the same strategy and market as G14_held_close_mark_missing_invalid.toml,
+# requested separately over 2024-03-04 .. 2024-03-05 (C35). Its final session liquidates the
+# position before the missing mark, so this run is valid; it does not repair the full-window run.
+id = "G14"
+proves = ["C35"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-05" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged. The market is identical in both G14 files.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05 F1: the FINAL fill of this run's final session.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-06 CLOSE: the missing mark of the full-window run; after this run's window.
+[[market.overrides]]
+kind = "quote_drop"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["CLOSE"]
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. liquidate_at_final_session;
+final session 2024-03-05; the table session after it, 2024-03-06, settles dues only.
+
+2024-03-04: ENTRY as G01: D = -90, fees 2, limit -90; fill at F1.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash = 10000 + 90 - 2 = 10088.
+2024-03-05 DEC: final session under liquidate_at_final_session -> FINAL (no quote or trigger
+  needed; market-style: limit null). Closing legs P4900 +1, P4895 -1.
+2024-03-05 F1: fresh pinned quotes, VALID; D = 100*1.20 (buy P4900 at ask) - 100*0.40 (sell P4895
+  at bid) = 80; no limit check for FINAL; capacity floor(min(50, 50)*0.10) = 5 >= 1; post-fill
+  headroom = 10088 - (80 + 2) - 0 = 10006 >= 0 -> fill: net_debit 80.00, fees 2.00.
+Account 2024-03-05: cash 10088; receivable 0; payable 82; encumbrance 0; headroom 10006;
+  mid_nlv = natural_nlv = 10006 (flat). end_status: flat -> valid; final_equity_usd = 10006.
+2024-03-06 (settle-only, after the window): the 82 payable is outstanding -> OPEN SETTLE_DUE:
+  cash = 10088 - 82 = 10006; CUT SNAPSHOT: cash 10006, payable 0, headroom 10006, mid_nlv 10006.
+  The dropped 2024-03-06 CLOSE quote is never read: no position is held after the window.
+Campaign c1: REALIZED_PNL[P4900] = -(200 - 120) = -80, [P4895] = +(110 - 40) = +70;
+  realized_pnl = 10; fees 4; closed by FINAL -> exit_trigger final_liquidation.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "final"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+natural_nlv = "10006.00"
+
+[expected.account."2024-03-06"]
+cash = "10006.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "final_liquidation"

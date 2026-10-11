@@ -12,7 +12,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from alpaca.common.exceptions import APIError
 
-from .conftest import FakeAccount, FakeClock, FakeOrder, FakePosition
+from scripts import close_position, get_portfolio
+
+from .conftest import FakeAccount, FakeClock, FakeOrder, FakePosition, missing_order_error
 
 
 def _capture_stdout(func, args=None):
@@ -31,6 +33,22 @@ def _capture_stdout(func, args=None):
     return output
 
 
+def _capture_failure(func, args=None):
+    """Run a failing script and return its exit code with the JSON it printed.
+
+    ``_capture_stdout`` discards stdout when the script exits non-zero, so the
+    error-payload assertions need their own capture.
+    """
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        with patch("sys.argv", args or ["script"]), pytest.raises(SystemExit) as exit_info:
+            func()
+        return exit_info.value.code, sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+
 def _make_mock_client():
     """Create a standard mock TradingClient for script tests."""
     client = MagicMock()
@@ -41,6 +59,8 @@ def _make_mock_client():
     ]
     client.get_clock.return_value = FakeClock()
     client.get_orders.return_value = []
+    client.get_order_by_client_id.side_effect = missing_order_error()
+    client.get_open_position.return_value = FakePosition()
     client.submit_order.return_value = FakeOrder()
     client.close_position.return_value = FakeOrder(side="sell")
     return client
@@ -99,6 +119,19 @@ class TestGetPortfolioScript:
         assert data["account"]["equity"] == 100000.0
         assert data["position_count"] == 2
         assert data["positions"][0]["symbol"] == "AAPL"
+
+    def test_order_state_and_truncation_flags_are_reported(self, mock_env: None) -> None:
+        """Holdings cannot be reconciled without order state and its page bound."""
+        mock_client = _make_mock_client()
+        mock_client.get_orders.return_value = [FakeOrder(status="new", filled_qty="0")]
+        with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
+            output = _capture_stdout(get_portfolio.main)
+
+        data = json.loads(output)
+        assert data["open_orders"][0]["status"] == "new"
+        assert data["recent_orders"][0]["filled_qty"] == 0.0
+        assert data["open_orders_may_be_truncated"] is False
+        assert data["recent_orders_may_be_truncated"] is False
 
     def test_risk_status_included(self, mock_env: None) -> None:
         mock_client = _make_mock_client()
@@ -195,19 +228,32 @@ class TestExecuteTradeScript:
 
     def test_risk_rejection_outputs_error(self, mock_env: None) -> None:
         mock_client = _make_mock_client()
-        # At daily trade limit
+        # At the daily trade limit, with a price so sizing cannot also reject.
         mock_client.get_account.return_value = FakeAccount()
         mock_client.get_all_positions.return_value = []
         mock_client.get_orders.return_value = [FakeOrder(status="filled") for _ in range(20)]
         with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
             from scripts.execute_trade import main
 
-            with pytest.raises(SystemExit) as exc_info:
-                _capture_stdout(
-                    main,
-                    args=["execute_trade.py", "--symbol", "AAPL", "--side", "buy", "--qty", "10"],
-                )
-            assert exc_info.value.code == 1
+            code, output = _capture_failure(
+                main,
+                [
+                    "execute_trade.py",
+                    "--symbol",
+                    "XYZ",
+                    "--side",
+                    "buy",
+                    "--qty",
+                    "1",
+                    "--limit-price",
+                    "100",
+                ],
+            )
+            assert code == 1
+
+        data = json.loads(output)
+        assert "Daily trade limit" in data["error"]
+        assert data["submission_state"] == "not_submitted"
 
     def test_limit_order_with_price(self, mock_env: None) -> None:
         mock_client = _make_mock_client()
@@ -263,9 +309,7 @@ class TestExecuteTradeScript:
         data = json.loads(output)
         assert data["status"] == "accepted"
 
-    def test_sell_opening_short_without_limit_price_rejected(
-        self, mock_env: None
-    ) -> None:
+    def test_sell_opening_short_without_limit_price_rejected(self, mock_env: None) -> None:
         """A sell that opens or grows a short must include --limit-price so
         the risk engine can size the resulting short position. Without a
         price, the order is rejected (see lib/risk.py:_sized_order)."""
@@ -294,6 +338,7 @@ class TestClosePositionScript:
 
     def test_close_outputs_order(self, mock_env: None) -> None:
         mock_client = _make_mock_client()
+        mock_client.submit_order.return_value = FakeOrder(side="sell", qty="25")
         with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
             from scripts.close_position import main
 
@@ -308,16 +353,34 @@ class TestClosePositionScript:
 
     def test_close_nonexistent_position(self, mock_env: None) -> None:
         mock_client = _make_mock_client()
-        mock_client.close_position.side_effect = APIError("no position for XYZ")
+        mock_client.get_open_position.side_effect = APIError("position does not exist")
         with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
             from scripts.close_position import main
 
-            with pytest.raises(SystemExit) as exc_info:
-                _capture_stdout(
-                    main,
-                    args=["close_position.py", "--symbol", "XYZ"],
-                )
-            assert exc_info.value.code == 1
+            code, output = _capture_failure(
+                main,
+                ["close_position.py", "--symbol", "XYZ", "--client-order-id", "exit-xyz"],
+            )
+            assert code == 1
+
+        data = json.loads(output)
+        assert data["submission_state"] == "not_submitted"
+        assert data["client_order_id"] == "exit-xyz"
+
+    def test_close_timeout_reports_an_unknown_submission(self, mock_env: None) -> None:
+        """A lost response on the exit path must not read as a clean rejection."""
+        mock_client = _make_mock_client()
+        mock_client.submit_order.side_effect = TimeoutError("lost response")
+        with patch("lib.alpaca_client.TradingClient", return_value=mock_client):
+            code, output = _capture_failure(
+                close_position.main,
+                ["close_position.py", "--symbol", "AAPL", "--client-order-id", "exit-aapl"],
+            )
+            assert code == 1
+
+        data = json.loads(output)
+        assert data["submission_state"] == "unknown"
+        assert data["client_order_id"] == "exit-aapl"
 
 
 class TestModels:

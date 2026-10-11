@@ -14,7 +14,7 @@
   <a href="https://openbell.ai/obai/docs/faq">FAQ →</a>
 </div>
 
-> ⚡ **OBaI is now completely powered by the GPT-5.6 family — Terra and friends.** Every agent runs on the 5.6 tier: `gpt-5.6-terra` on the Hub (at `max` reasoning effort) and on Strategy, Crypto, and Prediction Markets, and `gpt-5.6-luna` on the remaining specialists and the guardrail. No legacy models remain. The Hub ships at its deepest setting — switch it to `gpt-5.6-sol` or a lower effort tier any time from [Settings](#hub-model--reasoning-effort).
+> ⚡ **OBaI now runs on the GPT-6 family.** The Hub runs `gpt-6.1-sol` at `xhigh` reasoning effort; Strategy, Crypto, and Prediction Markets run `gpt-6.1-sol` at `medium`; the remaining specialists run `gpt-6-luna` at `xhigh`, and the guardrail runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol`, and `gpt-5.6-terra` stay selectable for the Hub — switch model or effort tier any time from [Settings](#hub-model--reasoning-effort).
 
 > 💡 **New here?** Check the [FAQ](https://openbell.ai/obai/docs/faq) — covers when to start a new conversation, cost expectations, and which agent handles what.
 
@@ -38,7 +38,9 @@ The Central Hub understands your intent, dispatches to the right specialists sim
 
 ![OBaI Architecture](docs/architecture.svg?v=2)
 
-The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-5.6-terra` at `max` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-5.6-terra` for stronger analysis, and the remaining specialists use `gpt-5.6-luna`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+The Hub receives a query, runs input guardrails, then dispatches to multiple specialists **in parallel** (agents-as-tools pattern, not handoffs). Each agent calls its MCP server over streamable-http. Results flow back to the synthesizer — except for the three terminal specialists: Strategy, Crypto, and Prediction Markets author their own deliverable, and the Hub relays it verbatim rather than rewriting it. [Opik](https://github.com/comet-ml/opik) (self-hosted) traces every span end-to-end; scoring is opt-in, via `ENABLE_INLINE_SCORING`, `--scoring`, or the evaluation harness. The Hub uses `gpt-6.1-sol` at `xhigh` reasoning effort for routing and synthesis, the Strategy, Crypto, and Prediction Markets Agents use `gpt-6.1-sol` at `medium` for stronger analysis, and the remaining specialists use `gpt-6-luna` at `xhigh`. The Research Agent adds deep qualitative analysis via Exa semantic search. The Prediction Markets Agent covers Polymarket with executable pricing, trade memos, wallet tracing, and setup-based backtesting. The Crypto Agent covers Coinbase spot markets with quotes, order books, OHLCV, and execution-grade spot backtests plus paper-ledger artifacts.
+
+The Options Strategy Agent is a fourth terminal specialist, relayed verbatim the same way. It compiles an options strategy into a strategy document, validates it against options-backtest-server, and states what OBaI supports. Until qualified historical options data exists it reports a historical backtest as unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) and never produces a performance figure. It runs on the Strategy Agent's model and reasoning effort.
 
 ---
 
@@ -46,7 +48,7 @@ The Hub receives a query, runs input guardrails, then dispatches to multiple spe
 
 | Provider | Cost | Coverage |
 |----------|------|----------|
-| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 10 servers. |
+| **FMP** (Financial Modeling Prep) | ~$19/mo | Fundamentals, market data, screening, portfolio, earnings, dividends, backtest OHLCV. One API covers 6 of 11 servers. |
 | **Massive.com** | Free tier available | Options chain data, Greeks, implied volatility, open interest. |
 | **Tavily** | Free tier available | AI-optimized news search. Purpose-built for LLM consumption. |
 | **Exa** | Free tier available | Semantic search for qualitative research — company profiles, leadership, product sentiment, competitive landscape. |
@@ -90,13 +92,21 @@ FMP is the backbone -- it is not free, but a single subscription powers almost t
 curl -fsSL https://openbell.ai/install.sh | bash
 ```
 
-Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts all services (including the web UI), and installs the `obai` CLI.
+Checks prerequisites, clones OBaI to `~/.local/share/obai`, prompts for API keys, starts the default services and the web UI (the optional options-backtest server only with `--with-options-backtest`), and installs the `obai` CLI.
 
 > **Note:** the key prompts read from stdin, which the pipe above is already using
 > for the script itself. To be prompted, download and run it in two steps instead:
 > `curl -fsSL https://openbell.ai/install.sh -o install.sh && bash install.sh`.
 > Piping still works — it just skips the prompts, and you add your keys to
 > `~/.obai/.env` afterwards.
+
+The options-backtest server (options-strategy validation) is optional and off by default. To install and enable it, pass the flag through the pipe (or append it to `bash install.sh` in the two-step form):
+
+```bash
+curl -fsSL https://openbell.ai/install.sh | bash -s -- --with-options-backtest
+```
+
+The choice is saved as `ENABLE_OPTIONS_STRATEGY` in `~/.obai/.env`, so later `obai start`, `obai restart`, and `obai upgrade` runs keep it; `--without-options-backtest` turns it off again and removes its container.
 
 Then chat with OBaI:
 
@@ -110,7 +120,12 @@ obai stop          # stop everything (Docker images and your data are preserved)
 obai start         # bring it back up
 obai restart       # stop, then start
 obai upgrade       # pull the latest version and restart on it (prompts first; -y to skip)
+
+obai start --with-options-backtest     # also run the optional options-backtest server (saved)
+obai start --without-options-backtest  # turn it off again and remove its container (saved)
 ```
+
+`obai restart` takes the same two flags. With either flag, both commands restart services that are already running so the web UI picks up the change; without one, the saved choice applies.
 
 `obai upgrade` fetches the latest release, re-pulls the versioned Docker images, and restarts the services and web UI automatically. The underlying `./setup.sh` / `./teardown.sh` scripts still work if you prefer running them from `~/.local/share/obai`.
 
@@ -151,7 +166,7 @@ The setup script:
 2. Validates required API keys from your shell environment
 3. Creates `~/.obai/` config directory with default preferences
 4. Starts Opik tracing stack (self-hosted, Docker Compose)
-5. Builds and starts all 10 MCP servers (Docker Compose)
+5. Builds and starts the 10 default MCP servers, plus the optional options-backtest server when opted in (Docker Compose)
 6. Installs the `obai` CLI globally via `uv tool install`
 7. Launches the Web UI (FastAPI on port 8090)
 8. Configures Opik SDK for local tracing
@@ -162,13 +177,15 @@ The setup script:
 | `--skip-opik` | Skip the Opik tracing stack |
 | `--skip-mcp` | Skip MCP servers (start them later) |
 | `--prompt-keys` | Interactively prompt for missing API keys |
+| `--with-options-backtest` | Also install and enable the optional options-backtest server; saved to `~/.obai/.env` for later runs |
+| `--without-options-backtest` | Turn the options-backtest server off again and remove its container; saved to `~/.obai/.env` |
 
 ### Pinning a Version
 
 OBaI uses [GitHub Releases](https://github.com/sixteen-dev/obai/releases) for versioned snapshots. To install a specific version:
 
 ```bash
-git checkout v1.6.1
+git checkout v1.7.0
 ./setup.sh
 ```
 
@@ -185,7 +202,7 @@ obai upgrade
 
 ## Running the System
 
-Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that all ten servers are healthy:
+Lifecycle is handled by the `obai` CLI — `obai start` to start, `obai stop` to stop (your data is preserved), `obai restart` to cycle, and `obai upgrade` to pull the latest version and restart. The `./setup.sh` / `./teardown.sh` scripts do the same thing and remain available. To check that every enabled server is healthy:
 
 ```bash
 obai status
@@ -203,8 +220,12 @@ docker compose -p obai ps                                           # list runni
 docker compose -p obai logs -f market-data-server                   # tail one server's logs
 docker compose -p obai restart                                      # restart all MCP servers
 docker compose -p obai up -d                                        # start just the MCP servers
+docker compose --profile options-backtest -p obai up -d             # ...including the optional options-backtest server
 docker compose -p obai-opik -f infra/opik/docker-compose.yml up -d  # start just Opik
 ```
+
+The options-backtest server sits behind the Compose profile `options-backtest`, so a raw `docker compose` command sees it only when you pass `--profile options-backtest`. `obai start` / `./setup.sh` add the profile for you when you have opted in.
+
 </details>
 
 ---
@@ -260,6 +281,7 @@ obai web         # serve the web UI
 | **research-server** | 8008 | Exa | Deep qualitative research — company profiles, leadership, product sentiment, competitive landscape, general research |
 | **prediction-markets-server** | 8009 | Polymarket | Market discovery, executable pricing (bid/ask/depth), price history, trade flow, holder concentration, leaderboard, wallet tracing, setup-based backtesting |
 | **crypto-server** | 8010 | Coinbase Advanced Trade (public) | Spot product resolution, best bid/ask, order books, latest trades, OHLCV with source-quality checks, execution-grade spot backtests (trend/mean-reversion), trade logs, and internal paper-ledger strategy artifacts. No API key required. |
+| **options-backtest-server** | 8012 | None yet (no qualified historical options data) | **Optional, opt-in.** Off by default; install and enable it with `--with-options-backtest` (see [Install](#install)). Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP): verticals, iron condors, long straddles and strangles, single long options. Historical backtesting is reported unavailable until the historical data work package lands. No API key required; the port is bound to localhost (local single-user license). |
 
 All servers use FastMCP with streamable-http transport, running inside Docker containers on a shared bridge network (`obai-mcp-network`).
 
@@ -292,7 +314,7 @@ Strategy Agent workflow:
   Final strategy JSON: { ... }
 ```
 
-The agent uses `gpt-5.6-terra` by default (not `gpt-5.6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
+The agent uses `gpt-6.1-sol` at `medium` effort by default (not `gpt-6-luna` like other specialists) because strategy design requires strong reasoning — metric interpretation, overfitting detection, and parameter sensitivity analysis.
 
 **Backtest server tools:** `backtest_run_strategy_tool`, `backtest_get_job_status_tool`, `backtest_get_supported_indicators_tool`, `backtest_download_data_tool`, `backtest_list_available_data_tool`, `backtest_manage_storage_tool`, `backtest_get_trade_log_tool`, `backtest_compare_strategies_tool`, `backtest_clear_cache_tool`, `backtest_walk_forward_tool`
 
@@ -408,20 +430,21 @@ Key environment variables (all have sensible defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCHESTRATOR_MODEL` | `gpt-5.6-terra` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
-| `ORCHESTRATOR_REASONING_EFFORT` | `max` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Overrides `~/.obai/settings.json` |
-| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Model for specialist agents |
-| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
+| `ORCHESTRATOR_MODEL` | `gpt-6.1-sol` | Model for the Central Hub (needs strong reasoning). Overrides the hub model saved in `~/.obai/settings.json` — see [Hub Model & Reasoning Effort](#hub-model--reasoning-effort) |
+| `ORCHESTRATOR_REASONING_EFFORT` | `xhigh` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Overrides `~/.obai/settings.json` |
+| `SPECIALIST_MODEL` | `gpt-6-luna` | Model for specialist agents |
+| `STRATEGY_MODEL` | `gpt-6.1-sol` | Strategy agent (also `CRYPTO_MODEL`, `PREDICTION_MARKETS_MODEL`) |
 | `ENABLE_GUARDRAILS` | `true` | Input guardrails to filter non-financial queries |
 | `ENABLE_INLINE_SCORING` | `false` | Run faithfulness/completeness scoring on every query in the TUI/CLI |
+| `ENABLE_OPTIONS_STRATEGY` | `false` | Optional options-backtest server and the `options_strategy_analysis` route; written to `~/.obai/.env` by `setup.sh --with-options-backtest` |
 | `OPIK_ENABLED` | `true` | Enable Opik tracing |
 | `OPIK_URL` | `http://localhost:5173` | Opik server URL |
 | `MCP_TIMEOUT` | `180` | MCP request timeout (seconds), between 1 and 300 |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
-Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`.
+Per-agent model overrides are also available: `MARKET_DATA_MODEL`, `FUNDAMENTALS_MODEL`, `EVENTS_NEWS_MODEL`, `OPTIONS_MODEL`, `SCREENER_MODEL`, `PORTFOLIO_MODEL`, `STRATEGY_MODEL`, `RESEARCH_MODEL`, `PREDICTION_MARKETS_MODEL`. `OPTIONS_STRATEGY_MODEL` and `OPTIONS_STRATEGY_REASONING_EFFORT` pin the Options Strategy Agent; unset, it follows the Strategy Agent's resolved model and effort.
 
-Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists, and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent. Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` model, so OBaI does not accept it.)
+Reasoning effort is configurable the same way: `SPECIALIST_REASONING_EFFORT` sets the default tier for specialists (`xhigh`), and `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT` override it per agent (all three ship at `medium`). Every effort variable takes one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` appears in the OpenAI SDK's own types but is rejected at request time by every `gpt-5.6` and `gpt-6` model, so OBaI does not accept it. `gpt-6.1-sol` also rejects `none`, so use that tier only on agents running another model.)
 
 ---
 
@@ -431,26 +454,23 @@ The Central Hub's model and reasoning effort are the two knobs worth changing wi
 
 ```json
 {
-  "hub_model": "gpt-5.6-terra",
-  "hub_reasoning_effort": "max"
+  "hub_model": "gpt-6.1-sol",
+  "hub_reasoning_effort": "xhigh"
 }
 ```
 
 | Field | Default | Choices |
 |-------|---------|---------|
-| `hub_model` | `gpt-5.6-terra` | `gpt-5.6-terra` (heavier analysis, shipped default, also used by the strategy, crypto, and prediction-markets specialists), `gpt-5.6-sol` (balanced — faster and cheaper) |
-| `hub_reasoning_effort` | `max` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
+| `hub_model` | `gpt-6.1-sol` | `gpt-6.1-sol` (shipped default, also used by the strategy, crypto, and prediction-markets specialists), `gpt-6-sol` (its predecessor), `gpt-5.6-terra` (the previous default), `gpt-5.6-sol` (previous-generation balanced model) |
+| `hub_reasoning_effort` | `xhigh` | `medium`, `high`, `xhigh`, `max` — higher tiers think longer, cost more, and answer slower |
 
-OBaI ships the Hub at its deepest setting, `gpt-5.6-terra` / `max`, so a fresh
-install answers as well as it can out of the box. Deeper is not automatically
-dearer here: on the `core` regression tier `gpt-5.6-terra` / `max` scored at
-least as well as `gpt-5.6-sol` / `medium` at **lower** total cost and slightly
-lower median latency, because a stronger Hub settles routing and synthesis in
-fewer turns. See [Why the Hub defaults to `gpt-5.6-terra` at `max`
-effort](docs/hub-default-model-rationale.md) for the numbers and the caveats.
-If you would rather trade depth for latency, `gpt-5.6-sol` / `high` is the
-balanced pairing — change it in the settings modal or with `obai config`, both
-shown below.
+OBaI ships the Hub on `gpt-6.1-sol` / `xhigh`. That pairing has not yet been
+through the paid `core` benchmark that chose the previous default —
+[Why the Hub defaulted to `gpt-5.6-terra` at `max`
+effort](docs/hub-default-model-rationale.md) records that gpt-5.6 comparison.
+If you would rather trade depth for latency, drop the effort to `high` or
+`medium` — change it in the settings modal or with `obai config`, both shown
+below.
 
 Specialist models and efforts are not settable here; they stay code-owned and are tuned through the environment variables above.
 
@@ -568,7 +588,7 @@ The agents use `get_preferences` and `set_preferences` tools automatically.
 ```
 obai/
 ├── setup.sh                        # One-shot setup script
-├── docker-compose.yml              # All 10 MCP servers
+├── docker-compose.yml              # All 11 MCP servers
 ├── pyproject.toml                  # Monorepo dev tooling config
 ├── scripts/                        # run-all-tests.sh, run-all-typechecks.sh
 ├── skills/                         # 13 agent skills (see Agent Skills below)
@@ -587,6 +607,7 @@ obai/
 │   ├── research-server/            # MCP server — qualitative research (Exa)
 │   ├── prediction-markets-server/  # MCP server — Polymarket analysis (no API keys)
 │   ├── crypto-server/              # MCP server — Coinbase spot crypto (no API keys)
+│   ├── options-backtest-server/    # MCP server — options-strategy validation (no API keys)
 │   └── obai/                       # Core application
 │       ├── pyproject.toml          # OBaI package config
 │       ├── core_agents/            # Agent definitions + orchestration
@@ -596,7 +617,7 @@ obai/
 │       │   ├── hub_settings.py     # ~/.obai/settings.json (hub model + effort)
 │       │   ├── guardrails.py
 │       │   ├── prompts/            # Markdown prompt files
-│       │   └── *_agent.py          # 10 specialist agents
+│       │   └── *_agent.py          # 11 specialist agents
 │       ├── clients/
 │       │   ├── cli/                # CLI + TUI clients
 │       │   │   ├── chat.py         # CLI entry point — query/chat/tui/status/web,

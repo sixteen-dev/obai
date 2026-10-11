@@ -8,16 +8,17 @@ Usage:
 
 Outputs JSON to stdout:
     On success: {"order_id": "...", "status": "accepted", "symbol": "AAPL", ...}
-    On risk rejection: {"error": "Risk rejected: ...", "allowed": false}
+    On risk rejection: {"error": "Risk rejected: ...", "submission_state": "not_submitted"}
 """
 
 import argparse
 import json
 import sys
+from uuid import uuid4
 
 from lib.alpaca_client import AlpacaClient, AlpacaClientError
+from lib.execution import execute_order, submission_failure
 from lib.logging_config import get_logger
-from lib.risk import RiskChecker
 
 _logger = get_logger("execute_trade")
 
@@ -33,6 +34,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--limit-price", type=float, default=None, help="Limit price")
     parser.add_argument("--stop-price", type=float, default=None, help="Stop price")
+    parser.add_argument(
+        "--client-order-id", help="Stable intent ID; required for scheduled retries"
+    )
+    parser.add_argument("--reduce-only", action="store_true", help="Reject any position increase")
     parser.add_argument(
         "--time-in-force", default="day", choices=["day", "gtc", "opg", "cls", "ioc", "fok"]
     )
@@ -51,6 +56,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Execute trade with risk check and print JSON result."""
     args = parse_args()
+    client_order_id = args.client_order_id or f"obai-{uuid4().hex}"
 
     _logger.info(
         "trade_attempt",
@@ -62,61 +68,26 @@ def main() -> None:
 
     try:
         client = AlpacaClient()
-        risk_checker = RiskChecker(client)
-
-        if not args.allow_after_hours:
-            clock = client.get_clock()
-            if not clock.get("is_open"):
-                print(
-                    json.dumps(
-                        {
-                            "error": (
-                                "Market is closed. Pass --allow-after-hours "
-                                "to queue the order, or wait for the next "
-                                "open."
-                            ),
-                            "next_open": str(clock.get("next_open", "")),
-                            "allowed": False,
-                        }
-                    )
-                )
-                sys.exit(1)
-
-        # Pre-trade risk check
-        risk_result = risk_checker.check_order(
-            symbol=args.symbol,
-            side=args.side,
-            qty=args.qty,
-            limit_price=args.limit_price,
+        order = execute_order(
+            client,
+            {
+                "symbol": args.symbol,
+                "side": args.side,
+                "qty": args.qty,
+                "order_type": args.order_type,
+                "limit_price": args.limit_price,
+                "stop_price": args.stop_price,
+                "time_in_force": args.time_in_force,
+            },
+            client_order_id,
+            allow_after_hours=args.allow_after_hours,
+            reduce_only=args.reduce_only,
         )
+        print(json.dumps({**order.to_dict(), "client_order_id": client_order_id}, default=str))
 
-        if not risk_result.allowed:
-            print(
-                json.dumps(
-                    {
-                        "error": f"Risk rejected: {risk_result.rejection_reason}",
-                        "allowed": False,
-                    }
-                )
-            )
-            sys.exit(1)
-
-        # Submit order
-        order = client.submit_order(
-            symbol=args.symbol,
-            side=args.side,
-            qty=args.qty,
-            order_type=args.order_type,
-            limit_price=args.limit_price,
-            stop_price=args.stop_price,
-            time_in_force=args.time_in_force,
-        )
-
-        print(json.dumps(order.to_dict(), default=str))
-
-    except (AlpacaClientError, ValueError) as exc:
+    except (AlpacaClientError, ValueError, OSError) as exc:
         _logger.exception("trade_error", symbol=args.symbol, error=str(exc))
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        print(json.dumps(submission_failure(exc, client_order_id)))
         sys.exit(1)
 
 

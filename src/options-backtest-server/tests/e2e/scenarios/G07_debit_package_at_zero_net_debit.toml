@@ -1,0 +1,99 @@
+# G07: a debit call vertical selected at a 70 debit whose fill observations price it at exactly
+# 0: an opening fill needs Q*D > 0, so every attempt is a PREMIUM_DIRECTION nonfill.
+id = "G07"
+proves = ["C37"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-05" }
+strategy = { file = "spxw_call_debit_vertical.json" }
+
+[market]
+weekly_dtes = [18]   # one expiry: 2024-03-22, dte 18 on 2024-03-04
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:C:5100"
+session = "2024-03-04"
+slots = ["DEC"]
+bid = "2.00"
+ask = "2.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:C:5105"
+session = "2024-03-04"
+slots = ["DEC", "F1", "F2", "F3"]
+bid = "1.40"
+ask = "1.50"
+bid_size = 50
+ask_size = 50
+
+# F1-F3: the long leg's ask falls to the short leg's bid, so the package debit is exactly 0.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-22:C:5100"
+session = "2024-03-04"
+slots = ["F1", "F2", "F3"]
+bid = "1.30"
+ask = "1.40"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10000.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+campaigns = []
+derivation = """
+Conventions as G01. Strategy as G04 without a stop-loss (take_profit, stop_loss null).
+2024-03-04 DEC (Monday): expiry 2024-03-22 (dte 18 in [15, 19], > exit_dte 14); long 5100C
+  (|Decimal(5100.0/5000.0) - 1.02| ~ 1.8e-17), short 5100 + 5 = 5105C.
+  D(1) = 100*2.10 - 100*1.40 = 70; Q*D = 70 > 0 -> selectable; fees 2; risk 74 <= 1000;
+  preview headroom 10000 - 72 - 2 = 9926 >= 0; capacity 5 >= 1; ENTRY limit 70.
+2024-03-04 F1, F2, F3: D = 100*1.40 (buy 5100C at ask) - 100*1.40 (sell 5105C at bid) = 0;
+  Q*D = (+1)*0 = 0, not > 0 -> PREMIUM_DIRECTION (check 3, before the limit), net_debit 0.00;
+  the F3 nonfill cancels the entry (no EXIT_UNFILLED: not a closing order). No campaign is
+  consumed: no fill, no campaign record.
+Account 2024-03-04: cash 10000; receivable 0; payable 0; encumbrance 0; headroom 10000;
+  mid_nlv 10000 (flat).
+2024-03-05 (final; Tuesday, unscheduled): nothing happens; account cash 10000, mid_nlv 10000;
+  final_equity_usd = 10000.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+reason = "PREMIUM_DIRECTION"
+net_debit = "0.00"
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F2"
+purpose = "entry"
+reason = "PREMIUM_DIRECTION"
+net_debit = "0.00"
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F3"
+purpose = "entry"
+reason = "PREMIUM_DIRECTION"
+net_debit = "0.00"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "10000.00"
+mid_nlv = "10000.00"
+
+[expected.account."2024-03-05"]
+cash = "10000.00"
+mid_nlv = "10000.00"

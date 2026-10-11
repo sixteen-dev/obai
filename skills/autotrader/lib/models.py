@@ -5,6 +5,10 @@ All monetary/numeric values are floats (cast from Alpaca's string responses).
 
 from dataclasses import asdict, dataclass
 
+# (PositionInfo.side, OrderInfo.side) pairs where the order reduces the
+# position. Everything else grows or reverses it.
+REDUCING_SIDES = frozenset({("long", "sell"), ("short", "buy")})
+
 
 @dataclass(frozen=True)
 class AccountInfo:
@@ -20,6 +24,7 @@ class AccountInfo:
     daily_pnl: float
     daytrade_count: int
     pattern_day_trader: bool
+    account_id: str = ""
 
     def to_dict(self) -> dict[str, object]:
         """Convert to JSON-serializable dictionary."""
@@ -64,6 +69,7 @@ class OrderInfo:
     time_in_force: str
     submitted_at: str
     filled_at: str | None
+    client_order_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Convert to JSON-serializable dictionary."""
@@ -81,6 +87,7 @@ class RiskStatus:
     current_exposure_pct: float
     max_exposure_pct: float
     max_position_pct: float
+    max_positions: int = 10
 
     def to_dict(self) -> dict[str, object]:
         """Convert to JSON-serializable dictionary."""

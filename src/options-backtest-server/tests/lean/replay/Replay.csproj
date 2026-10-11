@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The LEAN replay algorithm (ADR 0002 §12 step 4, §16 decision 3), compiled by
+    tests/lean/runner.py against a built LEAN checkout: dotnet build -p:LeanBin=$LEAN_ROOT/Launcher/bin/Debug.
+    It compiles the probe sources in place rather than copying them. runner.build_algorithm builds
+    a copy of this folder alone, so the probe folder cannot be found relative to it: its absolute
+    path comes from the OBAI_LEAN_PROBES environment variable (an MSBuild property), which
+    tests/lean/test_lean_differential.py sets for the build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(LeanBin)/QuantConnect.*.dll" Private="false" />
+    <Reference Include="$(LeanBin)/Python.Runtime.dll" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(OBAI_LEAN_PROBES)/FlatFeeModel.cs" />
+    <Compile Include="$(OBAI_LEAN_PROBES)/ProbeAction.cs" />
+    <Compile Include="$(OBAI_LEAN_PROBES)/ProbeAlgorithm.cs" />
+  </ItemGroup>
+  <Target Name="RequireLeanBin" BeforeTargets="ResolveAssemblyReferences" Condition="'$(LeanBin)' == ''">
+    <Error Text="Pass -p:LeanBin=$LEAN_ROOT/Launcher/bin/Debug so the LEAN assemblies resolve." />
+  </Target>
+  <Target Name="RequireProbes" BeforeTargets="ResolveAssemblyReferences" Condition="'$(OBAI_LEAN_PROBES)' == ''">
+    <Error Text="Set OBAI_LEAN_PROBES to the absolute path of tests/lean/probes so the probe sources compile." />
+  </Target>
+</Project>

@@ -20,6 +20,7 @@ OBaI/
 │   ├── strategy_agent.py       # Backtesting, strategy design, optimization
 │   ├── research_agent.py       # Qualitative research via Exa semantic search
 │   ├── prediction_markets_agent.py  # Polymarket analysis, trade memos
+│   ├── options_strategy_agent.py  # Options-strategy validation, capability scope
 │   ├── mcp/                     # MCP client integration
 │   │   ├── client.py            # HTTP client for MCP servers
 │   │   └── tool_converter.py   # MCP tools → Agent SDK format
@@ -58,7 +59,8 @@ OBaI/
 ### 1. Start MCP Servers
 
 ```bash
-# Using Docker Compose (recommended)
+# Using Docker Compose (recommended). The optional options-backtest server
+# starts only with its profile: docker compose --profile options-backtest up -d
 docker compose up -d
 
 # Or start individually
@@ -71,6 +73,7 @@ cd src/portfolio-server && uv run fastmcp run server.py      # :8006
 cd src/backtest-server && uv run fastmcp run server.py       # :8007
 cd src/research-server && uv run fastmcp run server.py       # :8008
 cd src/prediction-markets-server && uv run python -m src.server  # :8009
+cd src/options-backtest-server && uv run python -m options_backtest.server  # :8012 (optional; ENABLE_OPTIONS_STRATEGY=true)
 ```
 
 ### 2. Set Environment Variables
@@ -86,6 +89,7 @@ export MCP_PORTFOLIO_URL=http://localhost:8006/mcp
 export MCP_BACKTEST_URL=http://localhost:8007/mcp
 export MCP_RESEARCH_URL=http://localhost:8008/mcp
 export MCP_PREDICTION_MARKETS_URL=http://localhost:8009/mcp
+export MCP_OPTIONS_BACKTEST_URL=http://localhost:8012/mcp  # optional; with ENABLE_OPTIONS_STRATEGY=true
 export EXA_API_KEY=...                                    # research-server
 ```
 
@@ -146,20 +150,22 @@ uv run python test_connection.py
 
 ### Key Components
 
-**Input Guardrail** (gpt-5.6-luna): Validates queries before processing. Rejects non-financial questions to save API costs.
+**Input Guardrail** (gpt-6-luna): Validates queries before processing. Rejects non-financial questions to save API costs.
 
-**Central Hub** (gpt-5.6-terra, `max` effort): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
+**Central Hub** (gpt-6.1-sol, `xhigh` effort): Routes queries to specialists, calls them as tools (parallel when possible), synthesizes responses.
 
-**Specialists** (9 agents, each with dedicated MCP server):
+**Specialists** (11 agents, each with dedicated MCP server):
 1. **Market Data Agent** (:8002): Real-time quotes, historical + intraday prices, technical indicators
 2. **Fundamentals Agent** (:8001): Financial statements, ratios, analyst estimates
 3. **Events/News Agent** (:8003): News articles, earnings calendar, dividends
 4. **Options Agent** (:8004): Options chains, Greeks, strike selection
 5. **Screener Agent** (:8005): Stock screening, ticker lookup
 6. **Portfolio Agent** (:8006): Portfolio parsing, risk preferences, ETF holdings, Treasury rates
-7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-5.6-terra for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
+7. **Strategy Agent** (:8007): Trading strategy design, backtesting (daily + intraday), optimization, performance metrics (Sharpe, Sortino, drawdown, alpha/beta). Uses gpt-6.1-sol at `medium` effort for strong reasoning. Backed by DuckDB for OHLCV storage with 20 technical indicators via polars-talib.
 8. **Research Agent** (:8008): Deep qualitative research via Exa semantic search — company profiles, leadership, product sentiment, competitive landscape.
 9. **Prediction Markets Agent** (:8009): Polymarket market discovery, executable bid/ask/depth, trade decision memos, trader leaderboard, wallet tracing, setup-based backtesting. Uses public APIs (no keys required).
+10. **Crypto Agent** (:8010): Coinbase spot markets — quotes, order books, OHLCV, execution-grade spot backtests, paper-ledger artifacts. Uses public market data (no keys required).
+11. **Options Strategy Agent** (:8012; optional, `ENABLE_OPTIONS_STRATEGY=true`): Options-strategy validation and capability scope for US European PM cash-settled index options (SPXW, XSP). Compiles the user's rules into a strategy document, validates it against options-backtest-server, and is a terminal author the hub relays verbatim. Historical backtesting is reported unavailable (`DATA_ENTITLEMENT_MISSING`, `historical_options_data`) until qualified data exists; it never produces a performance figure. Follows the Strategy Agent's model and reasoning effort.
 
 **Session**: Automatic conversation memory via OpenAI Agent SDK Sessions.
 - TUI: In-memory SQLiteSession (ephemeral)
@@ -171,7 +177,7 @@ When a query needs data from multiple domains, the **Central Hub orchestrates**:
 ```
 User: "What's my portfolio worth? I have AAPL 50%, MSFT 50%"
                     ↓
-           Central Hub (gpt-5.6-terra)
+           Central Hub (gpt-6.1-sol)
             /                  \
    portfolio_analysis      market_data_analysis
    (parse positions)         (get prices)
@@ -191,24 +197,24 @@ Key points:
 ### Models
 
 ```bash
-export ORCHESTRATOR_MODEL=gpt-5.6-terra  # Needs strong reasoning (shipped default)
-export SPECIALIST_MODEL=gpt-5.6-luna     # Cost-effective for tools
+export ORCHESTRATOR_MODEL=gpt-6.1-sol    # Needs strong reasoning (shipped default)
+export SPECIALIST_MODEL=gpt-6-luna       # Cost-effective for tools
 ```
 
 Per-agent overrides:
 ```bash
-export MARKET_DATA_MODEL=gpt-5.6-luna       # Override for specific agent
-export STRATEGY_MODEL=gpt-5.6-terra         # Strategy default; same model the hub ships with
+export MARKET_DATA_MODEL=gpt-6-luna         # Override for specific agent
+export STRATEGY_MODEL=gpt-6.1-sol           # Strategy default; same model the hub ships with
 ```
 
 ### Reasoning Effort
 
-Every agent's effort tier is one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` is in the OpenAI SDK's own type but every `gpt-5.6` model rejects it at request time, so `ReasoningEffort` in `core_agents/config.py` does not include it.)
+Every agent's effort tier is one of `none`, `low`, `medium`, `high`, `xhigh`, `max`. (`minimal` is in the OpenAI SDK's own type but every `gpt-5.6` and `gpt-6` model rejects it at request time, so `ReasoningEffort` in `core_agents/config.py` does not include it. `gpt-6.1-sol` also rejects `none`, so use that tier only on agents running another model.)
 
 ```bash
-export ORCHESTRATOR_REASONING_EFFORT=high   # Hub (default: medium)
-export SPECIALIST_REASONING_EFFORT=medium   # Specialist default
-export STRATEGY_REASONING_EFFORT=high       # Also CRYPTO_, PREDICTION_MARKETS_
+export ORCHESTRATOR_REASONING_EFFORT=high   # Hub (default: xhigh)
+export SPECIALIST_REASONING_EFFORT=high     # Specialist tier (default: xhigh)
+export STRATEGY_REASONING_EFFORT=high       # Default medium; also CRYPTO_, PREDICTION_MARKETS_
 ```
 
 ### Hub Settings File (`~/.obai/settings.json`)
@@ -217,12 +223,12 @@ The hub's model and reasoning effort — and only those two — are user-settabl
 
 ```json
 {
-  "hub_model": "gpt-5.6-terra",
-  "hub_reasoning_effort": "max"
+  "hub_model": "gpt-6.1-sol",
+  "hub_reasoning_effort": "xhigh"
 }
 ```
 
-`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts stay code-owned.
+`hub_model` is `gpt-6.1-sol` (default), `gpt-6-sol`, `gpt-5.6-sol`, or `gpt-5.6-terra`; `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `xhigh`). Specialist models and efforts stay code-owned.
 
 `AgentConfig.settings_customise_sources` inserts this file **below** the environment, so resolution is init kwargs > env > `~/.obai/settings.json` > shipped default. `ORCHESTRATOR_MODEL` / `ORCHESTRATOR_REASONING_EFFORT` therefore still win — deliberately, since the eval A/B comparison and the E2E gate pin the hub model by injecting env. Any surface that writes the file must warn when the matching variable is set, or the write looks like a no-op.
 

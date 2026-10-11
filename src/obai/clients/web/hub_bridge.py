@@ -170,6 +170,7 @@ class HubBridge:
 
         from core_agents.central_hub_agent import (
             CryptoPassthroughEvent,
+            OptionsStrategyPassthroughEvent,
             PredictionPassthroughEvent,
             StrategyPassthroughEvent,
         )
@@ -218,7 +219,8 @@ class HubBridge:
                         event,
                         PredictionPassthroughEvent
                         | CryptoPassthroughEvent
-                        | StrategyPassthroughEvent,
+                        | StrategyPassthroughEvent
+                        | OptionsStrategyPassthroughEvent,
                     ):
                         passthrough = event.content
                         yield {"type": "text_delta", "delta": event.content}

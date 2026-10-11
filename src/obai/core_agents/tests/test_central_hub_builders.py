@@ -30,10 +30,11 @@ def test_hub_skills_dir_exists() -> None:
     """Lazy-skill source directory ships with the package."""
     assert HUB_SKILLS_DIR.is_dir()
     skill_files = list(HUB_SKILLS_DIR.rglob("SKILL.md"))
-    # Six lifecycle skills: stock synthesis, strategy routing,
-    # prediction-market routing, crypto routing, grounding/cache, and research routing.
+    # Seven lifecycle skills: stock synthesis, strategy routing,
+    # prediction-market routing, crypto routing, options-strategy routing,
+    # grounding/cache, and research routing.
     # Each routing skill carries its own output-contract rules.
-    assert len(skill_files) == 6
+    assert len(skill_files) == 7
 
 
 def test_hub_builder_returns_sandbox_agent_with_skills() -> None:
@@ -65,6 +66,7 @@ def test_hub_builder_returns_sandbox_agent_with_skills() -> None:
         ("_build_prediction_tool", "prediction_markets_agent"),
         ("_build_crypto_tool", "crypto_agent"),
         ("_build_strategy_tool", "strategy_agent"),
+        ("_build_options_strategy_tool", "options_strategy_agent"),
     ],
 )
 def test_specialist_wrappers_use_strict_json_schema(builder: str, attribute: str) -> None:
@@ -153,6 +155,20 @@ def test_compaction_omitted_when_ratio_is_none() -> None:
     compact, so the off switch has to drop the list entirely.
     """
     assert _hub_context_management(model="gpt-5.6-sol", compact_ratio=None) is None
+
+
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol"])
+def test_compaction_uses_documented_input_window_when_sdk_lacks_model(model: str) -> None:
+    """The shipped hub model must keep compaction even before the SDK knows it.
+
+    No openai-agents release through 0.22.3 lists gpt-6.1-sol or gpt-6-sol, so
+    without the fallback the default hub would silently run with compaction
+    off. The threshold is 90% of the 922,000-token maximum input, not of the
+    1,050,000-token window: past the input limit the request is refused.
+    """
+    assert _hub_context_management(model=model, compact_ratio=0.9) == [
+        {"type": "compaction", "compact_threshold": 829800}
+    ]
 
 
 def test_compaction_omitted_for_unknown_model() -> None:

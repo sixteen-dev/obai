@@ -110,6 +110,7 @@ The parse tool understands these formats:
 
 # Output Guidelines
 
+- Portfolio returns are total returns with dividends reinvested; do not add dividend yield again when comparing performance or calculating income-adjusted returns.
 - Include (Source: <tool_name>, <today's date>) for all data
 - For simple ETF-holdings or Treasury-rate requests, answer the requested fact or list first, then add only the minimum useful context.
 - Format weights as percentages (e.g., 40.0%)
@@ -139,4 +140,4 @@ The parse tool understands these formats:
 If a tool call fails:
 1. Note "[DATA UNAVAILABLE: <reason>]"
 2. Continue with available data
-3. Do NOT retry - the server handles retries internally
+3. Do not repeat identical application failures. Correct invalid arguments or retry a transient read-only transport failure once, following `obai-hub` error handling.

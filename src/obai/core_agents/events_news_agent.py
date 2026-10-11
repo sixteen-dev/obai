@@ -1,9 +1,10 @@
-"""Events/News Agent for news, earnings calendar, and dividend schedules.
+"""Events/News Agent for news, earnings, dividends, and congressional trades.
 
 This agent specializes in:
     - Company-specific news and press releases
     - Earnings calendar and surprise analysis
     - Dividend schedules and ex-dividend dates
+    - Stock trades disclosed by members of Congress
     - Correlating news to price movements
 """
 
@@ -39,9 +40,11 @@ class EventsNewsAgent(BaseAgent):
     def handoff_description(self) -> str:
         """Description for orchestrator handoff decisions."""
         return (
-            "Specialist for company news, earnings calendar, and dividend schedules. "
+            "Specialist for company news, earnings calendar, dividend schedules, "
+            "and congressional stock-trade disclosures. "
             "Use for recent news about a company, upcoming earnings dates, "
-            "dividend ex-dates, and correlating news to stock price movements."
+            "dividend ex-dates, trades disclosed by members of Congress, "
+            "and correlating news to stock price movements."
         )
 
 

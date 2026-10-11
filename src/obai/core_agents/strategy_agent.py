@@ -49,13 +49,16 @@ class StrategyAgent(BaseAgent):
     def handoff_description(self) -> str:
         """Description for orchestrator handoff decisions."""
         return (
-            "Specialist for designing trading strategies, backtesting them against "
+            "Specialist for designing equity and ETF share trading strategies, "
+            "backtesting them against "
             "historical data (daily and intraday: 5min, 15min, 1hour), and iteratively "
             "refining based on performance metrics. Supports day trading strategies with "
             "session-aware rules (close_eod, no_entry_after, time-of-day filters). "
             "Acts as a quantitative analyst — uses market context provided by the hub "
             "to make informed strategy decisions. Use for strategy building, "
-            "backtesting, or trading system questions."
+            "backtesting, or trading system questions. Options-structure strategies "
+            "(verticals, condors, straddles, strangles, covered calls, cash-secured puts, "
+            "wheels, rolls) go to options_strategy_analysis."
         )
 
     def _get_model(self) -> str:

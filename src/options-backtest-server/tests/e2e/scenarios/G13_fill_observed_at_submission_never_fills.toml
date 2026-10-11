@@ -1,0 +1,183 @@
+# G13: an F1 observation observed at the submission instant never fills (C05). Both legs' F1
+# quotes are observed at DEC, so check 1 finds no observation strictly after submission; the
+# fresh F2 quotes fill the whole package. The exit, at the campaign cap, is incidental to the
+# claim: it is the suite's one held exit forced by max_campaign_sessions
+# (R1Campaign.CanaryCampaignCapExit).
+id = "G13"
+proves = ["C05"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { roll = { mode = "sequential", trigger_dte = 1, max_rolls = 1, max_campaign_sessions = 2 } } }
+
+[market]
+# defaults.toml unchanged: spot 5000.00 at every slot, DF 1, one expiry 2024-03-15.
+
+# 2024-03-04 DEC: selection and the entry limit.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F2"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F2"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-04 F1: both legs' F1 observations are moved back 60 s, onto the DEC instant (the
+# submission instant). Their prices are never read, so they stay generated.
+[[market.overrides]]
+kind = "quote_stale"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["F1"]
+seconds = 60
+
+[[market.overrides]]
+kind = "quote_stale"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["F1"]
+seconds = 60
+
+# 2024-03-05: the campaign-cap exit's decision naturals (limit) and its F1 fill.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01: m = 100; $1.00 per contract per traded side, $0 settlement; premiums and
+fees settle T+1 (next table session); zero interest; S = 5000.00 at every slot; DF = 1.
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. DEC = 15:45, F1 = 15:46,
+F2 = 15:47 (America/New_York). Roll: sequential, trigger_dte 1, max_rolls 1,
+max_campaign_sessions 2; take_profit and stop_loss null.
+
+2024-03-04 DEC (Monday, weekly weekday 1, not final, flat, no replacement due): ENTRY selection.
+  Expiry 2024-03-15: dte 11 in [9, 13], 11 > exit_dte 0, 11 > trigger_dte 1 (rolling).
+  short_put: |Decimal(4900.0/5000.0) - 0.98| ~ 1.8e-17 <= 0.0005; 4895 and 4905 miss by ~0.001.
+  long_put: 4900 - 5 = 4895. Spreads 0.20 and 0.10 <= 0.50; both bids > 0.
+  D(1) = 100*(-1*2.00) + 100*(+1*1.10) = -90; Q*D = 90 > 0; fees(1) = 2 * 1 * 1.00 = 2.
+  risk: -(-500 + (90 - 2)) + 2*1*max(1.00, 0) = 412 + 2 = 414 <= 0.10 * 10000 = 1000.
+  preview headroom = 10000 - 2 - (500 + 2) = 9496 >= 0; capacity floor(min(50, 50)*0.10) = 5.
+  ENTRY submitted at DEC, limit = -90 + 0.00 = -90.
+2024-03-04 F1: each leg's latest visible observation of the session is its F1 one (observed
+  DEC, available F1; it ranks above the DEC one on available_at). observed_at = DEC is not
+  strictly after the submission instant DEC, so view.quote(observed_after_ns=DEC) is None:
+  NO_OBSERVATION on P4900, the first leg in leg order (every leg passes check 1 before check 2);
+  no net_debit is computed. The order stays live.
+2024-03-04 F2: pinned F2 quotes, observed 15:47 > DEC, age 0: both VALID, sides > 0;
+  D = -90 <= -90; Q*D = 90 > 0; capacity 5 >= 1; post-fill headroom 9496 >= 0 -> fill:
+  net_debit -90.00, fees 2.00; basis |-90| = 90; campaign c1 starts (campaign session 1).
+Account 2024-03-04 (CUT): cash 10000; receivable 90; payable 2; encumbrance 500 + 2 = 502;
+  headroom = 10000 - 2 - 502 = 9496.
+2024-03-05 OPEN: dues through 2024-03-05 settle: cash = 10000 + 90 - 2 = 10088.
+2024-03-05 DEC: held; dte 10 > exit_dte 0 and held session 2 < 252 (no TIME_EXIT); no
+  take-profit or stop-loss; campaign session 2 >= max_campaign_sessions 2 -> CAMPAIGN_CAP;
+  RollTrigger false (dte 10 > 1). Closing legs (P4900 +1, P4895 -1) usable at DEC ->
+  EXIT (CAMPAIGN_CAP); close D = 100*1.20 - 100*0.40 = 80; limit 80 + 0.00 = 80.
+2024-03-05 F1: D = 80 <= 80; capacity 5 >= 1; post-fill headroom = 10088 - (80 + 2) - 0 = 10006
+  -> fill: net_debit 80.00, fees 2.00; the campaign ends.
+Account 2024-03-05: cash 10088; receivable 0; payable 82; encumbrance 0; headroom 10006;
+  mid_nlv = natural_nlv = 10088 - 82 = 10006 (flat).
+2024-03-06 (final; Wednesday, unscheduled, flat, no replacement due): no decision event.
+  OPEN cash = 10088 - 82 = 10006. final_equity_usd = mid_nlv(2024-03-06) = 10006; valid and flat.
+Campaign c1: REALIZED_PNL[P4900] = -(200 - 120) = -80, [P4895] = +(110 - 40) = +70;
+  realized_pnl = -(-80 + 70) = 10; fees 2 + 2 = 4; net 6 = 10006 - 10000; rolls 0.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only (an entry nonfill discloses nothing).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F2"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+campaign_id = "c1.g1"
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+reason = "NO_OBSERVATION"
+contract = "SPXW:2024-03-15:P:4900"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+natural_nlv = "10006.00"
+
+[expected.account."2024-03-06"]
+cash = "10006.00"
+receivable = "0.00"
+payable = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "campaign_cap"

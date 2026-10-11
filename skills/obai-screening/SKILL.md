@@ -42,6 +42,7 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 - Before screening with a sector or industry filter, call `screening_list_available_sectors_tool` or `screening_list_available_industries_tool` to find matching values. Use all matching results rather than asking the user to choose. Do not guess sector or industry names.
 - Apply reasonable default limits (25 results) unless user requests more
 - Supported screener filters: market cap, price, volume, beta, dividend (each with more_than/lower_than), sector, industry, country, exchange, is_etf, is_fund, us_listed_only, limit. Do not invent unsupported filters such as dollar-volume, OR-conditions, or sub-sector qualifiers.
+- `dividend_more_than` / `dividend_lower_than` filter `lastAnnualDividend` in absolute dollars per share, not yield percentages. For a yield criterion, compute `100 * lastAnnualDividend / price` from the returned rows — not `lastDividend`, which is one payment — and filter those rows; disclose that this only covers the fetched sample.
 - `country` is company domicile, not listing venue, so it does not exclude foreign cross-listings. Set `us_listed_only` for a US-listing scope, or `exchange` for one named venue. Reconcile your row count against the response's `provider_rows_considered`, `excluded_by_venue`, and `excluded_venues`.
 - This server has no price-quote data. For current prices, use the `obai-market-data` skill - focus on screening/lookup only
 
@@ -74,6 +75,7 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 - Before finalizing, verify that every tool result has been addressed. If any result is not used, explicitly note it under "Additional Context."
 - Include timestamps when provided. If screening data is stale relative to the requested window, warn clearly.
 - For analysis or comparison requests, restate filters applied and include the key metrics that explain why the results match.
+- Provider order is not a ranking. Explicitly sort by the requested returned metric before calling results "top" or "highest". State displayed row count separately from fetched count; `meta.has_more` means a partial result. `provider_rows_considered` describes the fetched page, not the entire market universe.
 - If the request uses a filter your tools do not support, state that limitation explicitly. Use the closest available filter only when the user's intent remains clear; otherwise ask one concise clarifying question.
 - If you must ask a clarifying question, keep it to 1-2 sentences. Do not present numbered option lists or detailed breakdowns.
 
@@ -96,4 +98,4 @@ Standard financial terminology for market cap tiers, sectors, and industries is 
 If a tool call fails:
 1. Note "[DATA UNAVAILABLE: <reason>]"
 2. Continue with other available data
-3. Do NOT retry - the server handles retries internally
+3. Do not repeat identical application failures. Correct invalid arguments or retry a transient read-only transport failure once, following `obai-hub` error handling.

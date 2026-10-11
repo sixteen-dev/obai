@@ -326,6 +326,7 @@ async def _run_query(  # noqa: PLR0912
 
     from core_agents.central_hub_agent import (
         CryptoPassthroughEvent,
+        OptionsStrategyPassthroughEvent,
         PredictionPassthroughEvent,
         StrategyPassthroughEvent,
         get_inner_tool_outputs,
@@ -356,7 +357,10 @@ async def _run_query(  # noqa: PLR0912
             # Terminal passthrough: use specialist output directly
             if isinstance(
                 event,
-                PredictionPassthroughEvent | CryptoPassthroughEvent | StrategyPassthroughEvent,
+                PredictionPassthroughEvent
+                | CryptoPassthroughEvent
+                | StrategyPassthroughEvent
+                | OptionsStrategyPassthroughEvent,
             ):
                 passthrough = event.content
                 continue
@@ -655,7 +659,7 @@ def status(
         help="Output structured JSON",
     ),
 ) -> None:
-    """Check connectivity to all MCP data servers."""
+    """Check connectivity to every enabled MCP data server."""
 
     async def _main() -> int:
         import httpx
@@ -675,6 +679,10 @@ def status(
             ("Prediction Markets", config.mcp_prediction_markets_url),
             ("Crypto", config.mcp_crypto_url),
         ]
+        # Optional component (ADR 0004): unlisted unless opted in, so a default
+        # install never reports a server it did not start.
+        if config.enable_options_strategy:
+            servers.append(("Options Backtest", config.mcp_options_backtest_url))
 
         results: list[dict[str, Any]] = []
         any_down = False
@@ -774,12 +782,24 @@ def web(
 # --- Lifecycle subcommands ---
 
 
+_OPTIONS_BACKTEST_FLAGS = "--with-options-backtest/--without-options-backtest"
+_OPTIONS_BACKTEST_HELP = (
+    "Enable or disable the optional options-backtest server for this and later "
+    "starts, restarting running services so the web UI applies it; omitted keeps "
+    "the saved choice."
+)
+
+
 @cli.command()
-def start() -> None:
+def start(
+    options_backtest: bool | None = typer.Option(
+        None, _OPTIONS_BACKTEST_FLAGS, help=_OPTIONS_BACKTEST_HELP
+    ),
+) -> None:
     """Start OBaI: Docker services (MCP + Opik) and the web UI. Preserves data."""
     from clients.cli.lifecycle import run_start
 
-    run_start()
+    run_start(options_backtest=options_backtest)
 
 
 @cli.command()
@@ -799,11 +819,15 @@ def teardown() -> None:
 
 
 @cli.command()
-def restart() -> None:
+def restart(
+    options_backtest: bool | None = typer.Option(
+        None, _OPTIONS_BACKTEST_FLAGS, help=_OPTIONS_BACKTEST_HELP
+    ),
+) -> None:
     """Restart OBaI: stop everything, then bring it back up."""
     from clients.cli.lifecycle import run_restart
 
-    run_restart()
+    run_restart(options_backtest=options_backtest)
 
 
 @cli.command()
@@ -855,6 +879,11 @@ _ENV_FILE = Path.home() / ".obai" / ".env"
 # `show` names it as the source.
 _HUB_MODEL_ENV = "ORCHESTRATOR_MODEL"
 _HUB_EFFORT_ENV = "ORCHESTRATOR_REASONING_EFFORT"
+
+# The optional options-backtest server's opt-in. setup.sh is its only writer
+# (--with-options-backtest / --without-options-backtest); `show` only reads it.
+_OPTIONS_BACKTEST_ENV = "ENABLE_OPTIONS_STRATEGY"
+_OPTIONS_BACKTEST_ENABLE = "obai start --with-options-backtest"
 
 config_app = typer.Typer(help="Manage OBaI configuration.")
 cli.add_typer(config_app, name="config")
@@ -972,7 +1001,7 @@ def _echo_hub_saved(label: str, value: str, path: Path, env_var: str) -> None:
 def config_set_model(
     model: str = typer.Argument(
         ...,
-        help="Hub model name (e.g., gpt-5.6-sol, gpt-5.6-terra)",
+        help="Hub model name (e.g., gpt-6.1-sol, gpt-5.6-terra)",
     ),
 ) -> None:
     """Set the hub model in ~/.obai/settings.json."""
@@ -1101,12 +1130,102 @@ def _echo_hub_settings() -> None:
     typer.echo("\nChanges apply to clients started from now on.\n")
 
 
-@config_app.command("show")
-def config_show() -> None:
-    """Display API key status (masked) and the resolved hub settings.
+def _env_file_value(path: Path, key: str) -> str | None:
+    """Return a key's value in a dotenv file, parsed the way `_load_env_file` does.
+
+    Args:
+        path: Dotenv file to read.
+        key: Variable name to look up.
+
+    Returns:
+        The first value assigned to key, or None when the file or key is absent.
+    """
+    if not path.is_file():
+        return None
+    for line in path.read_text().splitlines():
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip() == key:
+            return value.strip().strip("'\"")
+    return None
+
+
+def _options_backtest_enabled(raw: object, source: str) -> bool:
+    """Parse the opt-in with the hub's own bool rules, failing loudly on a bad value.
+
+    Args:
+        raw: Value the hub will read.
+        source: Where the value came from, for the error message.
+
+    Returns:
+        Whether the hub builds the options-strategy route.
 
     Raises:
-        typer.Exit: The hub settings file exists but is not valid.
+        typer.Exit: The value is not one the hub's config accepts.
+    """
+    from pydantic import TypeAdapter, ValidationError
+
+    try:
+        return TypeAdapter(bool).validate_python(raw)
+    except ValidationError as e:
+        typer.echo(
+            typer.style(
+                f"Not an accepted value — the hub will fail to start: "
+                f"{_OPTIONS_BACKTEST_ENV}={raw!r} (from {source}). Use true or false; "
+                "`obai start --with-options-backtest` or `--without-options-backtest` "
+                "rewrites the file.",
+                fg=typer.colors.RED,
+            )
+        )
+        raise typer.Exit(1) from e
+
+
+def _echo_options_backtest() -> None:
+    """Print whether the optional options-backtest server is enabled, and why.
+
+    `main` copies ~/.obai/.env into the environment without overriding, so an
+    environment value equal to the file's is the file's own; only a different
+    one is an export that outranks the file (ADR 0004 §1).
+
+    Raises:
+        typer.Exit: The value the hub would read is not a boolean.
+    """
+    from core_agents.config import AgentConfig
+
+    file_value = _env_file_value(_ENV_FILE, _OPTIONS_BACKTEST_ENV)
+    env_value = _env_override(_OPTIONS_BACKTEST_ENV)
+    overridden = env_value is not None and env_value != file_value
+    raw: object = AgentConfig.model_fields["enable_options_strategy"].default
+    source = "default"
+    if overridden:
+        raw, source = env_value, f"env {_OPTIONS_BACKTEST_ENV}"
+    elif file_value is not None:
+        raw, source = file_value, "~/.obai/.env"
+    enabled = _options_backtest_enabled(raw, source)
+
+    colour = typer.colors.GREEN if enabled else None
+    state = typer.style(f"{'enabled' if enabled else 'disabled':<16}", fg=colour)
+    hint = "" if enabled else f"  enable with: {_OPTIONS_BACKTEST_ENABLE}"
+    typer.echo(f"OBaI Optional Components ({_ENV_FILE}):\n")
+    typer.echo(f"  {'options backtest':<22} {state}  (from {source}){hint}")
+    if overridden:
+        typer.echo(
+            typer.style(
+                f"\n  Warning: {_OPTIONS_BACKTEST_ENV}={env_value} is set in your environment "
+                "and outranks ~/.obai/.env for the hub. Unset it so the hub and the "
+                "services agree.",
+                fg=typer.colors.RED,
+            )
+        )
+    typer.echo("")
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Display API key status (masked), the resolved hub settings and optional components.
+
+    Raises:
+        typer.Exit: The hub settings file exists but is not valid, or the
+            options-backtest opt-in is not a boolean.
     """
     typer.echo(f"\nOBaI API Keys ({_ENV_FILE}):\n")
     for key_name, desc in _KNOWN_KEYS:
@@ -1119,6 +1238,7 @@ def config_show() -> None:
         typer.echo(f"  {key_name:<22} {status}  ({desc})")
     typer.echo("")
     _echo_hub_settings()
+    _echo_options_backtest()
 
 
 def _load_env_file() -> None:

@@ -1,17 +1,17 @@
 # OBaI Evaluation Test Suite
 # ==========================
-# 210 test cases across 8 active categories (A-E, G-I; F pending):
-# 185 default rows and 25 extended-only rows requiring explicit opt-in.
+# 215 test cases across 8 active categories (A-E, G-I; F pending):
+# 190 default rows and 25 extended-only rows requiring explicit opt-in.
 # Category F (session/context) requires multi-turn support — listed as comments.
 # Category G: New capabilities — portfolio risk/allocation, options analytics,
-#   prediction markets,
+#   prediction markets, congressional trade disclosures,
 # Category H: Deep company research — Exa-powered research agent queries.
 #   walk-forward validation, shared-capital backtesting, commodities, expanded indicators.
 #
 # Usage:
-#   python -m evaluation evaluate --suite                    # Run 185 default rows
+#   python -m evaluation evaluate --suite                    # Run 190 default rows
 #   python -m evaluation evaluate --suite --ids A1,B3        # Surgical paid selection
-#   python -m evaluation evaluate --suite --include-extended # Run all 210 (expensive)
+#   python -m evaluation evaluate --suite --include-extended # Run all 215 (expensive)
 #   python -m evaluation evaluate --suite --category A       # Single-agent only
 #   python -m evaluation evaluate --suite --file custom.yaml # Custom file
 
@@ -997,7 +997,7 @@ test_cases:
   # ─────────────────────────────────────────────
   # Category G: New Capabilities (Portfolio Risk, Options Analytics,
   #   Walk-Forward, Shared-Capital, Commodities, Expanded Indicators,
-  #   Prediction Markets)
+  #   Prediction Markets, Congressional Trades)
   # ─────────────────────────────────────────────
 
   # G.1 — Portfolio Risk & Allocation (P2)
@@ -1523,6 +1523,52 @@ test_cases:
     date_policy: frozen
     expected_tools: [prediction_market_analysis]
     description: "Schema disjointness regression: stop_price (0.07) sits inside the entry band (0.05-0.15), so validate_rule must reject with a pydantic ValidationError naming stop_price. Agent must surface the validation error to the user, not silently retry with a different stop_price or relabel the request as hold_to_resolution."
+
+  # --- G56-G60: Congressional trade disclosures (STOCK Act) ---
+  # Asked the way traders ask. Congressional trades route to events_news;
+  # corporate insider (Form 4) trades stay with fundamentals (A14, H16).
+
+  - id: G56
+    query: "What's Pelosi been buying this year?"
+    category: G
+    query_type: congress_trades_by_member
+    date_policy: relative
+    expected_tools: [events_news_analysis]
+    forbidden_tools: [fundamentals_analysis]
+    description: "Member lookup on congressional disclosures, window reaching back to January 1. Response lists her disclosed purchases only, including option and untickered positions when disclosed, with dollar ranges rather than sizes, whose account traded (spouse), trade and disclosure dates, and filing links. No claims about motive or returns beyond the filings."
+
+  - id: G57
+    query: "Are politicians loading up on MSFT?"
+    category: G
+    query_type: congress_trades_premise_check
+    date_policy: relative
+    expected_tools: [events_news_analysis]
+    forbidden_tools: [fundamentals_analysis]
+    description: "Loaded premise on congressional trading. Response states the recent window it used, counts purchases versus sales across all matches (not a capped page), and corrects 'loading up' when buying and selling are mixed. Congressional disclosures, not corporate insider (Form 4) data."
+
+  - id: G58
+    query: "Any congressional trades in Berkshire B shares this year?"
+    category: G
+    query_type: congress_trades_share_class
+    date_policy: relative
+    expected_tools: [events_news_analysis]
+    description: "Share-class ticker. Response finds this year's Berkshire Class B disclosures (BRK.B / BRK-B) instead of reporting none because of the dot or dash form, and lists members, buy/sell, dollar ranges, dates, and filing links."
+
+  - id: G59
+    query: "Which senators disclosed stock trades this past week?"
+    category: G
+    query_type: congress_trades_latest_by_chamber
+    date_policy: relative
+    expected_tools: [events_news_analysis]
+    description: "Latest Senate disclosures over the past seven days by disclosure date, not trade date. Response names each senator with tickers, buy/sell, dollar ranges, and how long after the trade it was disclosed, and says plainly if nothing was disclosed."
+
+  - id: G60
+    query: "Who's been selling NVDA lately, company insiders or members of Congress?"
+    category: G
+    query_type: insider_vs_congress_trades
+    date_policy: relative
+    expected_tools: [fundamentals_analysis, events_news_analysis]
+    description: "Boundary between two trade sources: corporate insider (Form 4) sales from fundamentals, congressional disclosures from events_news. Response keeps the two groups separate over a stated common window and does not mix insider share counts with congressional dollar ranges."
 
 
   # ─────────────────────────────────────────────

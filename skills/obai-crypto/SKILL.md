@@ -78,9 +78,9 @@ For a strategy or artifact request:
 5. Export an artifact only when the completed job is execution grade and the user asks for an artifact or paper handoff.
 
 ### Follow-Ups
-For job status, trade logs, or artifact validation, call the corresponding crypto tool. Do not reconstruct job state from memory. Preserve prior identifiers exactly: `job_id`, artifact `fingerprint`, `product_id`, timeframe and date range. Export eligibility comes from the server, never from memory.
+For job status or trade logs, call the corresponding crypto tool. For stored artifact validation, first load it with `crypto_strategy_get_artifact` using its exact `artifact_id`; validate the retrieved payload with that ID rather than rebuilding it from a fingerprint or memory. Preserve `job_id`, `artifact_id`, artifact `fingerprint`, `product_id`, timeframe and date range exactly. Export eligibility comes from the server, never from memory.
 
-When you run as a dispatched subagent and the briefing references a prior backtest, artifact, or validation without its `job_id` or `fingerprint`, respond asking for the identifier instead of guessing or re-running the backtest.
+When a delegated briefing references prior work, resolve its `job_id` or `artifact_id` from supplied task state first; if absent, ask the delegating agent for it instead of guessing or rerunning the backtest.
 
 ## Output Guidelines
 

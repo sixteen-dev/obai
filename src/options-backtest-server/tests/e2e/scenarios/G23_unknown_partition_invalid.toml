@@ -1,0 +1,36 @@
+# G23 (UNKNOWN): G23_gap_partition_missed_opportunity.toml's market with the 2024-03-04
+# quote-chain partition UNKNOWN instead of GAP. Completeness that is not known invalidates the
+# window at that session's DEC; nothing is decided from an unknown chain.
+id = "G23"
+proves = ["coverage"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json" }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "coverage_status"
+table = "quotes"
+session = "2024-03-04"
+status = "unknown"
+note = "feed outage"
+
+[expected]
+calculation_status = "invalid"
+headline_eligible = false
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+campaigns = []
+derivation = """
+Conventions as G01. Every partition COMPLETE except quotes on 2024-03-04, which is UNKNOWN.
+
+2024-03-04 OPEN: DEPOSIT 10000.
+2024-03-04 DEC 2: the session's chain partition is UNKNOWN -> INVALIDATED (DATA_COVERAGE_GAP),
+  before any decision. The loop stops: no decision, no order, no 2024-03-04 SNAPSHOT (the
+  account curve is empty), no 2024-03-05 or 2024-03-06 session.
+Result: invalid, not headline-eligible, final_equity null; nothing held; no campaign.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only (the invalid reason is not a warning).
+"""

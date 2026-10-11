@@ -1,6 +1,6 @@
 ---
 name: obai
-description: "Use the OBaI CLI to answer financial and stock market questions by running `obai query` commands with `--session` for conversation memory. Trigger this skill whenever the user asks about stock prices, earnings, fundamentals, options, market movers, portfolio analysis, portfolio risk, screening, dividends, SEC filings, insider trades, backtesting strategies, commodity or futures prices, company deep dives, competitive positioning, management quality, product sentiment, thematic research, or any financial market question. The agent should autonomously run `obai query \"<question>\" --json --session <id>`, parse the JSON output, and present the answer — without asking the user to run commands themselves. Always use --session to maintain context across related queries. Also trigger when the user asks to check OBaI server health, run evaluations, or compare stocks."
+description: "Use the installed OBaI CLI for financial research, market data, portfolio analysis, strategy backtests, and requested health/evaluation commands. Run obai query with JSON output and a persistent session for related questions. Use when the user requests the CLI or only the obai binary is available; use obai-hub instead for direct MCP access without the CLI."
 ---
 
 # OBaI CLI — Agent Execution Guide
@@ -40,7 +40,7 @@ obai query "<question>" [OPTIONS]
 |------|-------|---------|-------------|
 | `--json` | `-j` | `false` | Structured JSON output (always use this) |
 | `--session` | `-s` | ephemeral | Named session for multi-turn conversation |
-| `--model` | `-m` | configured hub model | Override the orchestrator model for this query only. The default resolves `ORCHESTRATOR_MODEL` → `~/.obai/settings.json` → `gpt-5.6-terra` |
+| `--model` | `-m` | configured hub model | Override the orchestrator model for this query only. The default resolves `ORCHESTRATOR_MODEL` → `~/.obai/settings.json` → `gpt-6.1-sol` |
 
 ### JSON Output Structure
 
@@ -53,7 +53,7 @@ obai query "<question>" [OPTIONS]
   "elapsed_ms": 2340,
   "session_id": "cli_a1b2c3d4",
   "timestamp": "2026-03-16T10:30:00Z",
-  "model": "gpt-5.6-terra",
+  "model": "gpt-6.1-sol",
   "guardrail_rejected": false,
   "faithfulness": {"numeric_accuracy": 0.95, "faithfulness_pass": true},
   "completeness": {"coverage_score": 0.88, "completeness_pass": true}
@@ -183,25 +183,25 @@ uv run python -m evaluation evaluate --suite --category A
 
 **Auth error** (`exit 3`): Usually means `OPENAI_API_KEY` is not set. Check the environment.
 
-**MCP connection error** (`exit 3`): One or more servers are down. Run `obai status --json` to diagnose, then suggest `./setup.sh` or `docker compose up -d`.
+**MCP connection error** (`exit 3`): One or more servers are down. Run `obai status --json` to diagnose, then suggest `obai start`, which brings every enabled server back up — including the optional options-backtest server when it is opted in, which a bare `docker compose up -d` would miss.
 
 ## Configuration (Environment Variables)
 
 | Variable | Default | What it does |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key for all agents |
-| `ORCHESTRATOR_MODEL` | `gpt-5.6-terra` | Central Hub model. Wins over `~/.obai/settings.json` (see below) |
-| `ORCHESTRATOR_REASONING_EFFORT` | `medium` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Wins over `~/.obai/settings.json` |
-| `SPECIALIST_MODEL` | `gpt-5.6-luna` | Default specialist model |
-| `STRATEGY_MODEL` | `gpt-5.6-terra` | Strategy agent model |
+| `ORCHESTRATOR_MODEL` | `gpt-6.1-sol` | Central Hub model. Wins over `~/.obai/settings.json` (see below) |
+| `ORCHESTRATOR_REASONING_EFFORT` | `xhigh` | Hub reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. Wins over `~/.obai/settings.json` |
+| `SPECIALIST_MODEL` | `gpt-6-luna` | Default specialist model |
+| `STRATEGY_MODEL` | `gpt-6.1-sol` | Strategy agent model |
 | `EXA_API_KEY` | optional | Exa API key for research server |
 | `ENABLE_GUARDRAILS` | `true` | Block non-financial queries |
-| `RESEARCH_MODEL` | `gpt-5.6-luna` | Research agent model |
+| `RESEARCH_MODEL` | `gpt-6-luna` | Research agent model |
 | `ENABLE_INLINE_SCORING` | `true` | Score every query for faithfulness |
 | `MCP_TIMEOUT` | `30` | Request timeout (seconds) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
 
-Specialist effort tiers use the same values via `SPECIALIST_REASONING_EFFORT`, `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT`. `minimal` is not a valid tier — every `gpt-5.6` model rejects it.
+Specialist effort tiers use the same values via `SPECIALIST_REASONING_EFFORT`, `STRATEGY_REASONING_EFFORT`, `CRYPTO_REASONING_EFFORT`, and `PREDICTION_MARKETS_REASONING_EFFORT`. Specialists default to `xhigh`; strategy, crypto, and prediction markets pin `medium`. `minimal` is not a valid tier — every `gpt-5.6` and `gpt-6` model rejects it. `gpt-6.1-sol` also rejects `none`.
 
 ## Hub Settings File (`~/.obai/settings.json`)
 
@@ -209,15 +209,15 @@ The hub model and reasoning effort are user-settable and persist across sessions
 
 ```json
 {
-  "hub_model": "gpt-5.6-terra",
-  "hub_reasoning_effort": "max"
+  "hub_model": "gpt-6.1-sol",
+  "hub_reasoning_effort": "xhigh"
 }
 ```
 
-`hub_model` is `gpt-5.6-terra` (default) or `gpt-5.6-sol`. `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `max`). Specialist models and efforts are not settable here.
+`hub_model` is `gpt-6.1-sol` (default), `gpt-6-sol`, `gpt-5.6-sol`, or `gpt-5.6-terra`. `hub_reasoning_effort` is `medium`, `high`, `xhigh`, or `max` (default `xhigh`). Specialist models and efforts are not settable here.
 
 ```bash
-obai config set-model gpt-5.6-terra   # write hub model
+obai config set-model gpt-6.1-sol       # write hub model
 obai config set-effort high           # write hub reasoning effort
 obai config show                      # current values and where they came from
 ```

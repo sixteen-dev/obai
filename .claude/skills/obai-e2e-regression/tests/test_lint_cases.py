@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
 import yaml
 from lint_cases import lint_suite
 
@@ -703,3 +704,34 @@ def test_live_case_with_as_of_required_clears_the_error() -> None:
     )
 
     assert "live-missing-as-of-required" not in codes(issues)
+
+
+def test_requires_with_a_known_optional_capability_lints_clean() -> None:
+    case = _case("O1", date_policy="frozen", data_hash="sha256:abc", requires=["options_backtest"])
+
+    issues = lint_suite(_suite(case), strict=True)
+
+    assert issues == []
+
+
+@pytest.mark.parametrize(
+    "requires",
+    [["typo"], [], "options_backtest", ["options_backtest", "options_backtest"], [None]],
+)
+def test_invalid_requires_is_an_error_not_silently_ignored(requires: object) -> None:
+    issues = lint_suite(_suite(_case("O1", requires=requires)))
+
+    assert "invalid-requires" in codes(issues)
+
+
+def test_canonical_options_strategy_cases_require_the_optional_capability() -> None:
+    cases = _canonical_suite()["test_cases"]
+    optional = [case for case in cases if case["id"].startswith("CORE-OPTSTRAT-")]
+
+    assert len(optional) == 4
+    assert all(case.get("requires") == ["options_backtest"] for case in optional)
+    assert not [case["id"] for case in cases if "requires" in case and case not in optional]
+
+
+def test_canonical_suite_lints_strict_clean() -> None:
+    assert lint_suite(_canonical_suite(), as_of=date(2026, 9, 27), strict=True) == []
