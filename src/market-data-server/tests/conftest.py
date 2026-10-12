@@ -111,7 +111,6 @@ def mock_fmp_client() -> AsyncMock:
     client.get_sector_performance = AsyncMock(return_value=[])
     client.get_afterhours_quote = AsyncMock(return_value=[])
     client.is_market_open = AsyncMock(return_value={})
-    client.get_short_volume = AsyncMock(return_value=[])
     client.get_technical_indicators = AsyncMock(return_value=[])
     client.health_check = AsyncMock(return_value=True)
     client.close = AsyncMock()

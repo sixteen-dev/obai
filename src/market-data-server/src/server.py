@@ -361,15 +361,18 @@ async def market_data_get_afterhours_quote_tool(symbol: str) -> dict[str, Any]:
 async def market_data_get_short_volume_tool(
     symbol: str, limit: int = 20, offset: int = 0
 ) -> dict[str, Any]:
-    """Get historical short sale volume data.
+    """Get daily short-sale volume from FINRA, newest trading day first (about 1 year).
+
+    Covers only off-exchange trades reported to FINRA, so totalVolume is not the
+    stock's full volume, and this is not short interest.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
-        limit: Maximum number of records to return (default: 50)
-        offset: Number of records to skip (for pagination)
+        limit: Trading days to return (default: 20, max: 60)
+        offset: Trading days to skip (for pagination)
 
     Returns:
-        Historical short volume data with short interest ratio
+        Daily shortVolume, shortExemptVolume and totalVolume with pagination
     """
     try:
         result = await get_short_volume(symbol, limit, offset)
@@ -378,7 +381,7 @@ async def market_data_get_short_volume_tool(
         log_error(
             logger, e, context={"tool": "market_data_get_short_volume_tool", "symbol": symbol}
         )
-        return format_api_error(e, "FMP")
+        return format_api_error(e, "FINRA")
 
 
 @mcp.tool(
