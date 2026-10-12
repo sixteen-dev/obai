@@ -150,6 +150,19 @@ reference ships with it.
   reaches ClickHouse through a Docker volume, so run `obai upgrade` (or
   `./infra/opik/setup-volumes.sh` before recreating the container) to apply
   it.
+- **Sector snapshot works again** (`market_data_get_market_snapshot_tool`). FMP
+  now requires a `date` and answered every call with 400. The tool walks back
+  from today, at most 7 days, to the latest session whose rows carry that date.
+  A weekend date returns nothing, and a date FMP has no snapshot for yet returns
+  stale rows from earlier sessions, so rows dated another day are never
+  returned as that day's snapshot.
+- **Short volume comes from FINRA** (`market_data_get_short_volume_tool`). FMP
+  has no short-volume endpoint (every call was a 404). The tool now makes one
+  request to FINRA's public Reg SHO daily dataset, which needs no API key. That
+  request covers the last year, and each day sums to FINRA's consolidated daily
+  file. The response states its scope: off-exchange trades reported to FINRA
+  only, not the stock's full volume and not short interest. `limit` is capped
+  at 60 trading days.
 
 ### Security
 

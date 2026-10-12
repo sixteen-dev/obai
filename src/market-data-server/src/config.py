@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # FMP API Configuration
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
 
+    # FINRA Query API (public datasets need no key) — daily short-sale volume
+    finra_base_url: str = "https://api.finra.org"
+
     # Server Configuration
     server_name: str = "market-data-server"
     server_version: str = Field(default_factory=_read_version)

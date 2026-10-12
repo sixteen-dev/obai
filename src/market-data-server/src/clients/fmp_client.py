@@ -1,5 +1,6 @@
 """FMP API client for market data."""
 
+from datetime import date
 from typing import Any, cast
 
 import httpx
@@ -240,13 +241,21 @@ class FMPClient:
         data: list[dict[str, Any]] = await self._get(endpoint)
         return data
 
-    async def get_sector_performance(self) -> list[dict[str, Any]]:
-        """Get sector performance overview.
+    async def get_sector_performance(self, snapshot_date: date) -> list[dict[str, Any]]:
+        """Get sector performance for one session.
+
+        FMP requires the date (400 without it); a non-trading day returns [].
+        Premium reaches back about six months; older dates answer 402.
+
+        Args:
+            snapshot_date: Session date.
 
         Returns:
-            List of sectors with performance metrics
+            List of sectors with their average change that session
         """
-        data: list[dict[str, Any]] = await self._get("sector-performance-snapshot")
+        data: list[dict[str, Any]] = await self._get(
+            "sector-performance-snapshot", {"date": snapshot_date.isoformat()}
+        )
         return data
 
     async def get_afterhours_quote(self, symbol: str) -> list[dict[str, Any]]:
@@ -273,22 +282,6 @@ class FMPClient:
             List of dicts with exchange hours and isMarketOpen status.
         """
         data: list[dict[str, Any]] = await self._get("all-exchange-market-hours")
-        return data
-
-    async def get_short_volume(self, symbol: str) -> list[dict[str, Any]]:
-        """Get historical short sale volume data.
-
-        NOTE: This endpoint is not documented in the new FMP API.
-        This may not work and could return errors.
-
-        Args:
-            symbol: Stock ticker symbol
-
-        Returns:
-            List with short volume, total volume, and short interest ratio
-        """
-        # This endpoint is not documented in new FMP API - may not exist
-        data: list[dict[str, Any]] = await self._get("short-volume", {"symbol": symbol})
         return data
 
     async def get_technical_indicators(
