@@ -232,6 +232,11 @@ class _FakeHubRun:
         self._tool = tool
         self._arguments = arguments
         self._after_tool = after_tool
+        self.is_complete = False
+
+    def cancel(self, mode: str = "immediate") -> None:
+        """Mirror ``RunResultStreaming.cancel``; the hub calls it on early exit."""
+        self.is_complete = True
 
     async def stream_events(self) -> AsyncIterator[object]:
         """Yield a preamble, run the tool in its own task, then a hub memo."""

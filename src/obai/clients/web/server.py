@@ -527,11 +527,14 @@ async def _handle_query(app: FastAPI, ws: WebSocket, msg: dict[str, Any]) -> Non
     complete_evt: dict[str, Any] | None = None
 
     try:
-        async for event in bridge.run_query(text, sdk_session):
-            event["session_id"] = session_id
-            if event.get("type") == "complete":
-                complete_evt = event
-            await _ws_send(ws, event)
+        # aclosing ends the run as soon as the client leaves, not whenever
+        # the abandoned generator happens to be collected.
+        async with contextlib.aclosing(bridge.run_query(text, sdk_session)) as events:
+            async for event in events:
+                event["session_id"] = session_id
+                if event.get("type") == "complete":
+                    complete_evt = event
+                await _ws_send(ws, event)
 
         if complete_evt:
             await store.add_message(
@@ -542,6 +545,9 @@ async def _handle_query(app: FastAPI, ws: WebSocket, msg: dict[str, Any]) -> Non
                 duration_ms=complete_evt.get("duration_ms"),
             )
 
+    except WebSocketDisconnect:
+        logger.info("Client disconnected mid-query; run cancelled (session %s)", session_id)
+        raise
     except Exception:
         logger.exception("Query streaming failed")
         await _ws_send(

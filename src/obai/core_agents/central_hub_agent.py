@@ -31,7 +31,8 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -2273,7 +2274,7 @@ class CentralHubAgent:
         self,
         query: str,
         session: Session | None = None,
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         """Run a query through the central hub.
 
         This is the recommended way to use the hub. It handles:
@@ -2311,8 +2312,9 @@ class CentralHubAgent:
         # again in finally, so a cancelled or abandoned run leaves no content.
         _clear_options_strategy_passthrough()
         try:
-            async for event in self._stream_query(self.agent, query, session):
-                yield event
+            async with aclosing(self._stream_query(self.agent, query, session)) as stream:
+                async for event in stream:
+                    yield event
         finally:
             _clear_options_strategy_passthrough()
 
@@ -2321,7 +2323,7 @@ class CentralHubAgent:
         agent: Agent[None],
         query: str,
         session: Session | None,
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         """Stream one hub query and relay terminal specialist output.
 
         The body of :meth:`run`, kept separate so ``run`` owns the
@@ -2393,45 +2395,51 @@ class CentralHubAgent:
         terminal_fired: str | None = None
         buffered_events: list[Any] = []
 
-        async for event in result.stream_events():
-            # Buffer streaming text deltas for caching
-            if isinstance(event, RawResponsesStreamEvent):
-                data = event.data
-                if isinstance(data, ResponseTextDeltaEvent) and data.delta:
-                    answer.add_delta(data.item_id, data.delta)
-
-            # Also capture final message output
-            elif isinstance(event, RunItemStreamEvent):
-                item = event.item
-                if isinstance(item, MessageOutputItem):
-                    answer.note_message(
-                        item.raw_item.id,
-                        ItemHelpers.text_message_output(item),
-                        item.raw_item.phase,
-                    )
-
-            # Detect terminal specialist firing: passthrough set by tool wrapper.
-            if terminal_fired is None and _prediction_passthrough is not None:
-                terminal_fired = "prediction"
-            if terminal_fired is None and _get_crypto_passthrough() is not None:
-                terminal_fired = "crypto"
-            if terminal_fired is None and _get_strategy_passthrough() is not None:
-                terminal_fired = "strategy"
-            if terminal_fired is None and _get_options_strategy_passthrough() is not None:
-                terminal_fired = "options_strategy"
-
-            # After a terminal specialist fires, buffer hub text synthesis.
-            if terminal_fired is not None:
+        # Cancel in finally: a caller that stops reading (a browser refresh)
+        # would otherwise leave the SDK run going and the hub busy.
+        try:
+            async for event in result.stream_events():
+                # Buffer streaming text deltas for caching
                 if isinstance(event, RawResponsesStreamEvent):
-                    buffered_events.append(event)
-                    continue
-                if isinstance(event, RunItemStreamEvent) and isinstance(
-                    getattr(event, "item", None), MessageOutputItem
-                ):
-                    buffered_events.append(event)
-                    continue
+                    data = event.data
+                    if isinstance(data, ResponseTextDeltaEvent) and data.delta:
+                        answer.add_delta(data.item_id, data.delta)
 
-            yield event
+                # Also capture final message output
+                elif isinstance(event, RunItemStreamEvent):
+                    item = event.item
+                    if isinstance(item, MessageOutputItem):
+                        answer.note_message(
+                            item.raw_item.id,
+                            ItemHelpers.text_message_output(item),
+                            item.raw_item.phase,
+                        )
+
+                # Detect terminal specialist firing: passthrough set by tool wrapper.
+                if terminal_fired is None and _prediction_passthrough is not None:
+                    terminal_fired = "prediction"
+                if terminal_fired is None and _get_crypto_passthrough() is not None:
+                    terminal_fired = "crypto"
+                if terminal_fired is None and _get_strategy_passthrough() is not None:
+                    terminal_fired = "strategy"
+                if terminal_fired is None and _get_options_strategy_passthrough() is not None:
+                    terminal_fired = "options_strategy"
+
+                # After a terminal specialist fires, buffer hub text synthesis.
+                if terminal_fired is not None:
+                    if isinstance(event, RawResponsesStreamEvent):
+                        buffered_events.append(event)
+                        continue
+                    if isinstance(event, RunItemStreamEvent) and isinstance(
+                        getattr(event, "item", None), MessageOutputItem
+                    ):
+                        buffered_events.append(event)
+                        continue
+
+                yield event
+        finally:
+            if not result.is_complete:
+                result.cancel()
 
         _warn_if_several_terminals_fired(terminal_fired)
 
