@@ -17,7 +17,7 @@ from clients.shared import SPECIALIST_TOOLS, ToolCallTracker, format_tool_args
 from core_agents.response_assembly import AnswerAccumulator
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from agents import Session
 
@@ -146,7 +146,7 @@ class HubBridge:
         self,
         text: str,
         session: Session,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Run a query through the hub, yielding WS-protocol dicts.
 
         Acquires the query lock (hub.run uses module-level state).
@@ -212,8 +212,9 @@ class HubBridge:
             }
             hub_analyzing = True
 
+            hub_events = self._hub.run(text, session)
             try:
-                async for event in self._hub.run(text, session):
+                async for event in hub_events:
                     # --- Terminal passthrough ---
                     if isinstance(
                         event,
@@ -408,6 +409,9 @@ class HubBridge:
                     yield {"type": "error", "message": str(e), "guardrail": False}
 
             finally:
+                # Close the hub run before the lock frees: a client that left
+                # mid-answer must not leave the hub busy for the next query.
+                await hub_events.aclose()
                 # A settings change that landed mid-answer waited rather than
                 # switching the model underneath the turn that was running.
                 # Applying it here, still under the lock, means the hub is
