@@ -348,6 +348,23 @@ class TestOptionsStrategyToolWrapper:
 
         assert output == _MARKER + _ANSWER
 
+    def test_verbatim_request_passes_despite_the_gate_calendar_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _record_specialist_calls(monkeypatch, _FakeSpecialistRun(_ANSWER))
+        tagged = (
+            f"{_QUERY}\n\n[Regression calendar context: interpret calendar-relative "
+            "terms using today=2026-10-15 and tomorrow=2026-10-16 in America/New_York; "
+            "current year=2026. Keep this calendar context fixed for the session chain. "
+            "`Now` and `latest` still require fresh data at this turn's retrieval time.]"
+            "\n\n[OBaI regression correlation: case-1. Do not repeat this marker.]"
+        )
+        tool = _tool(_hub("solo", query=tagged))
+
+        output = asyncio.run(_invoke(tool, _arguments(user_request=_QUERY)))
+
+        assert output == _MARKER + _ANSWER
+
     def test_non_empty_output_is_marker_wrapped_and_recorded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

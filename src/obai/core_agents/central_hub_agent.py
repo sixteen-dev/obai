@@ -815,10 +815,19 @@ _TRAILING_ANNOTATION_RE = re.compile(
     r"\s*\[OBaI regression correlation:[^\[\]]*\]\s*\Z", re.IGNORECASE
 )
 
+# For date-sensitive cases the gate also appends a calendar block ahead of the
+# correlation tag. It is the same kind of tooling metadata: the Hub rightly
+# moves those facts into `context`, so requiring them in `user_request` rejected
+# a faithful first hand-off. Matched by its own wording, like the tag above.
+_TRAILING_CALENDAR_RE = re.compile(
+    r"\s*\[Regression calendar context:[^\[\]]*\]\s*\Z", re.IGNORECASE
+)
+
 
 def _normalize_strategy_handoff_text(text: str) -> str:
     """Normalize text for faithful-handoff substring checks."""
-    return " ".join(_TRAILING_ANNOTATION_RE.sub("", text).casefold().split())
+    untagged = _TRAILING_CALENDAR_RE.sub("", _TRAILING_ANNOTATION_RE.sub("", text))
+    return " ".join(untagged.casefold().split())
 
 
 def _get_strategy_handoff_fidelity_error(input_text: str, original_query: str | None) -> str | None:
