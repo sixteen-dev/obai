@@ -161,6 +161,9 @@ class HubSettingsStore:
     def save(self, settings: HubSettings) -> None:
         """Atomically write settings to disk.
 
+        Only fields the user set are written. A field left out keeps tracking
+        the shipped default, so a later default change reaches that user.
+
         Args:
             settings: Settings to persist.
         """
@@ -174,7 +177,7 @@ class HubSettingsStore:
         tmp = Path(name)
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
-                stream.write(settings.model_dump_json(indent=2) + "\n")
+                stream.write(settings.model_dump_json(indent=2, exclude_unset=True) + "\n")
             tmp.replace(self._path)
         except OSError:
             tmp.unlink(missing_ok=True)

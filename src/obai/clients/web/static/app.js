@@ -50,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
     checkHubStatus();
     connectWebSocket();
     loadSessions();
+    showModelNotice();
 });
 
 function connectWebSocket() {
@@ -975,6 +976,61 @@ function compactModelName(name) {
     return preferred.slice(0, 27) + "...";
 }
 
+// Dismissal is keyed to the default it announced, so the next default change
+// is announced once more without any new code.
+const MODEL_NOTICE_KEY = "obai.modelNotice.dismissed";
+
+function readNoticeDismissal() {
+    try {
+        return localStorage.getItem(MODEL_NOTICE_KEY);
+    } catch (error) {
+        console.warn("Model notice dismissal unavailable:", error);
+        return null;
+    }
+}
+
+async function showModelNotice() {
+    // Offer a newer shipped default to anyone whose saved model predates it.
+    // It never switches the model: an older choice may well be deliberate.
+    const notice = document.getElementById("model-notice");
+    if (!notice) {
+        return;
+    }
+    try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) {
+            return;
+        }
+        const data = await res.json();
+        const latest = data.default_hub_model;
+        const pinnedByEnv = isEnvOverride((data.env_overrides || {}).hub_model);
+        if (!latest || pinnedByEnv || data.saved.hub_model === latest) {
+            return;
+        }
+        if (readNoticeDismissal() === latest) {
+            return;
+        }
+        notice.dataset.model = latest;
+        document.getElementById("model-notice-name").textContent = latest;
+        notice.classList.remove("hidden");
+    } catch (error) {
+        console.error("Failed to check for a newer default model:", error);
+    }
+}
+
+function dismissModelNotice() {
+    const notice = document.getElementById("model-notice");
+    if (!notice) {
+        return;
+    }
+    notice.classList.add("hidden");
+    try {
+        localStorage.setItem(MODEL_NOTICE_KEY, notice.dataset.model || "");
+    } catch (error) {
+        console.warn("Could not remember model notice dismissal:", error);
+    }
+}
+
 async function renderPendingHubHint() {
     // Appended to the model summary, which reports the running hub. When the
     // saved settings differ, say so where the user is already looking rather
@@ -1097,6 +1153,11 @@ function setupEventListeners() {
     });
 
     document.getElementById("settings-btn")?.addEventListener("click", openSettings);
+    document.getElementById("model-notice-open")?.addEventListener("click", () => {
+        dismissModelNotice();
+        openSettings();
+    });
+    document.getElementById("model-notice-close")?.addEventListener("click", dismissModelNotice);
     document.getElementById("settings-close-btn")?.addEventListener("click", closeSettings);
     document.getElementById("settings-overlay")?.addEventListener("click", (e) => {
         if (e.target.id === "settings-overlay") {

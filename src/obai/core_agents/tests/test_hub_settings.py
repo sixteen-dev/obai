@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -190,6 +191,17 @@ class TestHubSettingsStore:
         loaded = HubSettingsStore(path=path).load()
         assert loaded.hub_reasoning_effort == "high"
         assert loaded.hub_model == "gpt-6.1-sol"
+
+    def test_save_writes_only_the_fields_the_user_chose(self, tmp_path: Path) -> None:
+        """A default never chosen must not be frozen into the file.
+
+        Otherwise changing only the effort pins today's default model, and the
+        next shipped default never reaches that user.
+        """
+        store = HubSettingsStore(path=tmp_path / "settings.json")
+        store.save(HubSettings(hub_reasoning_effort="max"))
+
+        assert json.loads(store.path.read_text()) == {"hub_reasoning_effort": "max"}
 
     def test_save_is_atomic_leaving_no_temp_files(self, tmp_path: Path) -> None:
         """A crash mid-write must not leave a half-written settings file."""
