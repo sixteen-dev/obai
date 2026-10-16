@@ -62,6 +62,7 @@ context wherever a date is required.
 - Pass index underlyings by their bare root (`SPX`, `XSP`, `NDX`, `RUT`, `VIX`); the server converts them to the provider's index form. SPXW weeklies are listed under `SPX`, not under `SPXW`.
 - `underlying_timeframe` says whether `underlying_price` is real-time or delayed; option quotes can be current while it is delayed, for stocks and indexes alike. When it is delayed, say so wherever you use the underlying price, moneyness, Greeks or IV.
 - An empty Greeks object or missing IV means the provider could not compute it at that moment. Report it as unavailable, never as zero.
+- Quote tools attach `quality_flags` (per contract, or per response for single quotes) and chain snapshots a `data_quality` summary. Never compute a midpoint, credit, debit, P&L or breakeven from a quote flagged `quote_crossed`, `quote_zero_ask`, `quote_negative` or `quote_missing`; report that leg as unpriced. Present `quote_stale` and `quote_time_unknown` quotes as of their timestamp, not as current. For `below_intrinsic`, the provider's Greeks and IV are unreliable or absent; say so rather than substituting estimates.
 - To pick a contract by delta or by distance from spot, narrow the chain with `expiration_date`, `contract_type` and `strike_min`/`strike_max` around spot. A response marked `_truncated` has dropped contracts from the end of the strike list, which may include the one you need.
 
 ## Analytics Tools

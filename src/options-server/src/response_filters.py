@@ -198,8 +198,20 @@ def filter_option_contract_snapshot(data: dict[str, Any]) -> dict[str, Any]:
 # =============================================================================
 
 
+def _field(data: dict[str, Any], short: str, long: str) -> Any:
+    """Read a field the /v2/last endpoints send as ``short`` and others as ``long``.
+
+    Explicit None checks: a zero bid is a real value, not a missing one.
+    """
+    value = data.get(short)
+    return value if value is not None else data.get(long)
+
+
 def filter_option_trade(data: dict[str, Any]) -> dict[str, Any]:
     """Filter option trade data to essential fields.
+
+    ``/v2/last/trade`` answers with one-letter keys (p, s, x, t, c); the
+    history endpoints use full names. Both are read.
 
     Args:
         data: Raw Massive trade result
@@ -211,16 +223,20 @@ def filter_option_trade(data: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     return {
-        "price": data.get("price"),
-        "size": data.get("size"),
-        "exchange": data.get("exchange"),
-        "sip_timestamp": data.get("sip_timestamp"),
-        "conditions": data.get("conditions"),
+        "price": _field(data, "p", "price"),
+        "size": _field(data, "s", "size"),
+        "exchange": _field(data, "x", "exchange"),
+        "sip_timestamp": _field(data, "t", "sip_timestamp"),
+        "conditions": _field(data, "c", "conditions"),
     }
 
 
 def filter_option_quote(data: dict[str, Any]) -> dict[str, Any]:
     """Filter option quote (NBBO) data to essential fields.
+
+    ``/v2/last/nbbo`` answers with one-letter keys (p/P bid/ask, s/S sizes,
+    x/X exchanges, t time); the history endpoints use full names. Both are
+    read.
 
     Args:
         data: Raw Massive quote result
@@ -232,13 +248,13 @@ def filter_option_quote(data: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     return {
-        "bid_price": data.get("bid_price") or data.get("bid"),
-        "bid_size": data.get("bid_size"),
-        "ask_price": data.get("ask_price") or data.get("ask"),
-        "ask_size": data.get("ask_size"),
-        "bid_exchange": data.get("bid_exchange"),
-        "ask_exchange": data.get("ask_exchange"),
-        "sip_timestamp": data.get("sip_timestamp"),
+        "bid_price": _field(data, "p", "bid_price"),
+        "bid_size": _field(data, "s", "bid_size"),
+        "ask_price": _field(data, "P", "ask_price"),
+        "ask_size": _field(data, "S", "ask_size"),
+        "bid_exchange": _field(data, "x", "bid_exchange"),
+        "ask_exchange": _field(data, "X", "ask_exchange"),
+        "sip_timestamp": _field(data, "t", "sip_timestamp"),
     }
 
 

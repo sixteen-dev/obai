@@ -13,10 +13,12 @@ Optional Tools (Nice-to-Have):
 - get_option_aggregates: OHLCV bars
 """
 
+import time
 from typing import Any
 
 from ..clients.massive_client import MassiveClient
 from ..config import get_settings
+from ..data_quality import annotate_contracts, contract_flags, quote_flags
 from ..logging_config import get_logger, log_error
 from ..response_filters import (
     filter_option_chain_snapshot,
@@ -126,6 +128,11 @@ async def get_option_chain_snapshot(
             # from the surviving list describes a prefix of the chain rather
             # than the chain. These stay correct whatever survives.
             chain_stats = _chain_stats(filtered_results)
+            contracts, data_quality = annotate_contracts(
+                filtered_results,
+                now_ns=time.time_ns(),
+                max_quote_age_s=settings.max_quote_age_seconds,
+            )
 
             response: dict[str, Any] = {
                 "underlying_asset": underlying_asset.upper(),
@@ -136,7 +143,8 @@ async def get_option_chain_snapshot(
                 },
                 "count": len(filtered_results),
                 "chain_stats": chain_stats,
-                "contracts": filtered_results,
+                "data_quality": data_quality,
+                "contracts": contracts,
                 "pages_fetched": data["pages_fetched"],
                 "truncated": data["truncated"],
             }
@@ -192,11 +200,18 @@ async def get_option_contract_snapshot(
 
             results = data.get("results", {})
             filtered_results = filter_option_contract_snapshot(results)
+            flags = contract_flags(
+                filtered_results,
+                now_ns=time.time_ns(),
+                max_quote_age_s=settings.max_quote_age_seconds,
+            )
 
             return {
                 "underlying_asset": underlying_asset.upper(),
                 "option_contract": option_contract,
                 "snapshot": filtered_results,
+                "quality_flags": flags,
+                "max_quote_age_seconds": settings.max_quote_age_seconds,
             }
     except Exception as e:
         log_error(
@@ -266,10 +281,20 @@ async def get_latest_option_quote(options_ticker: str) -> dict[str, Any]:
 
             results = data.get("results", {})
             filtered_results = filter_option_quote(results)
+            flags = quote_flags(
+                filtered_results,
+                now_ns=time.time_ns(),
+                max_quote_age_s=settings.max_quote_age_seconds,
+                bid_key="bid_price",
+                ask_key="ask_price",
+                time_key="sip_timestamp",
+            )
 
             return {
                 "options_ticker": options_ticker,
                 "quote": filtered_results,
+                "quality_flags": flags,
+                "max_quote_age_seconds": settings.max_quote_age_seconds,
             }
     except Exception as e:
         log_error(
