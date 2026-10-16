@@ -122,6 +122,12 @@ reference ships with it.
 
 ### Fixed
 
+- **The backtest-server image no longer builds polars-talib 0.1.5 from source.**
+  crates.io yanked `zip 0.6.x`, so the Rust build stopped resolving and the image
+  failed to build. The source build also force-reinstalled 0.1.5 over the 0.1.6
+  the service requires, so containers computed indicators on a version no test
+  ran. The image now installs the locked 0.1.6 wheel (x86_64 and aarch64) with
+  `uv sync --locked`.
 - **Options-backtest fills could exceed the campaign risk cap.** Sizing priced
   risk at decision naturals, but the order's limit adds `price_allowance_usd`
   and the fill rechecked only funding, so a fill inside the limit could carry up
