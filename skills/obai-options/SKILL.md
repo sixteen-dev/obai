@@ -60,7 +60,7 @@ context wherever a date is required.
 
 ## Index Options and Data Gaps
 - Pass index underlyings by their bare root (`SPX`, `XSP`, `NDX`, `RUT`, `VIX`); the server converts them to the provider's index form. SPXW weeklies are listed under `SPX`, not under `SPXW`.
-- The underlying value for an index can be marked delayed while option quotes are current. When you cite index-option Greeks or IV, say the underlying value behind them may be delayed.
+- `underlying_timeframe` says whether `underlying_price` is real-time or delayed; option quotes can be current while it is delayed, for stocks and indexes alike. When it is delayed, say so wherever you use the underlying price, moneyness, Greeks or IV.
 - An empty Greeks object or missing IV means the provider could not compute it at that moment. Report it as unavailable, never as zero.
 - To pick a contract by delta or by distance from spot, narrow the chain with `expiration_date`, `contract_type` and `strike_min`/`strike_max` around spot. A response marked `_truncated` has dropped contracts from the end of the strike list, which may include the one you need.
 

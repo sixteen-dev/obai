@@ -16,6 +16,7 @@ import pytest
 
 from src.clients.massive_client import MassiveClient, massive_underlying
 from src.config import Settings
+from src.response_filters import filter_option_contract_snapshot
 
 
 def _response(payload: dict[str, Any]) -> MagicMock:
@@ -112,3 +113,35 @@ class TestContractSnapshotPath:
                 await client.get_option_contract_snapshot(underlying, contract)
 
         assert mock_get.call_args.args[0].endswith(path)
+
+
+class TestUnderlyingValue:
+    """Index snapshots carry the underlying as ``value``, stocks as ``price``."""
+
+    def test_index_value_becomes_the_underlying_price(self) -> None:
+        # Shape captured live for I:XSP on 2026-10-15.
+        raw = {
+            "details": {"ticker": "O:XSP261026P00754000"},
+            "underlying_asset": {
+                "last_updated": 1792094669030000000,
+                "value": 774.41,
+                "ticker": "I:XSP",
+                "timeframe": "DELAYED",
+            },
+        }
+
+        contract = filter_option_contract_snapshot(raw)
+
+        assert contract["underlying_price"] == 774.41
+        assert contract["underlying_timeframe"] == "DELAYED"
+
+    def test_stock_price_is_kept(self) -> None:
+        raw = {
+            "details": {"ticker": "O:AAPL261120P00200000"},
+            "underlying_asset": {"price": 248.1, "timeframe": "REAL-TIME", "ticker": "AAPL"},
+        }
+
+        contract = filter_option_contract_snapshot(raw)
+
+        assert contract["underlying_price"] == 248.1
+        assert contract["underlying_timeframe"] == "REAL-TIME"
