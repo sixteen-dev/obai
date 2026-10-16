@@ -644,15 +644,20 @@ info "Installing OBaI as a global tool via uv (editable — source changes take 
 # accepts a bare prefix there, GNU requires three trailing X's and otherwise
 # exits 1, which under `set -e` aborts the install before steps 7 and 8 run.
 INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/obai-cli-install.XXXXXX")"
-trap 'rm -f "$INSTALL_LOG"' EXIT
+# `uv tool install` ignores uv.lock and would take the newest release of every
+# dependency, including untested majors. Constrain it to the locked versions.
+LOCK_CONSTRAINTS="$(mktemp "${TMPDIR:-/tmp}/obai-cli-constraints.XXXXXX")"
+trap 'rm -f "$INSTALL_LOG" "$LOCK_CONSTRAINTS"' EXIT
+uv export --project "$OBAI_SRC" --frozen --no-dev --no-hashes --no-emit-project --no-header \
+    --quiet --output-file "$LOCK_CONSTRAINTS"
 
 # Editable install so `obai` always runs from source — no reinstall needed after code changes.
-if uv tool install --reinstall --editable "$OBAI_SRC" >"$INSTALL_LOG" 2>&1; then
+if uv tool install --reinstall --constraints "$LOCK_CONSTRAINTS" --editable "$OBAI_SRC" >"$INSTALL_LOG" 2>&1; then
     ok "OBaI CLI installed (editable)"
 else
     # Fallback: non-editable snapshot (requires reinstall after source changes)
     info "Editable install failed, trying snapshot install..."
-    if uv tool install --reinstall --from "$OBAI_SRC" obai >"$INSTALL_LOG" 2>&1; then
+    if uv tool install --reinstall --constraints "$LOCK_CONSTRAINTS" --from "$OBAI_SRC" obai >"$INSTALL_LOG" 2>&1; then
         ok "OBaI CLI installed (snapshot — re-run setup after code changes)"
     else
         fail "Could not install OBaI CLI with uv."
