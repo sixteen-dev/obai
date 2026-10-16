@@ -19,6 +19,33 @@ RETRY_DELAYS = [0.5, 1.0, 2.0]  # Exponential backoff in seconds
 # chain-wide stats are computed over the full fetched set, not one page.
 CHAIN_SNAPSHOT_MAX_PAGES = 10
 
+# Index roots whose options Massive files under the ``I:`` underlying. The
+# snapshots carry Greeks, IV and the underlying value only in that form (the
+# bare root returns quotes alone), while the contracts reference list answers
+# only to the bare root.
+INDEX_ROOTS = frozenset({"SPX", "XSP", "NDX", "RUT", "VIX", "DJX", "OEX", "XEO"})
+_INDEX_PREFIX = "I:"
+
+
+def massive_underlying(symbol: str) -> str:
+    """Return the underlying form Massive's option snapshots need.
+
+    Args:
+        symbol: Underlying ticker, with or without the ``I:`` prefix.
+
+    Returns:
+        ``I:<ROOT>`` for an index root, otherwise the upper-cased ticker.
+
+    Raises:
+        ValueError: If the symbol is empty.
+    """
+    ticker = symbol.strip().upper()
+    if not ticker:
+        raise ValueError("underlying symbol must be non-empty")
+    if ticker.removeprefix(_INDEX_PREFIX) in INDEX_ROOTS:
+        return _INDEX_PREFIX + ticker.removeprefix(_INDEX_PREFIX)
+    return ticker
+
 
 class MassiveAPIError(Exception):
     """Exception for Massive API errors."""
@@ -239,15 +266,23 @@ class MassiveClient:
         strike_price: float | None = None,
         contract_type: str | None = None,
         limit: int = 250,
+        strike_min: float | None = None,
+        strike_max: float | None = None,
     ) -> dict[str, Any]:
         """Get real-time snapshot of option chain for an underlying asset.
 
         Args:
-            underlying_asset: Stock ticker symbol (e.g., 'AAPL')
+            underlying_asset: Ticker (e.g., 'AAPL'); index roots such as
+                'XSP' are sent as 'I:XSP'
             expiration_date: Filter by expiration date (YYYY-MM-DD)
             strike_price: Filter by exact strike price
             contract_type: Filter by 'call' or 'put'
             limit: Maximum results per page (max 250)
+            strike_min: Lowest strike to include
+            strike_max: Highest strike to include
+
+        Raises:
+            ValueError: If strike_min is above strike_max
 
         Returns:
             Dict containing ``results`` (contracts across all fetched pages),
@@ -256,13 +291,19 @@ class MassiveClient:
             ``pages_fetched``. Paging keeps chain-wide stats (put/call ratio,
             max OI, IV skew) honest instead of biased to the first page.
         """
-        endpoint = f"/v3/snapshot/options/{underlying_asset.upper()}"
+        if strike_min is not None and strike_max is not None and strike_min > strike_max:
+            raise ValueError(f"strike_min {strike_min} is above strike_max {strike_max}")
+        endpoint = f"/v3/snapshot/options/{massive_underlying(underlying_asset)}"
         params: dict[str, Any] = {"limit": min(limit, 250)}
 
         if expiration_date:
             params["expiration_date"] = expiration_date
         if strike_price is not None:
             params["strike_price"] = strike_price
+        if strike_min is not None:
+            params["strike_price.gte"] = strike_min
+        if strike_max is not None:
+            params["strike_price.lte"] = strike_max
         if contract_type:
             params["contract_type"] = contract_type.lower()
 
@@ -282,9 +323,12 @@ class MassiveClient:
         Returns:
             Complete snapshot with pricing, Greeks, IV, and OI
         """
-        # Strip 'O:' prefix if present for URL construction
-        contract = option_contract.replace("O:", "")
-        endpoint = f"/v3/snapshot/options/{underlying_asset.upper()}/{contract}"
+        # Massive answers "Options contract not found" unless the path keeps
+        # the contract's 'O:' prefix (verified live 2026-10-15).
+        contract = option_contract.strip().upper()
+        if not contract.startswith("O:"):
+            contract = f"O:{contract}"
+        endpoint = f"/v3/snapshot/options/{massive_underlying(underlying_asset)}/{contract}"
 
         return await self._get(endpoint)
 
@@ -348,7 +392,10 @@ class MassiveClient:
         params: dict[str, Any] = {"limit": min(limit, 1000)}
 
         if underlying_ticker:
-            params["underlying_ticker"] = underlying_ticker.upper()
+            # The reference list knows index roots only bare ('XSP', not 'I:XSP').
+            params["underlying_ticker"] = (
+                underlying_ticker.strip().upper().removeprefix(_INDEX_PREFIX)
+            )
         if expiration_date:
             params["expiration_date"] = expiration_date
         if contract_type:

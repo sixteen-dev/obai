@@ -163,6 +163,17 @@ reference ships with it.
   file. The response states its scope: off-exchange trades reported to FINRA
   only, not the stock's full volume and not short interest. `limit` is capped
   at 60 trading days.
+- **Index options carry Greeks and IV** (`options_get_chain_snapshot_tool`,
+  `options_get_contract_snapshot_tool`). Massive returns Greeks, IV and the
+  underlying value for SPX, XSP and other index options only under its `I:`
+  form, so the bare root came back with quotes alone. The server now converts
+  index roots itself; the contract list keeps the bare root, which is the only
+  form it answers to.
+- **Single-contract snapshots work again.** The server stripped the `O:` prefix
+  from the contract symbol, so every lookup returned "Options contract not
+  found", for stocks as well as indexes.
+- **Chains can be narrowed by strike.** `strike_min`/`strike_max` on the chain
+  snapshot keep a long chain from being trimmed before the strikes near spot.
 
 ### Security
 
