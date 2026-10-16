@@ -58,6 +58,12 @@ context wherever a date is required.
 - For contract price/volume history: Use `options_get_aggregates_tool`; use the trades/quotes history tools only when tick-level detail is explicitly needed
 - For underlying price and moneyness: `options_get_chain_snapshot_tool` and `options_get_contract_snapshot_tool` may provide underlying price context. Use that when available for approximate ITM/ATM/OTM discussion. For standalone underlying price analysis or broader price-move context, use the `obai-market-data` skill or state that separate market data is required.
 
+## Index Options and Data Gaps
+- Pass index underlyings by their bare root (`SPX`, `XSP`, `NDX`, `RUT`, `VIX`); the server converts them to the provider's index form. SPXW weeklies are listed under `SPX`, not under `SPXW`.
+- The underlying value for an index can be marked delayed while option quotes are current. When you cite index-option Greeks or IV, say the underlying value behind them may be delayed.
+- An empty Greeks object or missing IV means the provider could not compute it at that moment. Report it as unavailable, never as zero.
+- To pick a contract by delta or by distance from spot, narrow the chain with `expiration_date`, `contract_type` and `strike_min`/`strike_max` around spot. A response marked `_truncated` has dropped contracts from the end of the strike list, which may include the one you need.
+
 ## Analytics Tools
 - Use `options_compute_greeks_tool` for hypothetical contracts or when you need Greeks computation without market data lookup. Provide the volatility, strike, expiry, and underlying price directly.
 - Use `options_scenario_analysis_tool` when user asks "what happens if price drops 5%" or wants P&L scenarios across price/vol changes. Returns a grid of P&L values for different spot and volatility shifts.
