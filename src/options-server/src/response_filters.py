@@ -162,8 +162,14 @@ def filter_option_chain_snapshot(data: list[dict[str, Any]]) -> list[dict[str, A
         # Extract underlying asset price context and freshness
         underlying = contract.get("underlying_asset", {})
         if underlying:
-            filtered_contract["underlying_price"] = underlying.get("price")
+            # Stocks report the underlying as `price`, indexes (I:SPX, I:XSP)
+            # as `value`; `timeframe` says whether it is real-time or delayed.
+            price = underlying.get("price")
+            filtered_contract["underlying_price"] = (
+                price if price is not None else underlying.get("value")
+            )
             filtered_contract["underlying_last_updated"] = underlying.get("last_updated")
+            filtered_contract["underlying_timeframe"] = underlying.get("timeframe")
 
         filtered_results.append(filtered_contract)
 

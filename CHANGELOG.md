@@ -172,6 +172,10 @@ reference ships with it.
 - **Single-contract snapshots work again.** The server stripped the `O:` prefix
   from the contract symbol, so every lookup returned "Options contract not
   found", for stocks as well as indexes.
+- **Index options report the underlying price.** Massive sends an index's level
+  as `underlying_asset.value`, not `price`, so `underlying_price` was null on
+  every SPX/XSP contract. Snapshots now also carry `underlying_timeframe`,
+  which shows when the underlying is delayed while option quotes are current.
 - **Chains can be narrowed by strike.** `strike_min`/`strike_max` on the chain
   snapshot keep a long chain from being trimmed before the strikes near spot.
 
