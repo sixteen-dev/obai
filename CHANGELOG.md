@@ -122,6 +122,12 @@ reference ships with it.
 
 ### Fixed
 
+- **The installed `obai` CLI ran untested dependency majors.** `uv tool install`
+  ignores `uv.lock`, so `setup.sh` installed the newest fastmcp (4.x) and mcp
+  (2.x) instead of the locked 3.2.0 and 1.30.0. The install is now constrained
+  to versions exported from the frozen lock. The MCP client also reads a tool's
+  schema as `input_schema` (SDK v2) or `inputSchema` (v1) and fails loudly when
+  neither is present, instead of silently presenting the tool as argument-free.
 - **AutoTrader could size an option contract as one share.** Its risk checker
   sizes share orders, and nothing stopped an option symbol, so a contract's
   100-share exposure would have been understated a hundredfold. `lib/risk.py`
