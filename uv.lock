@@ -19,30 +19,30 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-02T01:29:58.358507445Z"
+exclude-newer = "2026-10-09T22:26:15.543852841Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-setuptools = { timestamp = "2026-10-09T01:29:58.358528675Z", span = "PT0S" }
-pytest = { timestamp = "2026-10-09T01:29:58.358526752Z", span = "PT0S" }
-pillow = { timestamp = "2026-10-09T01:29:58.358526962Z", span = "PT0S" }
-urllib3 = { timestamp = "2026-10-09T01:29:58.358527654Z", span = "PT0S" }
-h2 = { timestamp = "2026-10-09T01:29:58.358525469Z", span = "PT0S" }
-opik = { timestamp = "2026-10-09T01:29:58.358528896Z", span = "PT0S" }
-starlette = { timestamp = "2026-10-09T01:29:58.358528014Z", span = "PT0S" }
-authlib = { timestamp = "2026-10-09T01:29:58.358527433Z", span = "PT0S" }
-fastmcp = { timestamp = "2026-10-09T01:29:58.35852574Z", span = "PT0S" }
-cryptography = { timestamp = "2026-10-09T01:29:58.358525219Z", span = "PT0S" }
-aiohttp = { timestamp = "2026-10-09T01:29:58.358526511Z", span = "PT0S" }
-click = { timestamp = "2026-10-09T01:29:58.358528445Z", span = "PT0S" }
-onnx = { timestamp = "2026-10-09T01:29:58.358524608Z", span = "PT0S" }
-idna = { timestamp = "2026-10-09T01:29:58.358528235Z", span = "PT0S" }
-python-multipart = { timestamp = "2026-10-09T01:29:58.358527203Z", span = "PT0S" }
-anthropic = { timestamp = "2026-10-09T01:29:58.358524848Z", span = "PT0S" }
-pydantic-settings = { timestamp = "2026-10-09T01:29:58.358519278Z", span = "PT0S" }
-pygments = { timestamp = "2026-10-09T01:29:58.358526301Z", span = "PT0S" }
-mcp = { timestamp = "2026-10-09T01:29:58.35852597Z", span = "PT0S" }
-requests = { timestamp = "2026-10-09T01:29:58.358524337Z", span = "PT0S" }
+setuptools = { timestamp = "2026-10-16T22:26:15.543872127Z", span = "PT0S" }
+pytest = { timestamp = "2026-10-16T22:26:15.543869903Z", span = "PT0S" }
+pillow = { timestamp = "2026-10-16T22:26:15.543870114Z", span = "PT0S" }
+urllib3 = { timestamp = "2026-10-16T22:26:15.543870835Z", span = "PT0S" }
+h2 = { timestamp = "2026-10-16T22:26:15.543868571Z", span = "PT0S" }
+opik = { timestamp = "2026-10-16T22:26:15.543872338Z", span = "PT0S" }
+starlette = { timestamp = "2026-10-16T22:26:15.543871436Z", span = "PT0S" }
+authlib = { timestamp = "2026-10-16T22:26:15.543870584Z", span = "PT0S" }
+fastmcp = { timestamp = "2026-10-16T22:26:15.543868831Z", span = "PT0S" }
+cryptography = { timestamp = "2026-10-16T22:26:15.54386833Z", span = "PT0S" }
+aiohttp = { timestamp = "2026-10-16T22:26:15.543869663Z", span = "PT0S" }
+click = { timestamp = "2026-10-16T22:26:15.543871877Z", span = "PT0S" }
+onnx = { timestamp = "2026-10-16T22:26:15.543867699Z", span = "PT0S" }
+idna = { timestamp = "2026-10-16T22:26:15.543871656Z", span = "PT0S" }
+python-multipart = { timestamp = "2026-10-16T22:26:15.543870354Z", span = "PT0S" }
+anthropic = { timestamp = "2026-10-16T22:26:15.543867939Z", span = "PT0S" }
+pydantic-settings = { timestamp = "2026-10-16T22:26:15.54386301Z", span = "PT0S" }
+pygments = { timestamp = "2026-10-16T22:26:15.543869422Z", span = "PT0S" }
+mcp = { timestamp = "2026-10-16T22:26:15.543869062Z", span = "PT0S" }
+requests = { timestamp = "2026-10-16T22:26:15.543867439Z", span = "PT0S" }
 
 [manifest]
 constraints = [
@@ -57,7 +57,7 @@ constraints = [
     { name = "idna", specifier = ">=3.15" },
     { name = "joserfc", specifier = ">=1.6.8" },
     { name = "litellm", specifier = ">=1.88.6" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.30.0" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pygments", specifier = ">=2.20.0" },
@@ -1141,7 +1141,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.28.1"
+version = "1.30.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1159,9 +1159,9 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/77/9450b8f251a13affb6281997d0523c4615f8a8b35d0b21ff30db3a5aac9d/mcp-1.28.1.tar.gz", hash = "sha256:d51e36a5f5644faea4f85ea649bfffa6bc6c26770d42798ad6a3de3d2ba69683", size = 638501, upload-time = "2026-06-26T12:57:29.093Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl", hash = "sha256:2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df", size = 222620, upload-time = "2026-06-26T12:57:27.218Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl", hash = "sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0", size = 234581, upload-time = "2026-09-07T14:34:14.266Z" },
 ]
 
 [[package]]
@@ -1385,7 +1385,7 @@ requires-dist = [{ name = "qdrant-client", specifier = ">=1.13.0" }]
 all = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=1.0.0" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.30.0" },
     { name = "openai", specifier = ">=2.45.0" },
     { name = "pydantic", specifier = ">=2.10.1" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
@@ -1400,7 +1400,7 @@ dev = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=1.0.0" },
     { name = "langdetect", specifier = ">=1.0.9" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.30.0" },
     { name = "mypy", specifier = ">=1.17.1" },
     { name = "openai", specifier = ">=2.45.0" },
     { name = "pdfplumber", specifier = ">=0.11.7" },
@@ -1425,7 +1425,7 @@ dev = [
 test = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=1.0.0" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.30.0" },
     { name = "openai", specifier = ">=2.45.0" },
     { name = "pydantic", specifier = ">=2.10.1" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },

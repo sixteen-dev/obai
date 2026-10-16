@@ -21,7 +21,7 @@ all = [
     # reasoning effort needs 2.45.0 and failed every case before this.
     "openai>=2.45.0",
     "pydantic-settings>=2.14.2",
-    "mcp>=1.28.1",
+    "mcp>=1.30.0",
     "pydantic>=2.10.1",
     "structlog>=25.1.0",
     "tavily-python>=0.7.0",
@@ -84,7 +84,7 @@ constraint-dependencies = [
     "anthropic>=0.87.0",     # CVE-2026-34450, CVE-2026-34452: memory tool sandbox escape
     "cryptography>=50.0.0",  # CVE-2026-34073 + GHSA-p423-j2cm-9vmq + GHSA-537c-gmf6-5ccf + GHSA-g6cj-pr64-35w5: buffer overflow + vulnerable OpenSSL bundled in wheels + PKCS#7 Bleichenbacher oracle
     "h2>=4.4.1",             # GHSA-6hr6-w5qg-qmwg: duplicate Host header enables request smuggling
-    "mcp>=1.28.1",  # GHSA-hvrp-rf83-w775 + GHSA-jpw9-pfvf-9f58 + GHSA-vj7q-gjh5-988w: OAuth token passthrough, DNS-rebinding auth bypass, unauthenticated session hijack
+    "mcp>=1.30.0",  # GHSA-hvrp-rf83-w775 + GHSA-jpw9-pfvf-9f58 + GHSA-vj7q-gjh5-988w + GHSA-84m7-p3x7-pcfv: OAuth token passthrough, DNS-rebinding auth bypass, unauthenticated session hijack, unbounded StreamableHTTP sessions
     "fastmcp>=3.2.0",        # GHSA-m8x7, GHSA-rww4, GHSA-vv7q: injection + SSRF
     "pygments>=2.20.0",      # CVE-2026-4539: ReDoS in GUID matching
     "aiohttp>=3.14.3",       # GHSA-jg22-mg44-37j8 + GHSA-hg6j-4rv6-33pg + GHSA-mfx4-hv73-q22v + GHSA-mq44-7p77-q5h7 + GHSA-cq5v-8q36-5273: untrusted deserialization + cross-origin redirect + WebSocket-upgrade request smuggling + unnegotiated compressed frames + OOB heap read in the C response parser
