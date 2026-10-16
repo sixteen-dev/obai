@@ -198,7 +198,7 @@ def test_show_reports_shipped_defaults_without_a_settings_file(settings_file: Pa
 
 
 def test_show_reports_the_settings_file_as_the_source(settings_file: Path) -> None:
-    """After a setter runs, both fields are attributed to the settings file."""
+    """A setter writes only its own field; the other keeps the shipped default."""
     assert runner.invoke(cli, ["config", "set-model", "gpt-5.6-sol"]).exit_code == 0
 
     result = runner.invoke(cli, ["config", "show"])
@@ -206,7 +206,9 @@ def test_show_reports_the_settings_file_as_the_source(settings_file: Path) -> No
     assert result.exit_code == 0
     assert str(settings_file) in result.output
     assert _row(result.output, "hub model") == "hub model gpt-5.6-sol (from settings file)"
-    assert _row(result.output, "reasoning effort") == "reasoning effort xhigh (from settings file)"
+    assert (
+        _row(result.output, "reasoning effort") == "reasoning effort xhigh (from shipped default)"
+    )
 
 
 def test_show_distinguishes_a_chosen_default_from_the_shipped_default(

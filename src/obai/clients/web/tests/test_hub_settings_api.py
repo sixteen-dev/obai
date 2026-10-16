@@ -9,6 +9,7 @@ the endpoint could lie to the settings modal, so each gets a test.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -75,6 +76,13 @@ class TestGetSettings:
         assert body["saved"] == {"hub_model": "gpt-6.1-sol", "hub_reasoning_effort": "xhigh"}
         assert body["restart_required"] is False
         assert not settings_path.exists()
+
+    def test_reports_the_shipped_default_model(self, settings_path: Path) -> None:
+        """The UI compares against this to offer a newer default."""
+        with _client(settings_path) as client:
+            body = client.get("/api/settings").json()
+
+        assert body["default_hub_model"] == HubSettings().hub_model
 
     def test_choices_come_from_the_validated_literals(self, settings_path: Path) -> None:
         with _client(settings_path) as client:
@@ -211,6 +219,15 @@ class TestPatchSettings:
             body = client.patch("/api/settings", json={"hub_model": "gpt-5.6-sol"}).json()
 
         assert body["saved"] == {"hub_model": "gpt-5.6-sol", "hub_reasoning_effort": "xhigh"}
+
+    def test_partial_patch_does_not_pin_an_unchosen_model(self, settings_path: Path) -> None:
+        """Changing only the effort leaves the model on the shipped default."""
+        settings_path.write_text('{"hub_reasoning_effort": "high"}')
+
+        with _client(settings_path) as client:
+            client.patch("/api/settings", json={"hub_reasoning_effort": "max"})
+
+        assert json.loads(settings_path.read_text()) == {"hub_reasoning_effort": "max"}
 
     def test_saving_the_running_values_requires_no_restart(self, settings_path: Path) -> None:
         with _client(settings_path) as client:

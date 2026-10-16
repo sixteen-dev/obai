@@ -194,7 +194,8 @@ def _hub_settings_payload(store: HubSettingsStore, *, pending_apply: bool) -> di
             query, in which case no restart is needed to apply it.
 
     Returns:
-        Saved values, running values, choices, env overrides, apply flags.
+        Saved values, running values, choices, the shipped default model,
+        env overrides, apply flags.
 
     Raises:
         ValueError: The settings file exists but is not valid hub settings.
@@ -215,6 +216,7 @@ def _hub_settings_payload(store: HubSettingsStore, *, pending_apply: bool) -> di
         "saved": saved,
         "running": running,
         "choices": _hub_choices(),
+        "default_hub_model": HubSettings().hub_model,
         "env_vars": _HUB_ENV_VARS,
         "env_overrides": env_overrides,
         "restart_required": restart_required,
@@ -306,7 +308,9 @@ def _merge_base(store: HubSettingsStore, body: dict[str, Any]) -> dict[str, Any]
     """
     if set(HubSettings.model_fields) <= set(body):
         return {}
-    return store.load().model_dump()
+    # Only what the file holds: filling in defaults here would save them as
+    # if the user had chosen them.
+    return store.load().model_dump(exclude_unset=True)
 
 
 def create_app(hub_settings_store: HubSettingsStore | None = None) -> FastAPI:
