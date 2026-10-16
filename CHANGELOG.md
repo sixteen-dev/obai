@@ -176,6 +176,19 @@ reference ships with it.
   as `underlying_asset.value`, not `price`, so `underlying_price` was null on
   every SPX/XSP contract. Snapshots now also carry `underlying_timeframe`,
   which shows when the underlying is delayed while option quotes are current.
+- **Latest quote and latest trade return data.** Massive's `/v2/last/*`
+  endpoints use one-letter keys (`p`, `P`, `s`, `t` …) and the filters read only
+  full names, so `options_get_latest_quote_tool` and
+  `options_get_latest_trade_tool` returned every field as null. A zero bid is
+  also kept as zero instead of becoming null.
+- **Option quotes carry data-quality flags.** Chain snapshots, contract
+  snapshots and the latest quote flag crossed, locked, zero-ask, no-bid,
+  negative and missing quotes, stale or untimed quotes, a missing or delayed
+  underlying, a midpoint below intrinsic value and missing Greeks. Chains add a
+  `data_quality` summary over every fetched contract. Values are never altered;
+  the options skill says which flags forbid pricing a leg. Quote vocabulary and
+  the 120 s stale bound (`MAX_QUOTE_AGE_SECONDS`) match the options-backtest
+  engine.
 - **Chains can be narrowed by strike.** `strike_min`/`strike_max` on the chain
   snapshot keep a long chain from being trimmed before the strikes near spot.
 
