@@ -122,6 +122,15 @@ reference ships with it.
 
 ### Fixed
 
+- **AutoTrader could size an option contract as one share.** Its risk checker
+  sizes share orders, and nothing stopped an option symbol, so a contract's
+  100-share exposure would have been understated a hundredfold. `lib/risk.py`
+  now rejects OCC option-contract symbols (bare or `O:`-prefixed) before
+  contacting the broker, returning the usual `not_submitted` rejection. The
+  skill docs now state the scope (long US stocks and ETFs, never options, crypto
+  or prediction markets), define a deployed strategy, describe options data as
+  research input with its quality flags, and list OBaI's current capabilities;
+  the stale "89 indicators" claim now reads "over 100".
 - **The backtest-server image no longer builds polars-talib 0.1.5 from source.**
   crates.io yanked `zip 0.6.x`, so the Rust build stopped resolving and the image
   failed to build. The source build also force-reinstalled 0.1.5 over the 0.1.6

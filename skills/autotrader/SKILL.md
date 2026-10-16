@@ -1,9 +1,9 @@
 ---
 name: autotrader
-description: "Set up or run authorized Alpaca paper-trading routines, account/order reconciliation, strategy signal checks, and trading-job reviews using standalone scripts and OBaI MCP skills. Use for Alpaca paper accounts or AutoTrader automation. General financial research belongs to obai-hub; reading this skill does not authorize orders or live trading."
+description: "Set up or run authorized Alpaca paper-trading routines for long US stocks and ETFs: account/order reconciliation, strategy signal checks, order submission and trading-job reviews, using standalone scripts plus OBaI MCP skills for analysis. Never trades options, crypto or prediction markets. General financial research belongs to obai-hub; reading this skill does not authorize orders or live trading."
 ---
 
-# AutoTrader Skill — OpenClaw Execution Guide
+# AutoTrader Skill: OpenClaw Execution Guide
 
 Use **analysis** via `obai-hub` and its direct MCP specialist skills, and **paper execution** via the bundled Python scripts. Follow the user's authorized scope: research alone does not authorize orders or jobs. Once paper automation is authorized with a saved execution plan, routine in-scope paper orders need no repeated approval. The client enforces `paper=True`.
 
@@ -11,13 +11,24 @@ All commands run from this installed skill's directory (`skills/autotrader/` in 
 
 ---
 
+## Scope: Long US Stocks and ETFs Only
+
+AutoTrader buys and sells **shares of US-listed stocks and ETFs, long only, no margin**, in an Alpaca **paper** account. It never submits option contracts, crypto, prediction-market orders or short sales, whatever the analysis suggests. Options, crypto and prediction-market data may inform a stock decision only through checks the saved plan already defines (see the capabilities list in context.md).
+
+The scripts enforce the options part of this rule in code; the rest is yours to keep. `lib/risk.py` rejects any OCC option-contract symbol (root, YYMMDD expiry, C or P, strike times 1000, as in `AAPL261120C00200000`, with or without an `O:` prefix) before contacting the broker, because the risk checker sizes shares and would understate a contract's 100-share exposure. The rejection is the normal risk-rejected JSON with `submission_state: not_submitted` and a reason naming the option contract. Treat it as a plan or signal error; do not re-submit under another symbol format.
+
+A strategy is **deployed** when its frozen JSON is saved in `memory/strategies/`, carries an `accept` or `paper_trade` verdict from `obai-strategy`, has every execution mechanic implemented and tested, and is named in the user's saved execution plan. Only deployed strategies place orders; everything else is research.
+
+---
+
 ## Analysis: Direct MCP
 
 Use your own model as the hub. Read `obai-hub`, then only the specialists required for the task. Call their registered MCP tools; no `obai` binary or OBaI model runtime is required.
 
-- Use `obai-market-data` for verified prices/indicator snapshots, `obai-events-news` for catalysts, and `obai-strategy` for tested strategy JSON. Other domains follow the hub routing table.
+- Use `obai-market-data` for verified prices/indicator snapshots, `obai-events-news` for catalysts, and `obai-strategy` for tested equity strategy JSON. Other domains follow the hub routing table; context.md states what each may do for AutoTrader.
 - Keep the exact tested JSON, verdict, job IDs, data/execution assumptions and warnings together in versioned strategy state. Pending, rejected or `needs_more_research` candidates cannot place orders.
-- Backtest indicator support is broader than the live technical endpoint. A backtest verdict alone does not establish execution compatibility; apply the signal/deployment gate below.
+- The backtest engine supports far more indicators than the live technical endpoint. A backtest verdict alone does not establish execution compatibility; apply the signal/deployment gate below.
+- Options strategies (spreads, covered calls, wheels and the like) belong to `obai-options-backtest`. It validates rules but cannot run a historical backtest in this deployment; it reports `DATA_ENTITLEMENT_MISSING` with missing capability `historical_options_data`. Never test an options idea with an equity backtest, and never deploy one: AutoTrader has no options execution path.
 - Inspect each tool's structured result and errors. Probe MCP connectivity and required tools from the scheduled runtime; a saved server URL is not a health check.
 - Persist state and provenance across isolated jobs. Do not rely on this conversation or reuse stale market/account data.
 
@@ -36,7 +47,7 @@ uv run python -m scripts.market_hours
 {"is_open": true, "timestamp": "...", "next_open": "...", "next_close": "..."}
 ```
 
-Check before any new order. A closed market skips submissions but still permits reconciliation and reporting. Use the clock/calendar for holidays and early closes.
+Check before any new order. A closed market skips submissions but still permits reconciliation and reporting. Use the clock/calendar for holidays and early closes. Both order scripts refuse to submit while the market is closed and return `not_submitted`; `execute_trade --allow-after-hours` queues an order for the next open at an unpredictable price, so use it only when the saved plan calls for it.
 
 ### Get Portfolio (Account + Positions + Risk)
 
@@ -88,7 +99,7 @@ Both submit and close scripts share a process lock and durable intents under `AU
 
 `accepted` is not a fill. Reconcile `open_orders`, `recent_orders`, `filled_qty` and `filled_avg_price` from `get_portfolio` before changing holdings/P&L. Recent history is bounded; recover older orders by client ID when needed. Pending same-symbol orders block further submissions; other pending orders reserve remaining notional conservatively. New exposure requires finite balances/prices and available cash, subject to position, exposure and daily limits. Pure reductions remain eligible after entry limits, with duplicate-order checks intact.
 
-**Risk check is automatic.** If the order violates risk limits, you get:
+**Risk check is automatic.** If the order violates risk limits, or the symbol is an option contract (see Scope), you get:
 ```json
 {"error": "Risk rejected: Position would be 15.2% of equity (max 10%)", "submission_state": "not_submitted", "client_order_id": "..."}
 ```
@@ -96,7 +107,7 @@ Both submit and close scripts share a process lock and durable intents under `AU
 Both order scripts print this payload on **stdout** and exit 1, so a caller
 reading one stream never misses `submission_state`. `not_submitted` means no
 order exists, including when the broker itself refused the order. `unknown`
-means an order may exist and needs reconciliation by its client order ID — it is
+means an order may exist and needs reconciliation by its client order ID; it is
 not a rejection and not an unfilled order.
 
 ### Close a Position
