@@ -122,6 +122,15 @@ reference ships with it.
 
 ### Fixed
 
+- **Direct-MCP skills proxied options strategies with a share backtest.**
+  `obai-strategy` still required backtesting the closest equity approximation,
+  which the internal strategy prompt forbids for options structures, and the
+  direct-MCP hub had no options-backtesting route. A new `obai-options-backtest`
+  skill covers the optional server (port 8012): capabilities, validation, and
+  the unavailable historical backtest quoted with its `code` and
+  `missing_capability`. `obai-strategy` carries the options exception, and
+  `obai-hub` routes to it and registers the server in `mcp-config.json`.
+
 - **The live signal helper rejected every real strategy.** It gated indicator
   parameters on `period`, while the backtest indicator catalog — and therefore
   every frozen strategy JSON — names the lookback `length`. Indicator types are

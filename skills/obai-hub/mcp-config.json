@@ -9,6 +9,7 @@
     "obai-backtest": { "type": "http", "url": "http://localhost:8007/mcp" },
     "obai-research": { "type": "http", "url": "http://localhost:8008/mcp" },
     "obai-prediction-markets": { "type": "http", "url": "http://localhost:8009/mcp" },
-    "obai-crypto": { "type": "http", "url": "http://localhost:8010/mcp" }
+    "obai-crypto": { "type": "http", "url": "http://localhost:8010/mcp" },
+    "obai-options-backtest": { "type": "http", "url": "http://localhost:8012/mcp" }
   }
 }
