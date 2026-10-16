@@ -51,7 +51,13 @@ body {
     min-height: 100vh;
     padding: 14px;
     overflow: hidden;
-    background: var(--bg);
+    /* A faint static glow behind the panels. On flat black the .glass
+       backdrop blur has nothing to refract, so the panels read as flat grey;
+       this gives them depth at the cost of one background paint. */
+    background:
+        radial-gradient(1200px 700px at 12% -10%, rgba(10, 132, 255, 0.10), transparent 60%),
+        radial-gradient(900px 600px at 100% 110%, rgba(122, 206, 151, 0.06), transparent 60%),
+        var(--bg);
     color: var(--text);
     font-family: var(--font-text);
     font-size: 15px;
@@ -1363,5 +1369,25 @@ body {
     #show-tools-btn {
         right: 10px;
         top: 10px;
+    }
+}
+
+::selection {
+    background: rgba(10, 132, 255, 0.35);
+    color: var(--text);
+}
+
+:focus-visible {
+    outline: 2px solid rgba(10, 132, 255, 0.7);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
