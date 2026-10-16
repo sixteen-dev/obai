@@ -933,6 +933,17 @@ def test_the_price_allowance_is_added_once_to_the_sized_debit() -> None:
     assert (outcome.order.packages, outcome.order.limit_usd) == (2, usd("-179.50"))
 
 
+@pytest.mark.parametrize(("cash", "fits"), [("4140.00", False), ("4640.00", True)])
+def test_the_risk_test_prices_the_package_at_its_limit(cash: str, fits: bool) -> None:
+    # Any fill up to the limit D + allowance must stay inside the cap, so the test adds the
+    # allowance: risk(1) = 414 + 50 = 464 <= 0.10 x mid NLV, not 414 at decision naturals.
+    validated = _fixed(1, execution={"price_allowance_usd": "50.00"})
+
+    outcome = _select(validated, dataset(*g01_pins()), cash=cash)
+
+    assert (outcome.order is not None) is fits
+
+
 def test_risk_budget_without_a_fitting_size_gives_no_package() -> None:
     outcome = _select(_risk_budget(10), dataset(*g01_pins()), cash="4000.00")  # 414 > 400
 

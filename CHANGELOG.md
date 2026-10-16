@@ -122,6 +122,12 @@ reference ships with it.
 
 ### Fixed
 
+- **Options-backtest fills could exceed the campaign risk cap.** Sizing priced
+  risk at decision naturals, but the order's limit adds `price_allowance_usd`
+  and the fill rechecked only funding, so a fill inside the limit could carry up
+  to the full allowance of extra risk while the run reported valid. Sizing now
+  prices risk at the order's limit (ADR 0002 §6), so no accepted fill exceeds
+  `max_campaign_risk_fraction`.
 - **Direct-MCP skills proxied options strategies with a share backtest.**
   `obai-strategy` still required backtesting the closest equity approximation,
   which the internal strategy prompt forbids for options structures, and the
