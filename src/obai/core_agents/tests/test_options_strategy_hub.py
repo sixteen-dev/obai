@@ -967,5 +967,27 @@ class TestOptionsStrategyRoutingFacts:
         assert "`options_strategy_analysis`" in row
         assert "`options_analysis`" not in row
 
+    def test_direct_mcp_strategy_skill_never_proxies_options_structures(self) -> None:
+        skill = (_CORE_AGENTS_DIR.parents[2] / "skills/obai-strategy/SKILL.md").read_text()
+
+        assert "Exception for options structures" in skill
+        assert "never proxied with a share strategy" in skill
+        assert "`obai-options-backtest`" in skill
+
+    def test_direct_mcp_hub_routes_options_strategies_to_their_skill(self) -> None:
+        skills = _CORE_AGENTS_DIR.parents[2] / "skills"
+        hub = (skills / "obai-hub/SKILL.md").read_text()
+        config = (skills / "obai-hub/mcp-config.json").read_text()
+        skill = (skills / "obai-options-backtest/SKILL.md").read_text()
+
+        assert "| `obai-options-backtest` | obai-options-backtest (8012" in hub
+        assert json.loads(config)["mcpServers"]["obai-options-backtest"] == {
+            "type": "http",
+            "url": "http://localhost:8012/mcp",
+        }
+        assert "`options_backtest_capabilities_tool`" in skill
+        assert "`missing_capability`" in skill
+        assert "not enabled in this installation" in skill
+
     def test_stock_synthesis_skill_excludes_the_new_terminal(self) -> None:
         assert "terminal options-strategy" in _skill_description("obai-stock-synthesis")

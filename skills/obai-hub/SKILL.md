@@ -56,6 +56,7 @@ requires.
 | Stock screening, company-name → ticker, symbol validation | `obai-screening` | obai-screening (8005) |
 | Portfolio positions, exposure, risk metrics, allocation, ETF holdings, treasury rates | `obai-portfolio` | obai-portfolio (8006) |
 | Equity strategy design, backtesting, optimization, walk-forward | `obai-strategy` | obai-backtest (8007) |
+| Options strategy backtests, options strategy validation, options-backtest capability questions | `obai-options-backtest` | obai-options-backtest (8012, optional) |
 | Deep qualitative business/management/competitive/thematic research | `obai-research` | obai-research (8008) |
 | Polymarket, event odds, YES/NO pricing, trade memos, wallet/trader analysis, prediction-market backtests | `obai-prediction-markets` | obai-prediction-markets (8009) |
 | Coinbase spot crypto data, crypto OHLCV/order books, crypto strategy backtests, paper-ledger artifacts | `obai-crypto` | obai-crypto (8010) |
@@ -65,6 +66,11 @@ Boundary calls that are easy to get wrong:
 - Prediction-market backtests go to `obai-prediction-markets`, never
   `obai-strategy` — the equity engine does not handle binary event markets.
 - Crypto spot backtests go to `obai-crypto`, not `obai-strategy`.
+- Options strategy backtests and validation go to `obai-options-backtest`,
+  never `obai-strategy`: an options structure is never proxied with a share
+  strategy. Historical options backtesting is unavailable; report the
+  service's typed reason, never a substitute figure. Current chains, Greeks
+  and scenario math stay with `obai-options`.
 - Recent headlines/earnings results → `obai-events-news`, not `obai-research`.
   Research is for qualitative synthesis, not current data.
 - Trades by members of Congress (STOCK Act disclosures) → `obai-events-news`;

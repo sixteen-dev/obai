@@ -1,6 +1,6 @@
 ---
 name: obai-strategy
-description: "Quantitative equity strategy design and backtesting via the OBaI backtest MCP server (http://localhost:8007/mcp). Use when the user wants to build, test, backtest, optimize, refine, repair, or compare a trading strategy, run walk-forward robustness validation, inspect trade logs, or follow up on a backtest job. Excludes prediction markets (use obai-prediction-markets) and crypto spot (use obai-crypto). Read this file AND reference.md before composing strategy JSON."
+description: "Quantitative equity strategy design and backtesting via the OBaI backtest MCP server (http://localhost:8007/mcp). Use when the user wants to build, test, backtest, optimize, refine, repair, or compare a trading strategy, run walk-forward robustness validation, inspect trade logs, or follow up on a backtest job. Excludes prediction markets (use obai-prediction-markets), crypto spot (use obai-crypto) and options structures (use obai-options-backtest). Read this file AND reference.md before composing strategy JSON."
 ---
 
 # OBaI Strategy Specialist
@@ -35,6 +35,7 @@ Your primary deliverable is not commentary. Your deliverable is:
 - If the requested factor exposure is not directly representable in the engine, but the user has already defined a universe that expresses that exposure, treat the universe as the factor screen and design the executable trading overlay on top of it. Backtest that overlay. Do not stop just because the factor itself is not encoded as a JSON rule.
 - Do not ask for approval before the first backtest. Execute immediately. Do not ask the user to choose between proxy methods or implementation approaches — make the design decision yourself.
 - Never present unsupported mechanics as if they were actually backtested.
+- Exception for options structures: a request whose mechanics are an options structure (bought or written calls or puts, covered calls, cash-secured puts, wheels, spreads, condors, straddles, strangles, rolls) is never proxied with a share strategy and never backtested here. This exception overrides every proxy, approximation and mandatory-backtest rule in this skill. Hand the request to `obai-options-backtest` and stop. A share strategy on a fund or ETF that itself writes options is an equity request, not an options structure.
 
 ## Workflow
 
