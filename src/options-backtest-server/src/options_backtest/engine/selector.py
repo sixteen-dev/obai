@@ -257,6 +257,7 @@ class _Sizer:
     participation: Fraction
     risk_limit: Decimal
     provision_rate: Usd
+    price_allowance: Usd
     at_ns: int
     ctx: SelectionContext
 
@@ -395,9 +396,11 @@ def select(strategy: ValidatedStrategy, view: AsOfView, ctx: SelectionContext) -
        Reaching ``MAX_PACKAGE_EVALUATIONS`` stops with no order, reason
        SELECTION_BUDGET_EXCEEDED. No eligible package: NO_PACKAGE.
     6. Sizing at decision naturals: ``n`` fits when ``-expiry_bounds(((terms_i, ratio_i·n)),
-       0, -D(n) - fees(n)).min_value + Σ|ratio_i|·n·max(trade, cash_settlement rate) <=
-       max_campaign_risk_fraction · mid NLV`` (exact products; mid NLV of the flat state is
-       CASH + ΣRECEIVABLE + ΣPAYABLE), the ``book_option_trade`` preview at DEC keeps
+       0, -(D(n) + price_allowance_usd) - fees(n)).min_value
+       + Σ|ratio_i|·n·max(trade, cash_settlement rate) <= max_campaign_risk_fraction · mid NLV``
+       (risk at the order's limit, so no accepted fill exceeds the cap; exact products; mid
+       NLV of the flat state is CASH + ΣRECEIVABLE + ΣPAYABLE), the ``book_option_trade``
+       preview at DEC keeps
        ``funding_headroom >= 0``, and ``n <= floor(min_i(side size_i/|ratio_i|) ·
        participation_fraction)`` at the DEC quotes. ``fixed_contracts``: ``contracts`` or
        nothing; ``risk_budget``: the largest fitting ``n`` from ``min(max_contracts,
@@ -1025,6 +1028,7 @@ def _sizer(spec: StrategySpec, view: AsOfView, ctx: SelectionContext) -> _Sizer:
         participation=Fraction(execution.participation_fraction),
         risk_limit=risk_limit,
         provision_rate=max(schedule.trade_per_contract, schedule.cash_settlement_per_contract),
+        price_allowance=execution.price_allowance_usd,
         at_ns=view.at_ns,
         ctx=ctx,
     )
@@ -1065,7 +1069,9 @@ def _fits(
         for leg in legs
     )
     fees = trade_fees(ctx.schedule, fills)
-    entry_cash = -debit - sum((line.amount for line in fees), start=ZERO_USD)
+    # Risk is priced at the order's limit, the worst fill it accepts, so no fill exceeds the cap.
+    worst_debit = debit + sizer.price_allowance
+    entry_cash = -worst_debit - sum((line.amount for line in fees), start=ZERO_USD)
     holdings = tuple((leg.terms, leg.ratio * packages) for leg in legs)
     contracts = sum(abs(leg.ratio) * packages for leg in legs)
     try:
