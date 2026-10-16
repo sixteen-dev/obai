@@ -18,8 +18,9 @@ use the CLI skill when only the `obai` binary is available.
 
 ## Connecting to the servers
 
-All ten servers can run via Docker Compose (`docker compose up -d` from
-the repo root) using FastMCP Streamable HTTP. The bundled URLs assume the
+The ten default servers run via Docker Compose (`docker compose up -d` from
+the repo root) using FastMCP Streamable HTTP; the optional options-backtest
+server (8012) also needs `--profile options-backtest`. The bundled URLs assume the
 agent and exposed server ports share a host; resolve reachable URLs for
 containers or remote agents. For installation or scheduled trading, read
 [setup.md](setup.md), including provider credentials and runtime checks.

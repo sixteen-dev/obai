@@ -9,6 +9,7 @@ Risk limits loaded from environment variables with sensible defaults.
 
 import math
 import os
+import re
 from dataclasses import dataclass
 
 from .alpaca_client import MAX_ORDER_PAGE, AlpacaClient
@@ -35,6 +36,8 @@ _DEFAULT_MAX_POSITIONS = 10
 _TERMINAL_STATUSES = frozenset({"filled", "canceled", "expired", "rejected", "replaced"})
 _POSITION_SIDES = frozenset({"long", "short"})
 _ORDER_SIDES = frozenset({"buy", "sell"})
+# OCC option symbol (root, YYMMDD, C/P, strike x 1000), bare or with a vendor "O:" prefix.
+_OPTION_CONTRACT = re.compile(r"(?:O:)?[A-Z]{1,6}\d{6}[CP]\d{8}", re.IGNORECASE)
 
 
 def _env_float(key: str, default: float) -> float:
@@ -153,7 +156,7 @@ class RiskChecker:
             AlpacaClientError: If Alpaca API calls fail.
 
         """
-        reason = _validate_qty(qty) or _validate_price(limit_price)
+        reason = _validate_symbol(symbol) or _validate_qty(qty) or _validate_price(limit_price)
         if reason:
             return _reject(symbol, side, qty, reason)
 
@@ -285,6 +288,16 @@ class _OrderSizing:
         self.new_position_notional = new_position_notional
         self.added_exposure = added_exposure
         self.rejection_reason = rejection_reason
+
+
+def _validate_symbol(symbol: str) -> str | None:
+    """Return why ``symbol`` is not a stock or ETF this checker can size, or None."""
+    if _OPTION_CONTRACT.fullmatch(symbol.strip()):
+        return (
+            f"{symbol} is an option contract; AutoTrader sizes shares only and would "
+            "understate a contract's 100-share exposure"
+        )
+    return None
 
 
 def _reject(symbol: str, side: str, qty: float, reason: str) -> RiskResult:
