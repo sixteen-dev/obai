@@ -245,14 +245,15 @@ async def events_news_get_earnings_tool(
 ) -> dict[str, Any]:
     """Get earnings history and upcoming earnings for a specific ticker.
 
-    Returns earnings sorted with reported results (actual EPS/revenue
-    present) before estimated/upcoming entries, each group ordered by
-    date descending (most recent first). Use this to find past and
-    future earnings announcements for a stock.
+    Returns reported results (actual EPS/revenue present), most recent
+    first, followed by the next scheduled report (estimates only, no
+    actuals) when FMP lists one. Use this to find past and future
+    earnings announcements for a stock.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
-        limit: Maximum number of earnings records to return (default: 5)
+        limit: Maximum number of reported records to return (default: 5);
+            the next scheduled report is added on top
 
     Returns:
         List of earnings records with dates, EPS estimates/actual, and revenue
