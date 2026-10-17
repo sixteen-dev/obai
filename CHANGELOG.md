@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The fundamentals, market-data and screening servers reported not ready on
+  every install because FMP retired `is-the-market-open` (404 on stable, 403
+  on legacy v3). Their readiness probe now calls stable
+  `exchange-market-hours?exchange=NASDAQ`. Tools were unaffected, but agents
+  following the hub skill's health check refused these servers, `obai status`
+  showed them down, and the E2E gate preflight could not start.
+
 ## [1.7.0] - 2026-10-10
 
 Minor: AutoTrader becomes safe to schedule, the GPT-6 model family becomes the
