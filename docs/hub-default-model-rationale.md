@@ -1,6 +1,10 @@
-# Why the Hub defaults to `gpt-5.6-terra` at `max` effort
+# Why the Hub defaulted to `gpt-5.6-terra` at `max` effort
 
-OBaI ships the Central Hub on `gpt-5.6-terra` at `max` reasoning effort. This
+> **Superseded 2026-09-25.** The shipped Hub default is now `gpt-6.1-sol` at
+> `xhigh` effort. That pairing has not been through this benchmark; this note
+> stays as the record of the gpt-5.6 comparison.
+
+OBaI shipped the Central Hub on `gpt-5.6-terra` at `max` reasoning effort. This
 note records how that default was chosen, what the evidence actually showed,
 and what is still open.
 

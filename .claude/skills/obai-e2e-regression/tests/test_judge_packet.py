@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
-from judge_packet import PROVIDER_FAILURE_RE, REFUSAL_RE, _skill_name_from_call, judge_packet
+import yaml
+from judge_packet import (
+    FINANCIAL_SPECIALIST_TOOLS,
+    PROVIDER_FAILURE_RE,
+    REFUSAL_RE,
+    _skill_name_from_call,
+    judge_packet,
+)
 
 
 @pytest.mark.parametrize(
@@ -2370,3 +2380,292 @@ class TestUnrecognisedDegradedOutcome:
         result = judge_packet(case, _packet("The two legs settle on different dates."))
 
         assert result.verdict == "needs_semantic_review"
+
+
+# ---------------------------------------------------------------------------
+# Options strategy route (ADR 0003 §4.3, §4.4)
+# ---------------------------------------------------------------------------
+
+_CASES_PATH = Path(__file__).resolve().parents[1] / "cases" / "cases.yaml"
+_OPTSTRAT_CASE_IDS = (
+    "CORE-OPTSTRAT-UNAVAILABLE",
+    "CORE-OPTSTRAT-VALIDATE-ERROR",
+    "CORE-OPTSTRAT-CAPABILITY",
+)
+
+
+def _canonical_case(case_id: str) -> dict:
+    """Load one case from the canonical paid-gate file.
+
+    Args:
+        case_id: Identifier of the case to load.
+
+    Returns:
+        The case mapping exactly as the runner reads it.
+    """
+    cases = yaml.safe_load(_CASES_PATH.read_text(encoding="utf-8"))["test_cases"]
+    matches = [case for case in cases if case.get("id") == case_id]
+    assert len(matches) == 1, f"cases.yaml must define {case_id} exactly once"
+    return matches[0]
+
+
+def _optstrat_answer(status: str, explanation: str) -> str:
+    """Render an answer in the short form prompts/options_strategy.md requires.
+
+    Args:
+        status: The short-form status word.
+        explanation: Case-specific explanation, before the unavailability issue.
+
+    Returns:
+        The specialist's answer as the hub relays it.
+    """
+    return (
+        f"**Status**: {status}\n"
+        "**Reference**: strategy schema urn:obai:options:strategy:1 version 1; "
+        "engine 0.1.0; product rules cboe_template_unverified_v1\n"
+        "**Supported next action**: validate a strategy document on a supported root.\n"
+        f"**Explanation**: {explanation} The historical backtest is unavailable: "
+        "DATA_ENTITLEMENT_MISSING, missing_capability historical_options_data."
+    )
+
+
+def _service_span(tool: str, payload: dict[str, object]) -> dict[str, object]:
+    """Build a nested options-backtest tool span in the real output envelope.
+
+    Args:
+        tool: The MCP tool name the specialist called.
+        payload: The tool's own result.
+
+    Returns:
+        The span as the trace records it.
+    """
+    return {"name": tool, "output": {"output": json.dumps(payload)}}
+
+
+def _optstrat_honest(case_id: str) -> tuple[str, list[dict[str, object]]]:
+    """Return an honest answer for one options-strategy case and its service spans.
+
+    Args:
+        case_id: One of the three CORE-OPTSTRAT case identifiers.
+
+    Returns:
+        The answer text and the nested service spans that back it.
+    """
+    capabilities = _service_span(
+        "options_backtest_capabilities_tool",
+        {"schema_version": 1, "historical_backtest": {"available": False}},
+    )
+    if case_id == "CORE-OPTSTRAT-CAPABILITY":
+        explanation = (
+            "Supported option roots: SPXW (underlying SPX) and XSP (underlying XSP). "
+            "A wheel is rejected in R1 with UNSUPPORTED_STRUCTURE."
+        )
+        return _optstrat_answer("capability", explanation), [capabilities]
+    if case_id == "CORE-OPTSTRAT-VALIDATE-ERROR":
+        message = "SPX options are AM-settled; R1 supports only the PM-settled roots SPXW and XSP"
+        issue = {
+            "code": "UNSUPPORTED_PRODUCT",
+            "message": message,
+            "json_pointer": "/product/allowed_option_roots/0",
+        }
+        rejection = {
+            "isError": True,
+            "valid": False,
+            "error": "strategy rejected: 1 issue(s)",
+            "issues": [issue],
+        }
+        explanation = (
+            f"UNSUPPORTED_PRODUCT at /product/allowed_option_roots/0: {message}. "
+            "The document carried underlying SPX with option root SPX."
+        )
+        validate = _service_span("options_backtest_validate_strategy_tool", rejection)
+        return _optstrat_answer("rejected", explanation), [capabilities, validate]
+    validated = {"valid": True, "backtest_available": False}
+    validate = _service_span("options_backtest_validate_strategy_tool", validated)
+    explanation = "The document validated for underlying XSP with option root XSP."
+    return _optstrat_answer("unavailable", explanation), [capabilities, validate]
+
+
+def _optstrat_packet(response: str, specialist_spans: list[dict[str, object]]) -> dict:
+    """Build a packet that loaded the routing skill and then made the given calls.
+
+    Args:
+        response: The final answer the CLI returned.
+        specialist_spans: Outer specialist and nested tool spans, in call order.
+
+    Returns:
+        A packet with authoritative raw spans.
+    """
+    packet = _packet(response, tools=[])
+    packet["trace"]["spans"] = [
+        {
+            "name": "load_skill",
+            "input": {"skill_name": "obai-options-strategy-routing"},
+            "output": {"status": "loaded"},
+        },
+        *specialist_spans,
+    ]
+    return packet
+
+
+def test_options_strategy_analysis_is_a_financial_specialist() -> None:
+    """Without it the async specialist check, error classification and ceiling skip the route."""
+    assert "options_strategy_analysis" in FINANCIAL_SPECIALIST_TOOLS
+
+
+def test_options_strategy_calls_count_against_the_specialist_ceiling() -> None:
+    case = _case(
+        expected_tools=["options_strategy_analysis"],
+        expected_skills=[],
+        cost={"max_specialist_calls": 1},
+    )
+    packet = _packet()
+    packet["trace"]["spans"] = [
+        {"name": "options_strategy_analysis", "output": "Status: validated"},
+        {"name": "options_strategy_analysis", "output": "Status: validated"},
+    ]
+
+    result = judge_packet(case, packet)
+
+    assert result.verdict == "fail_product"
+    assert any("specialist call ceiling exceeded" in f for f in result.checks_failed)
+
+
+@pytest.mark.parametrize("case_id", _OPTSTRAT_CASE_IDS)
+def test_options_strategy_case_accepts_the_honest_short_form(case_id: str) -> None:
+    """An honest answer is the declared outcome; only the manual review remains."""
+    case = _canonical_case(case_id)
+    response, service_spans = _optstrat_honest(case_id)
+    outer = {"name": "options_strategy_analysis", "output": response}
+
+    result = judge_packet(case, _optstrat_packet(response, [outer, *service_spans]))
+
+    declared = {case["expected_outcome"], *case.get("acceptable_outcomes", [])}
+    assert result.observed_outcome in declared
+    assert result.checks_failed == []
+    assert result.missing_evidence == []
+    assert result.verdict == "needs_semantic_review"
+    assert all(entry.startswith("manual_assertions[") for entry in result.unexecuted_assertions)
+
+
+@pytest.mark.parametrize("case_id", _OPTSTRAT_CASE_IDS)
+def test_options_strategy_case_fails_an_invented_performance_figure(case_id: str) -> None:
+    """A performance number beside otherwise honest tokens still hard-fails."""
+    case = _canonical_case(case_id)
+    response, service_spans = _optstrat_honest(case_id)
+    invented = f"{response}\nBacktest summary: total return +41.3%, CAGR 5.9%."
+    outer = {"name": "options_strategy_analysis", "output": invented}
+
+    result = judge_packet(case, _optstrat_packet(invented, [outer, *service_spans]))
+
+    assert result.verdict == "fail_product"
+    assert any("forbidden_text present" in failure for failure in result.checks_failed)
+
+
+@pytest.mark.parametrize("case_id", _OPTSTRAT_CASE_IDS)
+def test_options_strategy_case_fails_a_proxy_route(case_id: str) -> None:
+    """The equity engine or current-market options answering instead is a hard failure."""
+    case = _canonical_case(case_id)
+    response, _ = _optstrat_honest(case_id)
+    proxies = [
+        {"name": "strategy_analysis", "output": "proxy equity backtest"},
+        {"name": "options_analysis", "output": "current-chain analysis"},
+    ]
+
+    result = judge_packet(case, _optstrat_packet(response, proxies))
+
+    assert result.verdict == "fail_product"
+    assert "forbidden tool observed: strategy_analysis" in result.checks_failed
+    assert "forbidden tool observed: options_analysis" in result.checks_failed
+
+
+@pytest.mark.parametrize("case_id", ["CORE-OPTSTRAT-UNAVAILABLE", "CORE-OPTSTRAT-VALIDATE-ERROR"])
+def test_options_strategy_case_requires_capabilities_before_validation(case_id: str) -> None:
+    """The schema body and the typed reason come from capabilities (ADR 0003 §8, L3)."""
+    case = _canonical_case(case_id)
+    response, service_spans = _optstrat_honest(case_id)
+    skipped = [s for s in service_spans if s["name"] != "options_backtest_capabilities_tool"]
+    outer = {"name": "options_strategy_analysis", "output": response}
+
+    result = judge_packet(case, _optstrat_packet(response, [outer, *skipped]))
+
+    assert result.verdict == "fail_product"
+    assert any("expected sequence not observed" in f for f in result.checks_failed)
+
+
+_MIXED_CASE_ID = "CORE-OPTSTRAT-MIXED"
+_MIXED_CONTEXT = (
+    "**Current market context (dated, from the hub)**: As of 2026-09-25 16:00 ET, the XSP put "
+    "nearest the requested delta was bid 1.10 and ask 1.20; the vertical's maximum profit on "
+    "that quote is $110 per contract."
+)
+
+
+def _mixed_spans(response: str) -> list[dict[str, object]]:
+    """Return the current-evidence call, then the terminal route and its service calls.
+
+    Args:
+        response: The specialist's answer.
+
+    Returns:
+        The spans in the order the routing row of ADR 0003 §3 calls them.
+    """
+    issue = {
+        "code": "SCHEMA_VIOLATION",
+        "message": "Field required",
+        "json_pointer": "/account/max_campaign_risk_fraction",
+    }
+    rejection = {"isError": True, "valid": False, "issues": [issue]}
+    return [
+        {"name": "options_analysis", "output": "XSP chain snapshot as of 2026-09-25."},
+        {"name": "options_strategy_analysis", "output": response},
+        _service_span("options_backtest_capabilities_tool", {"schema_version": 1}),
+        _service_span("options_backtest_validate_strategy_tool", rejection),
+    ]
+
+
+def _mixed_answer() -> str:
+    """Return an honest answer: the rejection, the typed reason, the dated context."""
+    explanation = (
+        "SCHEMA_VIOLATION at /account/max_campaign_risk_fraction: Field required; supply it. "
+        "The document carried underlying XSP with option root XSP."
+    )
+    return f"{_optstrat_answer('rejected', explanation)}\n{_MIXED_CONTEXT}"
+
+
+def test_mixed_options_case_accepts_the_dated_context_section() -> None:
+    """Payoff math on a current contract may name a maximum profit (ADR 0003 §8, M5)."""
+    case = _canonical_case(_MIXED_CASE_ID)
+    response = _mixed_answer()
+
+    result = judge_packet(case, _optstrat_packet(response, _mixed_spans(response)))
+
+    declared = {case["expected_outcome"], *case.get("acceptable_outcomes", [])}
+    assert result.observed_outcome in declared
+    assert result.checks_failed == []
+    assert result.missing_evidence == []
+    assert result.verdict == "needs_semantic_review"
+
+
+def test_mixed_options_case_fails_a_historical_performance_figure() -> None:
+    case = _canonical_case(_MIXED_CASE_ID)
+    invented = f"{_mixed_answer()}\nBacktest summary: total return +41.3%, CAGR 5.9%."
+
+    result = judge_packet(case, _optstrat_packet(invented, _mixed_spans(invented)))
+
+    assert result.verdict == "fail_product"
+    assert any("forbidden_text present" in failure for failure in result.checks_failed)
+
+
+def test_mixed_options_case_fails_the_equity_proxy_and_a_test_before_the_evidence() -> None:
+    """Current evidence must exist before the terminal test that relays it."""
+    case = _canonical_case(_MIXED_CASE_ID)
+    response = _mixed_answer()
+    current, terminal, *service = _mixed_spans(response)
+    proxy = {"name": "strategy_analysis", "output": "proxy equity backtest"}
+
+    result = judge_packet(case, _optstrat_packet(response, [terminal, *service, current, proxy]))
+
+    assert result.verdict == "fail_product"
+    assert "forbidden tool observed: strategy_analysis" in result.checks_failed
+    assert any("expected sequence not observed" in f for f in result.checks_failed)

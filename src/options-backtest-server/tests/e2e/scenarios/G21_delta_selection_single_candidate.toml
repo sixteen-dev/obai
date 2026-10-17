@@ -1,0 +1,193 @@
+# G21: delta strike selection (§8 items 3-5). Two expiries tie on |dte - target| = 1; each has
+# exactly one put whose spot delta, from the IV of its pinned mid, lies within 0.005 of -0.30;
+# the package score's next key, Σerror, picks the 2024-03-15 package. The candidates' deltas are
+# checked against QuantLib in tests/reference/test_g21_deltas.py.
+id = "G21"
+proves = ["§9.2"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical_delta.json" }
+
+[market]
+weekly_dtes = [9, 11]   # 2024-03-13 (Wednesday) and 2024-03-15 (Friday)
+
+# 2024-03-04 DEC: the candidates around delta -0.30 on each expiry, and the long legs.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-13:P:4925"
+session = "2024-03-04"
+slots = ["DEC"]
+bid = "26.10"
+ask = "26.30"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-13:P:4930"
+session = "2024-03-04"
+slots = ["DEC"]
+bid = "27.60"
+ask = "27.80"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-13:P:4935"
+session = "2024-03-04"
+slots = ["DEC"]
+bid = "29.20"
+ask = "29.40"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4915"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "28.20"
+ask = "28.40"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4920"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "29.70"
+ask = "29.90"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4925"
+session = "2024-03-04"
+slots = ["DEC"]
+bid = "31.30"
+ask = "31.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05: the TIME_EXIT close (max_holding_sessions 2).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4920"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "28.00"
+ask = "28.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4915"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "27.10"
+ask = "27.30"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10016.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1, sigma 0.18).
+short_put: delta -0.30, tolerance 0.005, target_dte 10 in [9, 11]; long_put: short - 5;
+max_holding_sessions 2; take_profit and stop_loss null; weekly Mondays.
+
+2024-03-04 DEC 15:45 EST (20:45 UTC): expiries 2024-03-13 (dte 9) and 2024-03-15 (dte 11), both
+  in [9, 11], both |dte - 10| = 1: sorted by expires_at, 03-13 first; 03-15 is not pruned (its
+  expiry_error 1 does not exceed the best score's 1). t (ACT/365F, to the 16:00 EDT = 20:00 UTC
+  expiry close): 03-13 8.96875 days, 03-15 10.96875 days. Spot 5000.00, DF 1. F = parity
+  forward of the five nearest strikes (4990 ... 5010, generated): each quoted mid lies within
+  half a tick (0.025) of its Black-76 mid, so F is within one tick of 5000 (4999.95 ... 5000.05).
+  Error = |Decimal(spot_delta(F, S, K, t, DF, iv(mid))) - (-0.30)|, over F in [4999.95, 5000.05]:
+  03-13: P4925 mid 26.20 -> delta -0.2913, error ~0.0087 (out); P4930 mid 27.70 -> -0.3036,
+    error 0.0036 (in, the only one); P4935 mid 29.30 -> -0.3163, error ~0.016 (out).
+  03-15: P4915 mid 28.30 -> -0.2860, error ~0.014 (out); P4920 mid 29.80 -> -0.2972, error 0.0029
+    (in, the only one); P4925 mid 31.40 -> -0.3086, error ~0.0086 (out).
+  Unpinned strikes: generated deltas (sigma 0.18) are at least 0.02 from -0.30 on either expiry.
+  Packages: 03-13 (P4930 short, P4925 long), score (1, 0.0036, ...); 03-15 (P4920 short, P4915
+  long), score (1, 0.0029, ...) -> 03-15 wins on Σerror (margin > 0.0006 at every F).
+  D(1) = 100*(-29.70) + 100*28.40 = -130; Q*D = 130 > 0; fees 2; spreads 0.20.
+  risk = -(-500 + 128) + 2 = 374 <= 1000; preview headroom 10000 - 2 - 502 = 9496; capacity 5.
+  limit -130.
+2024-03-04 F1 (pins): fill at D = -130, fees 2; basis 130.
+Account 2024-03-04: cash 10000; receivable 130; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 OPEN: cash = 10000 + 130 - 2 = 10128.
+2024-03-05 DEC: held session 2 >= max_holding_sessions 2 -> TIME_EXIT; closing sides usable
+  (buy P4920 at ask 28.20, sell P4915 at bid 27.10) -> EXIT; close D = 2820 - 2710 = 110;
+  limit 110.
+2024-03-05 F1 (pins): fill at D = 110, fees 2; post-fill headroom = 10128 - 112 = 10016.
+Account 2024-03-05: cash 10128; receivable 0; payable 112; encumbrance 0; headroom 10016;
+  mid_nlv 10016.
+2024-03-06 (final; flat, unscheduled): OPEN cash = 10128 - 112 = 10016; final_equity 10016.
+Campaign c1: REALIZED_PNL[P4920] = -(2970 - 2820) = -150, [P4915] = +(2840 - 2710) = +130;
+  realized_pnl = 20; fees 4; net 16 = 10016 - 10000; closed by time_exit.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only.
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4920", -1, "29.70"], ["SPXW:2024-03-15:P:4915", 1, "28.40"]]
+net_debit = "-130.00"
+fees = "2.00"
+limit = "-130.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4920", 1, "28.20"], ["SPXW:2024-03-15:P:4915", -1, "27.10"]]
+net_debit = "110.00"
+fees = "2.00"
+limit = "110.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "130.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10128.00"
+receivable = "0.00"
+payable = "112.00"
+encumbrance = "0.00"
+headroom = "10016.00"
+mid_nlv = "10016.00"
+
+[expected.account."2024-03-06"]
+cash = "10016.00"
+payable = "0.00"
+headroom = "10016.00"
+mid_nlv = "10016.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "130.00"
+realized_pnl = "20.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"

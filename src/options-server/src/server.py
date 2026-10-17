@@ -169,6 +169,8 @@ async def options_get_chain_snapshot_tool(
     strike_price: float | None = None,
     contract_type: str | None = None,
     limit: int = 50,
+    strike_min: float | None = None,
+    strike_max: float | None = None,
 ) -> dict[str, Any]:
     """Get real-time snapshot of option chain for an underlying asset.
 
@@ -176,11 +178,15 @@ async def options_get_chain_snapshot_tool(
     price context for all matching option contracts.
 
     Args:
-        underlying_asset: Stock ticker symbol (e.g., 'AAPL')
+        underlying_asset: Ticker (e.g., 'AAPL'); index roots such as
+            'XSP' or 'SPX' are accepted bare
         expiration_date: Filter by expiration date (YYYY-MM-DD)
         strike_price: Filter by exact strike price
         contract_type: Filter by 'call' or 'put'
         limit: Maximum results (max 250)
+        strike_min: Lowest strike to include; with strike_max, narrows a
+            chain to the strikes around spot so a long list is not trimmed
+        strike_max: Highest strike to include
 
     Returns:
         Option chain snapshot with contracts and metadata
@@ -192,6 +198,8 @@ async def options_get_chain_snapshot_tool(
             strike_price=strike_price,
             contract_type=contract_type,
             limit=limit,
+            strike_min=strike_min,
+            strike_max=strike_max,
         )
         return truncate_response(result)
     except Exception as e:

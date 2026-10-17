@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -11,11 +11,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__
+from .clients.congress_dataset import CongressDataset, TradeFilters
 from .clients.fmp_client import FMPClient
 from .config import Settings, get_settings, load_settings
 from .logging_config import configure_logging, get_logger, log_error
 from .response_utils import format_api_error, truncate_response
 from .tools import (
+    get_congress_trades,
     get_dividends,
     get_earnings,
     get_earnings_calendar,
@@ -24,6 +26,9 @@ from .tools import (
 
 # Server start time for uptime tracking
 _server_start_time: float = time.time()
+
+# Process-lifetime congressional trade table, created in bootstrap().
+_congress_dataset: CongressDataset | None = None
 
 # Configure logging first
 configure_logging()
@@ -39,18 +44,31 @@ def bootstrap() -> Settings:
     Raises:
         Exception: If bootstrap fails
     """
+    global _congress_dataset  # noqa: PLW0603
     logger.info("bootstrap_started", server="events-news-server")
 
     try:
         logger.info("loading_settings", source="env")
         settings = load_settings()
         logger.info("settings_loaded")
+        _congress_dataset = CongressDataset(settings)
         logger.info("bootstrap_complete")
         return settings
 
     except Exception as e:
         log_error(logger, e, context={"event": "bootstrap_failed"})
         raise
+
+
+def _get_congress_dataset() -> CongressDataset:
+    """Return the congressional trade dataset created by bootstrap().
+
+    Raises:
+        RuntimeError: If bootstrap() has not run.
+    """
+    if _congress_dataset is None:
+        raise RuntimeError("Congress dataset not initialized - call bootstrap() first")
+    return _congress_dataset
 
 
 # Initialize FastMCP server early (without secrets);
@@ -342,6 +360,80 @@ async def events_news_get_dividends_tool(
             },
         )
         return format_api_error(e, "FMP")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Get Congressional Trades",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
+)
+async def events_news_get_congress_trades_tool(
+    ticker: str | None = None,
+    member: str | None = None,
+    chamber: Literal["house", "senate"] | None = None,
+    days: int = 90,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Get stock-trade disclosures filed by members of Congress.
+
+    Returns STOCK Act periodic transaction reports from the official House
+    Clerk and Senate eFD filings, newest disclosure first. Use for "which
+    members of Congress traded NVDA recently", "what has Pelosi disclosed this
+    quarter", or "latest congressional trades". With no ticker or member it
+    returns the latest disclosures across Congress.
+
+    READING THE DATA:
+    - Amounts are the reported range (amount_low to amount_high), not a size.
+    - owner is whose account traded: self, spouse, joint, dependent_child,
+      or not_indicated.
+    - The window counts back from disclosure_date (when the filing became
+      public), not transaction_date. lag_days is the gap between them;
+      disclosures can trail the trade by 45 days or more.
+    - amended=true means a later filing corrected the trade.
+    - source_url links each trade to its official filing.
+    - snapshot.data_as_of is the newest disclosure loaded. snapshot.stale=true
+      means the last refresh failed and older data is being served.
+
+    Args:
+        ticker: Stock ticker (e.g., 'NVDA', 'BRK-B'). Dash and dot share-class
+            forms both match.
+        member: Member name fragment (e.g., 'Pelosi') or Bioguide ID
+            (e.g., 'P000197'). A fragment can match several members; each
+            trade names its member.
+        chamber: 'house' or 'senate' to restrict to one chamber.
+        days: Look-back window on disclosure date (1-3650, default 90).
+        limit: Maximum trades to return (1-50, default 25). total_available
+            counts every match.
+
+    Returns:
+        Trades with member, owner, action, ticker, asset, transaction and
+        disclosure dates, amount range, and source filing URL, plus snapshot
+        freshness and count/total_available/truncated.
+    """
+    try:
+        filters = TradeFilters(
+            ticker=ticker, member=member, chamber=chamber, days=days, limit=limit
+        )
+        result = await get_congress_trades(_get_congress_dataset(), filters)
+        return truncate_response(result)
+    except Exception as e:
+        log_error(
+            logger,
+            e,
+            context={
+                "tool": "events_news_get_congress_trades_tool",
+                "ticker": ticker,
+                "member": member,
+                "chamber": chamber,
+                "days": days,
+                "limit": limit,
+            },
+        )
+        return format_api_error(e, "HuggingFace")
 
 
 async def main() -> None:

@@ -1,0 +1,166 @@
+# G22: an entry gated on a 252-session IV feature (item 47). The session at 0-based table index
+# 252 reads index 251's value, still in warmup (None): the condition is false and disclosed. The
+# next session reads index 252's value, the first defined one, and enters. A feature is never
+# read on the session that computes it: it becomes visible only at that session's CLOSE.
+id = "G22"
+proves = ["warmup", "C04"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-02-21", end = "2024-02-26" }
+strategy = { file = "spxw_put_credit_vertical_iv_gate.json" }
+
+[market]
+first_session = "2023-03-06"   # a Monday; table index 0
+last_session = "2024-02-28"    # index 257; the window is indices 252 ... 255
+weekly_dtes = [28, 56, 84, 112, 140, 168, 196, 224, 252, 280, 308, 336, 364, 392]
+rates = [[28, "0"], [91, "0"], [182, "0"], [730, "0"]]
+strike_step = "25"
+strikes_each_side = 4          # 4900 ... 5100; the five nearest the spot are 4950 ... 5050
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-04:P:4925"
+session = "2024-02-22"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-04:P:4900"
+session = "2024-02-22"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-04:P:4925"
+session = "2024-02-23"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-04:P:4900"
+session = "2024-02-23"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "FEATURE_UNAVAILABLE"]
+open_positions = []
+derivation = """
+m = 100; $1.00 per contract side, $0 settlement; T+1; zero rates (DF 1, also at the 730-day
+tenor above the largest expiry offset 392); S = 5000.00 at every slot. Sessions: every weekday
+from 2023-03-06 (index 0) to 2024-02-28 (index 257), no holidays: 2024-02-19 is index 250,
+2024-02-20 251, 2024-02-21 252, 2024-02-22 253, 2024-02-23 254, 2024-02-26 255.
+Expiries every 28 days from 2023-03-06 (all Mondays) through offset 392 = 2024-04-01 >=
+last_session + 30 days (offset 389), so every session has expiries bracketing 30 days.
+Strategy: daily schedule; condition SPX:options.atm30_iv_percentile_252s gte 0 (in [0, 100]
+whenever defined); short put moneyness 0.985 (tolerance 0.0005), long put 25 below;
+max_holding_sessions 2; fractions 0.25; take_profit and stop_loss null.
+P4925 = SPXW:2024-03-04:P:4925, P4900 = SPXW:2024-03-04:P:4900.
+
+Feature visibility: a session's value is visible from its CLOSE (max_input_available_at_ns), so
+the gate at a session's DEC reads the previous table session's value. The percentile of index i
+needs the 252 preceding sessions all valid: index 251 -> None (warmup); index 252 -> a value.
+
+2024-02-21 DEC (index 252; daily, flat, not final): the gate reads index 251's value: None
+  (unknown) -> the condition is false -> ENTRY_SKIPPED (CONDITIONS_FALSE) with a
+  FEATURE_UNAVAILABLE warning. Account 2024-02-21: cash 10000, headroom 10000, mid_nlv 10000.
+2024-02-22 DEC (index 253): the gate reads index 252's value (visible since 2024-02-21 16:00),
+  in [0, 100] -> gte 0 holds. (2024-02-22's own value is visible only at its 16:00 CLOSE.)
+  Expiries: 2024-03-04 dte 11 in [9, 13] (2024-02-05 expired; 2024-04-01 dte 39).
+  short_put: |Decimal(4925.0/5000.0) - 0.985| ~ 0 <= 0.0005; 4900 and 4950 miss by 0.005.
+  long_put: 4925 - 25 = 4900. Spreads 0.20 and 0.10.
+  D(1) = 100*(-2.00) + 100*1.10 = -90; Q*D = 90 > 0; fees 2.
+  risk: payoff min = 100*(-25) = -2500; -(-2500 + 88) + 2 = 2414 <= 0.25 * 10000 = 2500.
+  preview headroom = 10000 - 2 - (2500 + 2) = 7496 >= 0; capacity 5 >= 1; limit -90.
+2024-02-22 F1 (pins): fill at D = -90, fees 2; basis 90.
+Account 2024-02-22: cash 10000; receivable 90; payable 2; encumbrance 2502; headroom 7496.
+2024-02-23 OPEN: cash 10088. DEC: held session 2 >= max_holding_sessions 2 -> TIME_EXIT;
+  close D = 100*1.20 - 100*0.40 = 80; limit 80. F1: fill at D = 80, fees 2.
+Account 2024-02-23: cash 10088; receivable 0; payable 82; encumbrance 0; headroom 10006;
+  mid_nlv 10006.
+2024-02-26 (index 255, final; daily, flat): ENTRY_SKIPPED (FINAL_SESSION), no warning.
+  OPEN cash = 10088 - 82 = 10006; final_equity_usd = 10006.
+Campaign c1: realized_pnl = -(-80 + 70) = 10; fees 4; net 6; closed by time_exit.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, FEATURE_UNAVAILABLE (2024-02-21).
+"""
+
+[[expected.fills]]
+session = "2024-02-22"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-04:P:4925", -1, "2.00"], ["SPXW:2024-03-04:P:4900", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-02-23"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-04:P:4925", 1, "1.20"], ["SPXW:2024-03-04:P:4900", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-02-21"]
+cash = "10000.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "0.00"
+headroom = "10000.00"
+mid_nlv = "10000.00"
+
+[expected.account."2024-02-22"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "2502.00"
+headroom = "7496.00"
+
+[expected.account."2024-02-23"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-02-26"]
+cash = "10006.00"
+payable = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-02-22"
+end_session = "2024-02-23"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"

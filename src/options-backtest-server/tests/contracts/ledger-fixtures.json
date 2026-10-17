@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "purpose": "Hand-calculated synthetic financial conformance fixtures for the v3 design; not historical data or execution calibration.",
+  "conventions": {
+    "currency": "USD",
+    "money_encoding": "decimal_string",
+    "cash_observation": "after each listed event and its associated due cash transfers have settled",
+    "interest": "0.00",
+    "assignment_exercise_settlement_fee": "0.00",
+    "option_trade_fee_per_contract_side_usd": "1.00",
+    "additional_fees": "0.00",
+    "notes": "Calendar, order submission, later fill timestamps, source coverage and entitlement are separate required integration fixtures. These examples isolate cash, quantity, multiplier and payoff arithmetic."
+  },
+  "fixtures": [
+    {
+      "id": "F01",
+      "name": "Credit put vertical round trip at natural prices",
+      "capability": "R1",
+      "initial_cash_usd": "10000.00",
+      "initial_stock_shares": 0,
+      "legs": [
+        {"leg_id": "short_put", "option_type": "put", "position_quantity": -1, "strike": "100.00", "premium_multiplier": "100", "entry_bid": "2.00", "entry_ask": "2.20", "exit_bid": "1.00", "exit_ask": "1.20"},
+        {"leg_id": "long_put", "option_type": "put", "position_quantity": 1, "strike": "95.00", "premium_multiplier": "100", "entry_bid": "1.00", "entry_ask": "1.10", "exit_bid": "0.40", "exit_ask": "0.50"}
+      ],
+      "expected": {
+        "entry_net_credit_before_fees_usd": "90.00",
+        "entry_fees_usd": "2.00",
+        "cash_after_entry_usd": "10088.00",
+        "signed_option_mid_value_after_entry_usd": "-105.00",
+        "mid_nlv_after_entry_usd": "9983.00",
+        "terminal_cash_reserve_usd": "500.00",
+        "max_expiry_loss_before_fees_usd": "410.00",
+        "exit_net_debit_before_fees_usd": "80.00",
+        "exit_fees_usd": "2.00",
+        "final_cash_usd": "10006.00",
+        "final_nlv_usd": "10006.00",
+        "net_profit_usd": "6.00"
+      }
+    },
+    {
+      "id": "F02",
+      "name": "Cash-secured put assigned into long stock",
+      "capability": "R2",
+      "initial_cash_usd": "10000.00",
+      "initial_stock_shares": 0,
+      "contract": {"option_type": "put", "position_quantity": -1, "strike": "100.00", "premium_multiplier": "100", "deliverable_shares": "100", "aggregate_exercise_amount_usd": "10000.00"},
+      "entry_price": "2.00",
+      "stock_mark_after_assignment": "90.00",
+      "expected": {
+        "cash_after_entry_usd": "10199.00",
+        "entry_nlv_at_entry_price_usd": "9999.00",
+        "exercise_cash_flow_usd": "-10000.00",
+        "final_stock_shares": 100,
+        "final_cash_usd": "199.00",
+        "final_stock_value_usd": "9000.00",
+        "final_option_quantity": 0,
+        "final_nlv_usd": "9199.00",
+        "net_profit_usd": "-801.00"
+      }
+    },
+    {
+      "id": "F03",
+      "name": "Covered call delivers owned stock",
+      "capability": "R2",
+      "initial_cash_usd": "0.00",
+      "initial_stock_shares": 100,
+      "initial_stock_mark": "90.00",
+      "contract": {"option_type": "call", "position_quantity": -1, "strike": "100.00", "premium_multiplier": "100", "deliverable_shares": "100", "aggregate_exercise_amount_usd": "10000.00"},
+      "entry_price": "3.00",
+      "expected": {
+        "initial_nlv_usd": "9000.00",
+        "cash_after_entry_usd": "299.00",
+        "exercise_cash_flow_usd": "10000.00",
+        "final_stock_shares": 0,
+        "final_option_quantity": 0,
+        "final_cash_usd": "10299.00",
+        "final_nlv_usd": "10299.00",
+        "net_profit_usd": "1299.00"
+      }
+    },
+    {
+      "id": "F04",
+      "name": "European cash-settled put vertical at official reference 97",
+      "capability": "R1",
+      "initial_cash_usd": "10000.00",
+      "initial_stock_shares": 0,
+      "official_settlement_value": "97.00",
+      "legs": [
+        {"leg_id": "short_put", "option_type": "put", "position_quantity": -1, "strike": "100.00", "premium_multiplier": "100", "entry_price": "2.00"},
+        {"leg_id": "long_put", "option_type": "put", "position_quantity": 1, "strike": "95.00", "premium_multiplier": "100", "entry_price": "1.10"}
+      ],
+      "expected": {
+        "cash_after_entry_usd": "10088.00",
+        "short_put_settlement_cash_flow_usd": "-300.00",
+        "long_put_settlement_cash_flow_usd": "0.00",
+        "settlement_fees_usd": "0.00",
+        "final_cash_usd": "9788.00",
+        "final_nlv_usd": "9788.00",
+        "net_profit_usd": "-212.00",
+        "final_stock_shares": 0,
+        "final_option_quantity": 0
+      }
+    },
+    {
+      "id": "F05",
+      "name": "Synthetic reverse-split deliverable transformation",
+      "capability": "R2",
+      "option_type": "put",
+      "position_quantity": 1,
+      "before": {"stock_mark": "50.00", "deliverable_shares": "100", "aggregate_exercise_amount_usd": "6000.00", "listed_strike": "60.00", "premium_multiplier": "100", "option_premium_mark": "10.00"},
+      "after": {"stock_mark": "100.00", "deliverable_shares": "50", "aggregate_exercise_amount_usd": "6000.00", "listed_strike": "60.00", "premium_multiplier": "100", "option_premium_mark": "10.00"},
+      "expected": {"before_deliverable_value_usd": "5000.00", "after_deliverable_value_usd": "5000.00", "before_put_intrinsic_usd": "1000.00", "after_put_intrinsic_usd": "1000.00", "before_option_market_value_usd": "1000.00", "after_option_market_value_usd": "1000.00"},
+      "notes": "This fixture prescribes a synthetic transformation. Actual adjustment terms must come from an authoritative contract mapping; they cannot be inferred from this example."
+    }
+  ]
+}

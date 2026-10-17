@@ -104,9 +104,7 @@ class TestCheckOrderAllowed:
             long_market_value="90000.00",  # 90% exposure
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 
@@ -454,9 +452,7 @@ class TestMarketOrderNoPriceEstimate:
             last_equity="100000.00",
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 
@@ -570,9 +566,7 @@ class TestShortSideRiskChecks:
             long_market_value="20000.00",
         )
         alpaca_client._client.get_all_positions.return_value = [
-            FakePosition(
-                symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"
-            ),
+            FakePosition(symbol="AAPL", qty="100", market_value="20000.00", current_price="200.00"),
         ]
         alpaca_client._client.get_orders.return_value = []
 
@@ -643,3 +637,34 @@ class TestZeroEquityEdgeCase:
         # With zero equity, daily_pnl_pct = 0, passes loss check
         # But position size / exposure checks need equity > 0 guard
         assert isinstance(result, RiskResult)
+
+
+class TestOptionContractsRejected:
+    """AutoTrader sizes shares; an option contract would be sized 100x too small."""
+
+    @pytest.mark.parametrize(
+        "symbol", ["AAPL261120C00200000", "O:XSP261026P00767000", "spy270115p00500000"]
+    )
+    def test_option_contract_symbols_are_rejected_before_any_broker_call(
+        self, alpaca_client: AlpacaClient, symbol: str
+    ) -> None:
+        result = RiskChecker(alpaca_client).check_order(symbol, "buy", 1, limit_price=2.0)
+
+        assert result.allowed is False
+        assert result.rejection_reason is not None
+        assert "option contract" in result.rejection_reason
+        alpaca_client._client.get_orders.assert_not_called()
+
+    @pytest.mark.parametrize("symbol", ["AAPL", "BRK.B", "SPY"])
+    def test_stock_and_etf_symbols_still_pass(
+        self, alpaca_client: AlpacaClient, symbol: str
+    ) -> None:
+        alpaca_client._client.get_account.return_value = FakeAccount(
+            equity="100000.00", last_equity="100000.00", long_market_value="0.00"
+        )
+        alpaca_client._client.get_all_positions.return_value = []
+        alpaca_client._client.get_orders.return_value = []
+
+        result = RiskChecker(alpaca_client).check_order(symbol, "buy", 1, limit_price=100.0)
+
+        assert result.allowed is True

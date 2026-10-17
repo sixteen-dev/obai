@@ -42,6 +42,7 @@ VERDICTS = (
     "inconclusive_harness",
     "inconclusive_missing_evidence",
     "skipped_dependency",
+    "skipped_not_applicable",
 )
 COLOR = {
     "pass": "#1b6e23",
@@ -52,6 +53,7 @@ COLOR = {
     "inconclusive_harness": "#5b6472",
     "inconclusive_missing_evidence": "#755b7e",
     "skipped_dependency": "#6b6a64",
+    "skipped_not_applicable": "#4f6878",
 }
 BG = {
     "pass": "#cfe7d3",
@@ -62,6 +64,7 @@ BG = {
     "inconclusive_harness": "#e2e6ec",
     "inconclusive_missing_evidence": "#ece1ef",
     "skipped_dependency": "#efeee9",
+    "skipped_not_applicable": "#e4ebef",
 }
 
 

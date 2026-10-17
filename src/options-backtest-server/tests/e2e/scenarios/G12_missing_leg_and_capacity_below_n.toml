@@ -1,0 +1,171 @@
+# G12: all-or-none packages. A two-package entry does not fill at F1, where one leg has no
+# fresh quote (no partial naked leg). It does not fill at F2, where the displayed size allows
+# only one package (n = 2). It fills whole at F3. (CapacityBook reuse is a unit test.)
+id = "G12"
+proves = ["C09"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-06" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { sizing = { contracts = 2 }, exits = { take_profit = { basis = "initial_credit", fraction = 0.05 } } } }
+
+[market]
+# defaults.toml unchanged.
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1", "F3"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+# F2: the short put's bid (the side a sell uses) shows 10 contracts.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["F2"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 10
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F2", "F3"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# F1: the long put has no observation of its own; only the DEC one, which never fills (C05).
+[[market.overrides]]
+kind = "quote_drop"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["F1"]
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10012.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL"]
+open_positions = []
+derivation = """
+Conventions as G01; fixed_contracts n = 2; take_profit 0.05 x initial_credit.
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895.
+
+2024-03-04 DEC: selection as G01; sizing n = 2:
+  D(2) = 100*(-2)*2.00 + 100*(+2)*1.10 = -400 + 220 = -180; fees(2) = 2 legs * 2 * 1.00 = 4;
+  risk: payoff min = 2 * -500 = -1000; entry_cash = 180 - 4 = 176; -(-1000 + 176) + provision
+  2 legs * 2 * max(1.00, 0) = 824 + 4 = 828 <= 0.10 * 10000 = 1000;
+  preview headroom = 10000 - 4 - (1000 + 4) = 8992 >= 0;
+  DEC capacity floor(min(50/1, 50/1) * 0.10) = 5 >= 2; limit = -180 + 0.00 = -180.
+2024-03-04 F1: P4895's only visible quote of the session is its DEC observation, not observed
+  strictly after the DEC submission -> NO_OBSERVATION on P4895; nothing of either leg fills.
+2024-03-04 F2: both VALID with sides > 0; D = -180 <= -180; Q*D = 180 > 0;
+  capacity = floor(min(10/1, 50/1) * 0.10) = floor(1.0) = 1 < 2 -> CAPACITY (all or none),
+  net_debit -180.00.
+2024-03-04 F3: sizes 50 -> capacity 5 >= 2; D = -180 <= -180; post-fill headroom 8992 -> fill:
+  2 packages, legs (P4900 -2 @ 2.00, P4895 +2 @ 1.10), net_debit -180.00, fees 4.00.
+Account 2024-03-04: cash 10000; receivable 180; payable 4; encumbrance = 2*500 + 4 = 1004;
+  headroom = 10000 - 4 - 1004 = 8992.
+2024-03-05 OPEN: cash = 10000 + 180 - 4 = 10176.
+2024-03-05 DEC: basis = |-180| = 180 (whole order); entry_debit_incl_fees = -180 + 4 = -176;
+  close D(2) = 100*2*1.20 - 100*2*0.40 = 240 - 80 = 160; exit fees 4;
+  LiquidationPnL = 0 + 176 - 160 - 4 = 12 >= 0.05 * 180 = 9 -> EXIT (TAKE_PROFIT); limit 160.
+2024-03-05 F1: capacity 5 >= 2; D = 160 <= 160 -> fill, fees 4.
+Account 2024-03-05: cash 10176; payable 164; encumbrance 0; headroom 10012; mid_nlv 10012.
+2024-03-06 (final; flat): OPEN cash = 10176 - 164 = 10012; final_equity_usd = 10012.
+Campaign c1: REALIZED_PNL[P4900] = -(400 - 240) = -160, [P4895] = +(220 - 80) = +140;
+  realized_pnl = 20; fees 8; net 12 = 10012 - 10000.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL only (entry nonfills disclose no warning).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F3"
+purpose = "entry"
+packages = 2
+legs = [["SPXW:2024-03-15:P:4900", -2, "2.00"], ["SPXW:2024-03-15:P:4895", 2, "1.10"]]
+net_debit = "-180.00"
+fees = "4.00"
+limit = "-180.00"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 2
+legs = [["SPXW:2024-03-15:P:4900", 2, "1.20"], ["SPXW:2024-03-15:P:4895", -2, "0.40"]]
+net_debit = "160.00"
+fees = "4.00"
+limit = "160.00"
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+reason = "NO_OBSERVATION"
+contract = "SPXW:2024-03-15:P:4895"
+
+[[expected.nonfills]]
+session = "2024-03-04"
+slot = "F2"
+purpose = "entry"
+reason = "CAPACITY"
+net_debit = "-180.00"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "180.00"
+payable = "4.00"
+encumbrance = "1004.00"
+headroom = "8992.00"
+
+[expected.account."2024-03-05"]
+cash = "10176.00"
+payable = "164.00"
+encumbrance = "0.00"
+headroom = "10012.00"
+mid_nlv = "10012.00"
+
+[expected.account."2024-03-06"]
+cash = "10012.00"
+mid_nlv = "10012.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "180.00"
+realized_pnl = "20.00"
+fees = "8.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "take_profit"
