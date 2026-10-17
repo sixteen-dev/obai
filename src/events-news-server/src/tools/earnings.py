@@ -47,19 +47,25 @@ def _parse_date(row: dict[str, Any]) -> date:
         return date.min
 
 
-def _earnings_sort_key(row: dict[str, Any]) -> tuple[int, int]:
-    """Sort key: reported rows first, then by date descending.
+def _with_next_scheduled(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Keep the newest ``limit`` reported rows plus the next scheduled report.
+
+    Truncating the reported-first order alone drops every upcoming row once
+    ``limit`` reported results exist, hiding the next earnings date.
 
     Args:
-        row: A filtered earnings record.
+        rows: Filtered earnings records.
+        limit: Maximum number of reported records to keep.
 
     Returns:
-        A tuple of (group, negated date ordinal) where reported rows use
-        group 0 (sorted before estimated group 1) and the negated ordinal
-        orders each group most-recent-first.
+        Reported rows most-recent-first, then the earliest unreported row
+        dated after the latest reported one, when such a row exists.
     """
-    group = 0 if _is_reported(row) else 1
-    return (group, -_parse_date(row).toordinal())
+    reported = sorted((r for r in rows if _is_reported(r)), key=_parse_date, reverse=True)
+    latest = _parse_date(reported[0]) if reported else date.min
+    upcoming = [r for r in rows if not _is_reported(r) and _parse_date(r) > latest]
+    nearest = sorted(upcoming, key=_parse_date)[:1]
+    return reported[:limit] + nearest
 
 
 async def get_earnings(
@@ -68,15 +74,14 @@ async def get_earnings(
 ) -> dict[str, Any]:
     """Get earnings history and upcoming earnings for a specific ticker.
 
-    Over-fetches from FMP, then sorts so reported results (actual EPS or
-    revenue present) lead estimated/upcoming entries, each group ordered
-    by date descending (most recent first), before truncating to ``limit``.
-    The over-fetch gives the sort enough reported and upcoming rows to fill
-    the returned prefix.
+    Over-fetches from FMP, then returns the newest ``limit`` reported results
+    (actual EPS or revenue present), most recent first, followed by the next
+    scheduled report so the upcoming date survives truncation.
 
     Args:
         symbol: Stock ticker symbol (e.g., 'AAPL')
-        limit: Maximum number of earnings records to return (default: 5)
+        limit: Maximum number of reported records to return (default: 5); the
+            next scheduled report is added on top
 
     Returns:
         Earnings records with metadata.
@@ -89,11 +94,11 @@ async def get_earnings(
         fetch_limit = limit + _OVERFETCH_BUFFER
         async with FMPClient(settings) as client:
             data = await client.get_earnings(symbol, fetch_limit)
-        sorted_data = sorted(filter_earnings(data), key=_earnings_sort_key)
+        earnings = _with_next_scheduled(filter_earnings(data), limit)
         return {
             "symbol": symbol,
-            "count": len(sorted_data[:limit]),
-            "earnings": sorted_data[:limit],
+            "count": len(earnings),
+            "earnings": earnings,
         }
     except Exception as e:
         log_error(
