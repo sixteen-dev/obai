@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `events_news_get_earnings_tool` never returned the next earnings date for a
+  ticker with `limit` or more reported quarters (every large cap): it sorted
+  reported rows first and then truncated, so the upcoming row was always cut.
+  AAPL's 2026-11-02 report was in FMP's data but missing from the tool output.
+  The tool now returns the newest `limit` reported results plus the next
+  scheduled report.
 - The fundamentals, market-data and screening servers reported not ready on
   every install because FMP retired `is-the-market-open` (404 on stable, 403
   on legacy v3). Their readiness probe now calls stable

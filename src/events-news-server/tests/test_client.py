@@ -348,13 +348,16 @@ class TestEarningsReportedBeforeEstimated:
             result = await get_earnings("AAPL", limit=2)
 
         earnings = result["earnings"]
-        assert result["count"] == 2
+        assert result["count"] == 3
         # Reported rows (actual EPS present) lead the prefix.
         assert earnings[0]["epsActual"] is not None
         assert earnings[1]["epsActual"] is not None
         # Within the reported group, most-recent date first.
         assert earnings[0]["date"] == "2024-01-25"
         assert earnings[1]["date"] == "2023-10-20"
+        # The next scheduled report follows, however many reported rows exist.
+        assert earnings[2]["date"] == "2024-06-01"
+        assert earnings[2]["epsActual"] is None
 
 
 class TestEarningsCalendarTool:
