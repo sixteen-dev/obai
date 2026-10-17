@@ -441,8 +441,9 @@ class FMPClient:
         Returns:
             True if API is reachable and responding
         """
-        url = f"{self.base_url}/is-the-market-open"
-        params = {"apikey": self.api_key}
+        # FMP retired is-the-market-open (404 on stable, 403 on legacy v3).
+        url = f"{self.base_url}/exchange-market-hours"
+        params = {"exchange": "NASDAQ", "apikey": self.api_key}
 
         try:
             response = await self.client.get(url, params=params, timeout=timeout)

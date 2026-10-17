@@ -140,6 +140,28 @@ class TestFMPClientHealthCheck:
             assert result is True
 
     @pytest.mark.asyncio
+    async def test_health_check_probes_a_stable_endpoint(self, mock_settings: Settings) -> None:
+        """Health check calls stable exchange-market-hours; FMP retired is-the-market-open."""
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.raise_for_status = MagicMock()
+
+        with (
+            patch("src.config.get_settings", return_value=mock_settings),
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.return_value = mock_response
+
+            from src.clients.fmp_client import FMPClient
+
+            client = FMPClient()
+            await client.health_check()
+            await client.close()
+
+        url = mock_get.call_args.args[0]
+        assert url.endswith("/exchange-market-hours")
+        assert mock_get.call_args.kwargs["params"]["exchange"] == "NASDAQ"
+
+    @pytest.mark.asyncio
     async def test_health_check_returns_false_on_timeout(self, mock_settings: Settings) -> None:
         """Test health check returns False on timeout."""
         with (
