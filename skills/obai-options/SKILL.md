@@ -58,10 +58,19 @@ context wherever a date is required.
 - For contract price/volume history: Use `options_get_aggregates_tool`; use the trades/quotes history tools only when tick-level detail is explicitly needed
 - For underlying price and moneyness: `options_get_chain_snapshot_tool` and `options_get_contract_snapshot_tool` may provide underlying price context. Use that when available for approximate ITM/ATM/OTM discussion. For standalone underlying price analysis or broader price-move context, use the `obai-market-data` skill or state that separate market data is required.
 
+## Index Options and Data Gaps
+- Pass index underlyings by their bare root (`SPX`, `XSP`, `NDX`, `RUT`, `VIX`); the server converts them to the provider's index form. SPXW weeklies are listed under `SPX`, not under `SPXW`.
+- `underlying_timeframe` says whether `underlying_price` is real-time or delayed; option quotes can be current while it is delayed, for stocks and indexes alike. When it is delayed, say so wherever you use the underlying price, moneyness, Greeks or IV.
+- An empty Greeks object or missing IV means the provider could not compute it at that moment. Report it as unavailable, never as zero.
+- Quote tools attach `quality_flags` (per contract, or per response for single quotes) and chain snapshots a `data_quality` summary. Never compute a midpoint, credit, debit, P&L or breakeven from a quote flagged `quote_crossed`, `quote_zero_ask`, `quote_negative` or `quote_missing`; report that leg as unpriced. Present `quote_stale` and `quote_time_unknown` quotes as of their timestamp, not as current. For `below_intrinsic`, the provider's Greeks and IV are unreliable or absent; say so rather than substituting estimates.
+- To pick a contract by delta or by distance from spot, narrow the chain with `expiration_date`, `contract_type` and `strike_min`/`strike_max` around spot. A response marked `_truncated` has dropped contracts from the end of the strike list, which may include the one you need.
+
 ## Analytics Tools
 - Use `options_compute_greeks_tool` for hypothetical contracts or when you need Greeks computation without market data lookup. Provide the volatility, strike, expiry, and underlying price directly.
 - Use `options_scenario_analysis_tool` when user asks "what happens if price drops 5%" or wants P&L scenarios across price/vol changes. Returns a grid of P&L values for different spot and volatility shifts.
+- Set `spot_range_pct` and `vol_shift_range` to include the requested moves, and `days_forward` to the requested holding period. Distinguish horizon P&L from expiry payoff; preserve the returned `time_to_expiry_years` and `time_basis` when explaining reproducible pricing.
 - Use `options_position_risk_profile_tool` for multi-leg positions (spreads, straddles, iron condors, collars). Pass all legs as a JSON array string in `contracts_json` — each leg needs `underlying_price`, `strike`, `expiry_date`, `option_type`, `direction`, `quantity`, `entry_premium`, `iv`. Returns net Greeks, max profit/loss, and breakeven prices.
+- Mixed expirations require an exercise/assignment and post-expiry path model this engine does not provide. Do not claim shared-expiry maximum profit, maximum loss, or breakevens, even qualitatively. Report supported per-leg results and the limitation; do not change expirations to force a result.
 
 ## Efficiency Constraints
 
@@ -76,8 +85,8 @@ context wherever a date is required.
 
 - **Delta**: How much option price changes per $1 move in underlying (0-1 for calls, -1-0 for puts)
 - **Gamma**: Rate of change of delta (higher gamma = more sensitivity near ATM)
-- **Theta**: Time decay per day (negative = loses value daily, accelerates near expiration)
-- **Vega**: Sensitivity to volatility changes (higher vega = more IV sensitivity)
+- **Theta**: Units are per tool. `options_compute_greeks_tool` returns `greeks_units` and reports USD per share per year; divide by 365 only when explicitly converting to per-calendar-day decay. `options_position_risk_profile_tool` returns `net_greeks` scaled per position (per share x quantity x `contract_multiplier`) and declares no units field. Chain and contract snapshots pass provider Greeks through with no unit field. Do not label an annual value as daily, and never assume one tool's units for another.
+- **Vega**: Sensitivity to volatility changes; preserve the payload's volatility increment and per-share/position units.
 
 ---
 
@@ -85,7 +94,7 @@ context wherever a date is required.
 
 - Include (Source: <tool_name>, <today's date>) for all data
 - For simple contract lookup requests, answer the requested contract quote, trade, or snapshot first, then add only the minimum useful context.
-- For chains: Show strike, type, bid/ask, volume, open interest, Greeks
+- For chains: Show strike, type, bid/ask, volume, open interest, Greeks when returned. Missing volume, quote, or timestamp is unavailable, not zero or current by default.
 - Show implied volatility as percentage
 - Note moneyness (ITM/ATM/OTM) when relevant
 - For wide bid/ask spreads, warn about illiquidity
@@ -117,4 +126,4 @@ context wherever a date is required.
 If a tool call fails:
 1. Note "[DATA UNAVAILABLE: <reason>]"
 2. Continue with other available data
-3. Do NOT retry - the server handles retries internally
+3. Do not repeat identical application failures. Correct invalid arguments or retry a transient read-only transport failure once, following `obai-hub` error handling.

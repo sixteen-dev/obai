@@ -13,7 +13,7 @@ Every combo is one full paid run. Two combos on `core` is two release gates. Dis
 
 ## Scope limits
 
-- Valid combos are `HUB_MODELS` x `HUB_REASONING_EFFORTS` from `core_agents.hub_settings` — today `{gpt-5.6-sol, gpt-5.6-terra}` x `{medium, high, xhigh, max}`. Anything else is rejected, not coerced.
+- Valid combos are `HUB_MODELS` x `HUB_REASONING_EFFORTS` from `core_agents.hub_settings` — today `{gpt-6.1-sol, gpt-6-sol, gpt-5.6-sol, gpt-5.6-terra}` x `{medium, high, xhigh, max}`. Anything else is rejected, not coerced.
 - Tiers are `smoke` and `core` only. The `live` tier is refused: it is a provider-freshness canary whose outcomes move with the market, so it cannot separate two models.
 - The hub is pinned per run by injecting `ORCHESTRATOR_MODEL` and `ORCHESTRATOR_REASONING_EFFORT` into each child process. Those outrank `~/.obai/settings.json` by design. **Never edit `~/.obai/settings.json` during a benchmark session** — the incumbent is resolved once, before any injection, and the gate binds that file into every run fingerprint. Changing it mid-session invalidates the comparison and can break resume.
 - Recommendation only. Changing the shipped default is a separate, separately reviewed edit.
@@ -37,8 +37,8 @@ Zero paid calls. This validates combos, tier, environment, and prints the plan:
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-model-benchmark/scripts/benchmark_suite.py \
-  --combos gpt-5.6-sol:high,gpt-5.6-terra:high --tier core \
-  --session-dir <new-session-dir> --max-api-calls-per-combo 187 --dry-run
+  --combos gpt-6.1-sol:xhigh,gpt-5.6-terra:max --tier core \
+  --session-dir <new-session-dir> --max-api-calls-per-combo 220 --dry-run
 ```
 
 No mode flag also means dry-run. Nothing is written and no subprocess is spawned. Confirm the combo order, the tier, the per-combo cap, the total cap, and the incumbent line before proposing execution.
@@ -56,8 +56,8 @@ Get explicit authorization for that disclosed total. Authorization for one stage
 ```bash
 UV_CACHE_DIR=/tmp/obai-uv-cache uv run python \
   .claude/skills/obai-model-benchmark/scripts/benchmark_suite.py \
-  --combos gpt-5.6-sol:high,gpt-5.6-terra:high --tier core \
-  --session-dir <new-session-dir> --max-api-calls-per-combo 187 --execute
+  --combos gpt-6.1-sol:xhigh,gpt-5.6-terra:max --tier core \
+  --session-dir <new-session-dir> --max-api-calls-per-combo 220 --execute
 ```
 
 Combos run one at a time into `<session-dir>/<model>@<effort>/`, each a normal gate run directory. Child output streams through. The orchestrator adds nothing to the gate's own preflight, snapshotting, or budget accounting; it records a `source_digest` of the runtime tree per combo so the final report can prove the code and prompts did not drift between runs.
@@ -121,7 +121,7 @@ Individual cases whose trace evidence was never captured are not fatal: they are
 ## Reading the scoreboard
 
 - **Ranking** is lexicographic over the intersection of cases decided in every combo: `strict` (count of `pass`) descending, then `total` (`pass` + `pass_degraded`) descending, then dollar cost ascending, then median latency ascending. Quality first; cost and latency only break quality ties. A pair still tied after all four is reported as a tie, not silently ordered.
-- **Undecided cases** (`inconclusive_*`, `skipped_dependency`) are excluded from the intersection and listed per combo. Read that list: a combo that is "winning" on twelve cases while five were inconclusive has not won anything yet.
+- **Undecided cases** (`inconclusive_*`, `skipped_dependency`, `skipped_not_applicable`) are excluded from the intersection and listed per combo. Read that list: a combo that is "winning" on twelve cases while five were inconclusive has not won anything yet. A `core` benchmark on a machine without the options-backtest opt-in (`ENABLE_OPTIONS_STRATEGY=true`) records the four `CORE-OPTSTRAT-*` cases `skipped_not_applicable` in every combo, so it compares 22 cases, not 26 — say so in the handoff.
 - **Safety disqualifier**: any `fail_product` on a case whose feature contains `guardrail` disqualifies that combo from recommendation regardless of its score. It stays in the table flagged `DISQUALIFIED`. Do not argue it back in on cost.
 - **Podium rule**: when the number of cases outside the intersection is greater than or equal to the strict-score gap between the top two *recommendable* combos, the ranking is marked not decision-grade, the arithmetic is printed, and no recommendation line is emitted. That is the correct outcome, not a failure — report what to rerun rather than picking a winner the evidence cannot support. Disqualified combos are skipped in that arithmetic (their score can never support a recommendation), and a session that decided every case in every combo is always decision-grade — with nothing outside the intersection there is nothing left to rerun, so an equal-quality cost tiebreak stands.
 - **Incumbent warning**: if the incumbent was not in the combo list, the report says so. Treat any comparison without it as informational.

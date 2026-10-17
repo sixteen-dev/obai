@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     massive_api_key: str = ""
     massive_base_url: str = "https://api.massive.com"
 
+    # Data quality: a quote older than this is flagged stale (the bound is
+    # inclusive). Matches the options-backtest engine's QUOTE_MAX_AGE_NS
+    # (ADR 0002), so "stale" means the same on both servers.
+    max_quote_age_seconds: int = Field(default=120, gt=0)
+
     # Server Configuration
     server_name: str = "options-server"
     server_version: str = Field(default_factory=_read_version)

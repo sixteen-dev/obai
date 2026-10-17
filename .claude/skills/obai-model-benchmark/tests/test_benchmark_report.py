@@ -19,13 +19,13 @@ if TYPE_CHECKING:
 
 HUB_MODEL = "gpt-5.6-sol"
 ALT_MODEL = "gpt-5.6-terra"
-SPECIALIST_MODEL = "gpt-5.6-luna"
+SPECIALIST_MODEL = "gpt-6-luna"
 
 PRICES = {
     "prices": {
         "gpt-5.6-sol": {"input": 2.0, "cached_input": 0.5, "output": 8.0},
         "gpt-5.6-terra": {"input": 4.0, "cached_input": 1.0, "output": 16.0},
-        "gpt-5.6-luna": {"input": 1.0, "cached_input": 0.25, "output": 4.0},
+        "gpt-6-luna": {"input": 1.0, "cached_input": 0.25, "output": 4.0},
     }
 }
 
@@ -714,6 +714,23 @@ def test_skipped_dependency_cases_do_not_crash_the_walk(
     session_dir = build_session(tmp_path, _two_combos(cases_a=cases, cases_b=cases))
     assert _final(session_dir, prices_path, ledger_path) == br.EXIT_SUCCESS
     assert "CORE-SKIP" not in _read_report(session_dir)["intersection"]
+
+
+def test_skipped_not_applicable_is_not_a_decided_verdict() -> None:
+    """A case an opted-out machine never ran stays outside the scored intersection."""
+    results = [
+        br.CaseResult(
+            "CORE-OPTSTRAT-MIXED",
+            "skipped_not_applicable",
+            "skipped_not_applicable",
+            "options_strategy",
+            None,
+            None,
+        ),
+        br.CaseResult("CORE-FX", "pass", "pass", "fx", 10.0, None),
+    ]
+
+    assert br.decided_case_ids(results) == {"CORE-FX"}
 
 
 def test_ranking_prefers_strict_then_total_then_cost(

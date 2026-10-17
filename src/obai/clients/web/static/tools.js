@@ -40,6 +40,7 @@ class ToolTree {
                 this.container.appendChild(saved.firstChild);
             }
             this.sessionHistory.delete(sessionId);
+            this.reindexRestored();
             return;
         }
 
@@ -49,6 +50,20 @@ class ToolTree {
         }
 
         this.renderEmptyState();
+    }
+
+    // A restored snapshot is cloned DOM: rebuild the references that later
+    // tool_complete/complete events resolve through, and drop the cloned
+    // "working" line — the caller re-sets it if the run is still live.
+    reindexRestored() {
+        for (const el of this.container.querySelectorAll(".tool-item")) {
+            this.tools.set(el.dataset.callId, el);
+        }
+        const groups = this.container.querySelectorAll(".tool-query-group");
+        this.currentGroup = groups.length > 0 ? groups[groups.length - 1] : null;
+        for (const el of this.container.querySelectorAll(".tool-agent-status")) {
+            el.remove();
+        }
     }
 
     newQuery(queryText) {

@@ -69,6 +69,29 @@ def test_render_supports_v2_outcome_taxonomy(tmp_path: Path) -> None:
     assert "rate limit" in output
 
 
+def test_render_keeps_not_applicable_as_its_own_verdict(tmp_path: Path) -> None:
+    reason = "requires options_backtest; ENABLE_OPTIONS_STRATEGY is not true"
+    results = {
+        "status": "complete",
+        "results": [
+            {
+                "case_id": "CORE-OPTSTRAT-CAPABILITY",
+                "verdict": "skipped_not_applicable",
+                "reason": reason,
+                "observed_outcome": "not_run",
+            }
+        ],
+    }
+    cases = {"CORE-OPTSTRAT-CAPABILITY": {"id": "CORE-OPTSTRAT-CAPABILITY", "query": "q"}}
+
+    output = render_report.render(results, cases, {}, "2026-09-27T00:00:00Z", tmp_path)
+
+    assert ">skipped_not_applicable</span>" in output
+    assert ">inconclusive_harness</span>" not in output
+    assert '<div class="cl">skipped not applicable</div>' in output
+    assert reason in output
+
+
 def test_render_surfaces_semantic_checks_costs_and_abort_reason(tmp_path: Path) -> None:
     results = {
         "estimated_model_requests": 6,

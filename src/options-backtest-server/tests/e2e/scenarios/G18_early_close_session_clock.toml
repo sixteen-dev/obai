@@ -1,0 +1,161 @@
+# G18: a 13:00 early close moves the whole slot program (C06). On the genuine early-close
+# session 2024-03-04 the entry decides at 12:45 and fills at 12:46 from quotes generated at those
+# instants. On 2024-03-11, made a 13:00 session by the EarlyClose override while its data stay at
+# regular hours (phantom post-close data), the 12:45 decision sees no spot and skips: no quote
+# observed after the close is ever used.
+id = "G18"
+proves = ["C06"]
+derived_by = "C2"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-12" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { take_profit = { basis = "initial_credit", fraction = 0.05 } } } }
+
+[market]
+early_closes = ["2024-03-04"]  # generated as a genuine 13:00 session: DEC 12:45, F1 12:46 ...
+weekly_dtes = [11, 18]         # 2024-03-15 and 2024-03-22 (both Fridays)
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-11: the session table closes at 13:00; its generated data stay at 15:45 ... 16:00.
+[[market.overrides]]
+kind = "early_close"
+session = "2024-03-11"
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "PRICING_INPUT_UNAVAILABLE"]
+open_positions = []
+derivation = """
+Conventions as G01 (m = 100, $1.00 per contract side, T+1, S = 5000.00, DF = 1).
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. Slots on a 13:00 session:
+DEC 12:45, F1 12:46, F2 12:47, F3 12:48, CLOSE 13:00, CUT 23:59:59 (America/New_York).
+Weekly entry on Mondays; take_profit 0.05 of initial credit.
+
+2024-03-04 DEC 12:45 (early close; Monday; flat): expiries 2024-03-15 (dte 11, in [9, 13]) and
+  2024-03-22 (dte 18, out). Spot = the 12:45 INDEX_VALUE 5000.00 (0 s old <= 60 s); zero rates
+  (available at this DEC); F from the generated 12:45 quotes of the five nearest strikes.
+  Entry as G01 from the 12:45 pins: D = -90, fees 2, limit -90.
+2024-03-04 F1 12:46: pins, observed 12:46 > 12:45 -> fill: net_debit -90.00, fees 2.00.
+2024-03-04 CLOSE 13:00: both legs marked from their generated 13:00 quotes.
+Account 2024-03-04: cash 10000; receivable 90; payable 2; encumbrance 502; headroom 9496.
+2024-03-05 (regular session): as G01: DEC LiquidationPnL = 0 + 88 - 80 - 2 = 6 >= 4.5 ->
+  EXIT (TAKE_PROFIT), limit 80; F1 fill at D = 80, fees 2.
+Account 2024-03-05: cash 10088; receivable 0; payable 82; encumbrance 0; headroom 10006;
+  mid_nlv 10006.
+2024-03-06 .. 2024-03-08: unscheduled, flat: no decision. 2024-03-06 OPEN: cash 10006.
+2024-03-11 DEC 12:45 (EarlyClose override; Monday, scheduled, flat, not final): expiries
+  2024-03-15 (dte 4, out) and 2024-03-22 (dte 11, in). The view reads only 2024-03-11's own
+  index values (item 11: never across a session, so 2024-03-08's are never candidates), and
+  those (15:45 ... 16:00) are observed after its 13:00 close, so none is visible at 12:45 ->
+  spot unavailable (the session's curve, available at the generated 15:45 DEC, is too) -> expiry
+  2024-03-22 skipped with PRICING_INPUT_UNAVAILABLE (warning); no package -> ENTRY_SKIPPED.
+  [Ccheck: the earlier text had the view see 2024-03-08's 16:00 value and reject it for age;
+  item 11 excludes it outright. Same outcome, no expected value changes.]
+  Nothing observed after 13:00 decides, fills or marks anything on 2024-03-11.
+2024-03-12 (final; Tuesday, unscheduled, flat): no decision.
+Account 2024-03-12: cash 10006; payable 0; headroom 10006; mid_nlv 10006.
+final_equity_usd = 10006.
+Campaign c1: basis 90; realized_pnl = -(-80 + 70) = 10; fees 4; closed by take_profit.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, PRICING_INPUT_UNAVAILABLE (2024-03-11).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+limit = "-90.00"
+campaign_id = "c1.g1"
+
+[[expected.fills]]
+session = "2024-03-05"
+slot = "F1"
+purpose = "exit"
+packages = 1
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+campaign_id = "c1.g1"
+
+[expected.account."2024-03-04"]
+cash = "10000.00"
+receivable = "90.00"
+payable = "2.00"
+encumbrance = "502.00"
+headroom = "9496.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "82.00"
+encumbrance = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-03-11"]
+cash = "10006.00"
+payable = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-03-12"]
+cash = "10006.00"
+payable = "0.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-05"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "take_profit"

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # FMP API Configuration
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
 
+    # Congressional trade disclosures: a public Hugging Face dataset, no key.
+    huggingface_base_url: str = "https://huggingface.co"
+    congress_dataset_repo: str = "austin-starks/congressional-stock-trades"
+    congress_refresh_check_seconds: int = Field(default=3600, ge=0)
+
     # Server Configuration
     server_name: str = "events-news-server"
     server_version: str = Field(default_factory=_read_version)

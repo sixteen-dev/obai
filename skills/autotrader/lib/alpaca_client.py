@@ -31,9 +31,36 @@ from .models import AccountInfo, OrderInfo, PositionInfo
 # trades aren't accidentally counted against the next exchange day.
 _US_EXCHANGE_TZ = ZoneInfo("America/New_York")
 
+# Largest page GetOrdersRequest will return. Callers that must reason about
+# every open order compare their result length against this same bound.
+MAX_ORDER_PAGE = 500
+
 
 class AlpacaClientError(Exception):
     """Error from Alpaca API operations."""
+
+
+class OrderRejectedError(AlpacaClientError):
+    """The broker answered with a verdict, so no order was created."""
+
+
+def _is_definite_rejection(status_code: int | None) -> bool:
+    """Report whether a status code proves the broker refused the order.
+
+    A 4xx response means the request reached the broker and was processed, so
+    no order exists. 408 and 429 are transport-level answers, not verdicts, and
+    a 5xx may follow an order the broker already created.
+
+    Args:
+        status_code: HTTP status from the APIError, or None when it carries no
+            HTTP response (a transport failure).
+
+    Returns:
+        True when the submission provably did not create an order.
+    """
+    if status_code is None:
+        return False
+    return 400 <= status_code < 500 and status_code not in {408, 429}
 
 
 def _safe_float(value: object) -> float:
@@ -97,6 +124,15 @@ class AlpacaClient:
             secret_key=secret_key,
             paper=True,  # ALWAYS paper — hard-coded
         )
+        # TradingClient does not expose RESTClient's retry_attempts option. The
+        # SDK replays on a 429 or 504, and a 504 on POST /orders may follow an
+        # order the broker already created, so a submission must be reconciled
+        # by client_order_id rather than replayed. Fail loud if the private
+        # attribute is ever renamed, instead of silently restoring replay.
+        if not hasattr(self._client, "_retry"):
+            msg = "alpaca-py no longer exposes TradingClient._retry; POST replay cannot be disabled"
+            raise AlpacaClientError(msg)
+        self._client._retry = 0
 
     def get_account(self) -> AccountInfo:
         """Get account information with all numerics as float."""
@@ -119,6 +155,7 @@ class AlpacaClient:
             daily_pnl=round(equity - last_equity, 2),
             daytrade_count=int(getattr(acct, "daytrade_count", 0) or 0),
             pattern_day_trader=bool(getattr(acct, "pattern_day_trader", False)),
+            account_id=str(getattr(acct, "id", "")),
         )
 
     def get_positions(self) -> list[PositionInfo]:
@@ -141,6 +178,56 @@ class AlpacaClient:
 
         return self._map_position(pos)
 
+    def prepare_order(  # noqa: PLR0913
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str = "market",
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        time_in_force: str = "day",
+        client_order_id: str | None = None,
+    ) -> MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest:
+        """Validate order parameters and build the alpaca-py request object.
+
+        Call this before persisting anything durable: it raises for every
+        parameter error that ``submit_order`` would otherwise hit after the
+        caller has already recorded an intent.
+
+        Args:
+            symbol: Ticker symbol.
+            side: 'buy' or 'sell'.
+            qty: Number of shares.
+            order_type: 'market', 'limit', 'stop', or 'stop_limit'.
+            limit_price: Required for limit/stop_limit orders.
+            stop_price: Required for stop/stop_limit orders.
+            time_in_force: 'day', 'gtc', etc.
+            client_order_id: Stable identifier for retry reconciliation.
+
+        Returns:
+            The validated request object, ready to submit.
+
+        Raises:
+            ValueError: If parameters are invalid.
+        """
+        mapped_side = _SIDE_MAP.get(side.lower())
+        if mapped_side is None:
+            msg = f"Invalid side '{side}'. Must be 'buy' or 'sell'."
+            raise ValueError(msg)
+
+        order_data = self._build_order_request(
+            symbol.upper(),
+            mapped_side,
+            qty,
+            order_type,
+            limit_price,
+            stop_price,
+            _TIF_MAP.get(time_in_force.lower(), TimeInForce.DAY),
+        )
+        order_data.client_order_id = client_order_id
+        return order_data
+
     def submit_order(  # noqa: PLR0913
         self,
         symbol: str,
@@ -150,6 +237,7 @@ class AlpacaClient:
         limit_price: float | None = None,
         stop_price: float | None = None,
         time_in_force: str = "day",
+        client_order_id: str | None = None,
     ) -> OrderInfo:
         """Submit a trading order.
 
@@ -161,32 +249,29 @@ class AlpacaClient:
             limit_price: Required for limit/stop_limit orders.
             stop_price: Required for stop/stop_limit orders.
             time_in_force: 'day', 'gtc', etc.
+            client_order_id: Stable identifier for retry reconciliation.
 
         Returns:
             Order confirmation.
 
         Raises:
-            AlpacaClientError: If submission fails.
+            OrderRejectedError: If the broker refused the order outright.
+            AlpacaClientError: If submission fails for any other reason.
             ValueError: If parameters are invalid.
 
         """
-        mapped_side = _SIDE_MAP.get(side.lower())
-        if mapped_side is None:
-            msg = f"Invalid side '{side}'. Must be 'buy' or 'sell'."
-            raise ValueError(msg)
-
-        tif = _TIF_MAP.get(time_in_force.lower(), TimeInForce.DAY)
+        order_data = self.prepare_order(
+            symbol,
+            side,
+            qty,
+            order_type,
+            limit_price,
+            stop_price,
+            time_in_force,
+            client_order_id,
+        )
 
         try:
-            order_data = self._build_order_request(
-                symbol.upper(),
-                mapped_side,
-                qty,
-                order_type,
-                limit_price,
-                stop_price,
-                tif,
-            )
             order = self._client.submit_order(order_data)
         except APIError as exc:
             _logger.error(
@@ -195,8 +280,11 @@ class AlpacaClient:
                 side=side,
                 qty=qty,
                 order_type=order_type,
+                status_code=exc.status_code,
                 error=str(exc),
             )
+            if _is_definite_rejection(exc.status_code):
+                raise OrderRejectedError(str(exc)) from exc
             raise AlpacaClientError(str(exc)) from exc
 
         result = self._map_order(order)
@@ -210,6 +298,16 @@ class AlpacaClient:
             status=result.status,
         )
         return result
+
+    def get_order_by_client_id(self, client_order_id: str) -> OrderInfo | None:
+        """Reconcile a submission; only a broker 404 means no order found."""
+        try:
+            order = self._client.get_order_by_client_id(client_order_id)
+        except APIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise AlpacaClientError(str(exc)) from exc
+        return self._map_order(order)
 
     def get_orders(self, status: str = "open", limit: int = 50) -> list[OrderInfo]:
         """Get orders filtered by status ('open', 'closed', 'all')."""
@@ -388,8 +486,8 @@ class AlpacaClient:
         """Map Alpaca position to typed PositionInfo."""
         return PositionInfo(
             symbol=str(getattr(pos, "symbol", "")),
-            qty=_safe_float(getattr(pos, "qty", 0)),
-            side=str(getattr(pos, "side", "long")),
+            qty=abs(_safe_float(getattr(pos, "qty", 0))),
+            side=_status_value(getattr(pos, "side", "long")),
             avg_entry_price=_safe_float(getattr(pos, "avg_entry_price", 0)),
             current_price=_safe_float(getattr(pos, "current_price", 0)),
             market_value=_safe_float(getattr(pos, "market_value", 0)),
@@ -411,15 +509,16 @@ class AlpacaClient:
         return OrderInfo(
             order_id=str(getattr(order, "id", "")),
             symbol=str(getattr(order, "symbol", "")),
-            side=str(getattr(order, "side", "")),
+            side=_status_value(getattr(order, "side", "")),
             qty=_safe_float(getattr(order, "qty", 0)),
             filled_qty=_safe_float(getattr(order, "filled_qty", 0)),
-            order_type=str(getattr(order, "type", "")),
+            order_type=_status_value(getattr(order, "type", "")),
             status=_status_value(getattr(order, "status", None)),
             limit_price=_safe_float(lp) if lp is not None else None,
             stop_price=_safe_float(sp) if sp is not None else None,
             filled_avg_price=_safe_float(fap) if fap is not None else None,
-            time_in_force=str(getattr(order, "time_in_force", "")),
+            time_in_force=_status_value(getattr(order, "time_in_force", "")),
             submitted_at=str(getattr(order, "submitted_at", "")),
             filled_at=str(filled_at) if filled_at is not None else None,
+            client_order_id=getattr(order, "client_order_id", None),
         )

@@ -47,6 +47,23 @@ class MCPServerError(MCPClientError):
         self.response_data = response_data or {}
 
 
+def _input_schema(tool: Tool) -> dict[str, Any]:
+    """Return a tool's input schema under either MCP SDK field name.
+
+    SDK v2 renamed ``inputSchema`` to ``input_schema``; read the new name first so
+    the old alias is touched only on v1.
+
+    Raises:
+        MCPClientError: If the tool carries neither field.
+    """
+    schema = getattr(tool, "input_schema", None)
+    if schema is None:
+        schema = getattr(tool, "inputSchema", None)
+    if not isinstance(schema, dict):
+        raise MCPClientError(f"Tool {tool.name} has no input schema")
+    return schema
+
+
 class MCPClient:
     """Async client for MCP servers using FastMCP's native client.
 
@@ -130,7 +147,7 @@ class MCPClient:
                 tool_dict: dict[str, Any] = {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "inputSchema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    "inputSchema": _input_schema(tool),
                 }
                 tool_dicts.append(tool_dict)
 

@@ -1,0 +1,158 @@
+# G11: the quote-age bound is inclusive. A decision quote observed 121 s before DEC is stale and
+# defers the exit. The next session's quote, observed exactly 120 s before DEC, is usable.
+id = "G11"
+proves = ["C08"]
+derived_by = "C1"
+checked_by = "Ccheck"
+window = { start = "2024-03-04", end = "2024-03-07" }
+strategy = { file = "spxw_put_credit_vertical.json", patch = { exits = { max_holding_sessions = 2 } } }
+
+[market]
+# defaults.toml unchanged. QuoteStale moves observed_at back and keeps available_at (= DEC).
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "2.00"
+ask = "2.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-04"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.10"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-05 DEC: valid prices, observed 121 s before DEC (the session's only earlier quote).
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_stale"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-05"
+slots = ["DEC"]
+seconds = 121
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-05"
+slots = ["DEC"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+# 2024-03-06 DEC: the same prices, observed 120 s before DEC; F1 quotes are fresh.
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["DEC", "F1"]
+bid = "1.00"
+ask = "1.20"
+bid_size = 50
+ask_size = 50
+
+[[market.overrides]]
+kind = "quote_stale"
+contract = "SPXW:2024-03-15:P:4900"
+session = "2024-03-06"
+slots = ["DEC"]
+seconds = 120
+
+[[market.overrides]]
+kind = "quote_pin"
+contract = "SPXW:2024-03-15:P:4895"
+session = "2024-03-06"
+slots = ["DEC", "F1"]
+bid = "0.40"
+ask = "0.50"
+bid_size = 50
+ask_size = 50
+
+[expected]
+calculation_status = "valid"
+headline_eligible = true
+final_equity_usd = "10006.00"
+warning_codes = ["SYNTHETIC_FIXTURE_NOT_HISTORICAL", "EXIT_DEFERRED"]
+open_positions = []
+derivation = """
+Conventions as G01; max_holding_sessions 2; take_profit and stop_loss null.
+P4900 = SPXW:2024-03-15:P:4900, P4895 = SPXW:2024-03-15:P:4895. QUOTE_MAX_AGE = 120 s, inclusive.
+
+2024-03-04: entry as G01: D -90, fees 2. 2024-03-05 OPEN cash = 10088.
+2024-03-05 DEC: TIME_EXIT (held session 2 >= 2). P4900's latest visible quote of the session is its
+  DEC observation, observed DEC - 121 s: age 121 s > 120 s -> no usable quote -> no quote_ok ->
+  EXIT_DEFERRED (warning); no order.
+Account 2024-03-05: cash 10088; receivable 0; payable 0; encumbrance 502; headroom 9586.
+2024-03-06 DEC: TIME_EXIT (held 3). P4900 DEC observed DEC - 120 s: age 120 s <= 120 s -> usable
+  (VALID 1.00/1.20); P4895 0.40/0.50 -> EXIT; close D = 100*1.20 - 100*0.40 = 80; limit 80.
+2024-03-06 F1: fresh F1 quotes observed after DEC: D = 80 <= 80, capacity 5 >= 1, post-fill
+  headroom 10088 - 82 = 10006 >= 0 -> fill; fees 2.
+Account 2024-03-06: cash 10088; payable 82; encumbrance 0; headroom 10006; mid_nlv 10006.
+2024-03-07 (final; flat): OPEN cash = 10006; final_equity_usd 10006.
+Campaign c1: realized_pnl 10 (as G01), fees 4, exit_trigger time_exit, end 2024-03-06.
+Warnings: SYNTHETIC_FIXTURE_NOT_HISTORICAL, EXIT_DEFERRED (2024-03-05).
+"""
+
+[[expected.fills]]
+session = "2024-03-04"
+slot = "F1"
+purpose = "entry"
+legs = [["SPXW:2024-03-15:P:4900", -1, "2.00"], ["SPXW:2024-03-15:P:4895", 1, "1.10"]]
+net_debit = "-90.00"
+fees = "2.00"
+
+[[expected.fills]]
+session = "2024-03-06"
+slot = "F1"
+purpose = "exit"
+legs = [["SPXW:2024-03-15:P:4900", 1, "1.20"], ["SPXW:2024-03-15:P:4895", -1, "0.40"]]
+net_debit = "80.00"
+fees = "2.00"
+limit = "80.00"
+
+[expected.account."2024-03-05"]
+cash = "10088.00"
+receivable = "0.00"
+payable = "0.00"
+encumbrance = "502.00"
+headroom = "9586.00"
+
+[expected.account."2024-03-06"]
+cash = "10088.00"
+payable = "82.00"
+headroom = "10006.00"
+mid_nlv = "10006.00"
+
+[expected.account."2024-03-07"]
+cash = "10006.00"
+mid_nlv = "10006.00"
+
+[[expected.campaigns]]
+campaign_id = "c1"
+generations = ["c1.g1"]
+start_session = "2024-03-04"
+end_session = "2024-03-06"
+basis = "90.00"
+realized_pnl = "10.00"
+fees = "4.00"
+rolls = 0
+outcome = "closed"
+exit_trigger = "time_exit"

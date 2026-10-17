@@ -521,6 +521,10 @@ _RUNTIME_ENV_EXACT = frozenset(
         "OBAI_REGRESSION_CONFIG_FINGERPRINT",
         "STRATEGY_MAX_TURNS",
         "CRYPTO_MAX_TURNS",
+        "OPTIONS_STRATEGY_MAX_TURNS",
+        # The optional-component opt-in decides whether the options route
+        # exists at all, so a shell export must change the fingerprint too.
+        "ENABLE_OPTIONS_STRATEGY",
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE",
         "OPENAI_ORG_ID",

@@ -51,7 +51,13 @@ body {
     min-height: 100vh;
     padding: 14px;
     overflow: hidden;
-    background: var(--bg);
+    /* A faint static glow behind the panels. On flat black the .glass
+       backdrop blur has nothing to refract, so the panels read as flat grey;
+       this gives them depth at the cost of one background paint. */
+    background:
+        radial-gradient(1200px 700px at 12% -10%, rgba(10, 132, 255, 0.10), transparent 60%),
+        radial-gradient(900px 600px at 100% 110%, rgba(122, 206, 151, 0.06), transparent 60%),
+        var(--bg);
     color: var(--text);
     font-family: var(--font-text);
     font-size: 15px;
@@ -947,6 +953,83 @@ body {
     padding: 0 20px 18px;
 }
 
+/* One-time hint that the shipped hub default moved past the saved model.
+   Quiet by design: it points at settings, it never changes the model. */
+.model-notice {
+    align-self: center;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 100%;
+    padding: 6px 6px 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    backdrop-filter: blur(18px);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    animation: fadeUp 220ms ease;
+}
+
+.model-notice.hidden {
+    display: none;
+}
+
+.model-notice-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+.model-notice-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-notice-text strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.model-notice-action,
+.model-notice-close {
+    flex: none;
+    border: none;
+    background: transparent;
+    font-family: var(--font-text);
+    cursor: pointer;
+    transition: color var(--transition), background var(--transition);
+}
+
+.model-notice-action {
+    padding: 4px 8px;
+    border-radius: 999px;
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.model-notice-action:hover {
+    background: rgba(10, 132, 255, 0.12);
+}
+
+.model-notice-close {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+}
+
+.model-notice-close:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+}
+
 #query-input {
     flex: 1;
     min-height: 28px;
@@ -1363,5 +1446,25 @@ body {
     #show-tools-btn {
         right: 10px;
         top: 10px;
+    }
+}
+
+::selection {
+    background: rgba(10, 132, 255, 0.35);
+    color: var(--text);
+}
+
+:focus-visible {
+    outline: 2px solid rgba(10, 132, 255, 0.7);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }

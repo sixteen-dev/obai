@@ -6,6 +6,234 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-10
+
+Minor: AutoTrader becomes safe to schedule, the GPT-6 model family becomes the
+default, an opt-in options-strategy specialist arrives, and the events-news
+server gains congressional trade disclosures. AutoTrader paper orders now
+submit exactly once per intent across crashes, timeouts and concurrent jobs;
+signals are evaluated in code from verified completed bars instead of from
+prose; and every specialist skill routes through MCP directly, so the bundle
+runs on a host that has no OBaI CLI. A standalone MCP/paper-trading setup
+reference ships with it.
+
+### Added
+
+- **Submit-once execution** (`skills/autotrader/lib/execution.py`). Every order
+  is bound to a stable `client_order_id`, serialized behind a POSIX file lock,
+  and recorded in a durable intent under `AUTOTRADER_STATE_DIR` that is fsynced
+  and atomically renamed into place *before* the POST. A repeated intent returns
+  the broker's current order instead of submitting again; a crash or timeout
+  leaves the ID blocked for reconciliation rather than replayed. The SDK's
+  automatic POST replay is disabled, and `AlpacaClient` now fails loudly if the
+  private attribute it sets is ever renamed upstream.
+- **`submission_state` on every order failure.** `not_submitted` means no order
+  exists — including a broker verdict; `unknown` means an order may exist and
+  must be reconciled by its client order ID. Both order scripts emit the same
+  payload on stdout, so a caller reading one stream cannot miss it. A broker 4xx
+  is a verdict, so it releases the intent instead of wedging that ID forever.
+- **`scripts.evaluate_signals`** evaluates entry/exit predicates from a verified
+  completed-bar snapshot with the equity engine's crossover semantics, and
+  refuses anything outside the live adapter's narrow capability set. Its input
+  contract is `skills/autotrader/signal-input.md`.
+- **`--reduce-only`** on `execute_trade`, rejecting any order that would grow or
+  reverse the position, so a stale quantity cannot flip a long into a short.
+  `close_position` applies it implicitly.
+- **New risk gates:** `MAX_POSITIONS` (held plus pending symbols), a
+  pending-order duplicate check per symbol, conservative notional and cash
+  reservations for outstanding orders, and fail-closed validation of account,
+  position and order state. Pure reductions stay eligible after the entry
+  circuit breakers so a protective exit is never blocked by a daily limit.
+- **`skills/obai-hub/setup.md`** and **`skills/autotrader/setup-prompt.md`**:
+  standalone installation, MCP registration (including the OpenClaw
+  `mcp.servers` shape), provider credentials, scheduled-job layout and the
+  acceptance gates a host must pass before paper execution is enabled.
+- **Skill/server drift guard** (`test_mcp_skill_contracts.py`): every tool each
+  MCP server registers must be named in its specialist skill. The guard
+  cross-checks that it recognized every registration form, so a new form cannot
+  make it vacuous.
+- **Options strategy specialist (opt-in).** A new `options_strategy_analysis`
+  Hub route is backed by the local `options-backtest-server` on port 8012,
+  which has two read-only tools: one reports capabilities and one validates a
+  strategy. Historical options backtests are not available yet. The
+  specialist says so with the server's typed reason
+  (`DATA_ENTITLEMENT_MISSING`), and the Hub never substitutes an equity
+  proxy, current-market analysis or invented performance figures. The route
+  is off by default; see the opt-in entry under Changed.
+- **Congressional stock-trade disclosures** on the events-news server
+  (`events_news_get_congress_trades_tool`), filterable by ticker, member,
+  chamber and a disclosure-date window. Backed by the public Hugging Face
+  dataset `austin-starks/congressional-stock-trades`, loaded in full per
+  upstream commit into in-memory DuckDB and rechecked hourly. Each trade links
+  its official House or Senate filing and carries the disclosure lag.
+
+### Changed
+
+- **Specialist skills route through MCP directly.** `obai-hub` no longer assumes
+  the OBaI CLI or a shared host for the server ports, error handling allows one
+  bounded transport retry on read-only calls instead of forbidding all retries,
+  and durable task state (job IDs, artifact IDs, tested JSON) is required before
+  yielding on a pending job. `autotrader` drops its `obai query` wrapper.
+- **AutoTrader's daily routine** reconciles against the broker rather than its
+  own memory: `get_portfolio` now returns open and recent orders with truncation
+  flags, holdings change only on confirmed fills, a closed market still permits
+  reconciliation, and `dry_run` defaults to true until a host's validation gates
+  pass.
+- Skill documentation corrections verified against server code: the movers
+  `index` literal is `nasdaq100`, the earnings calendar is a capped page with
+  truncation flags, `dividend_more_than` filters `lastAnnualDividend` in dollars
+  rather than a yield, `greeks_units` exists on `options_compute_greeks_tool`
+  only (position risk profiles report per-position Greeks with no units field),
+  research results can carry a `future` freshness value, and the prediction
+  market leaderboard takes `time_period`/`order_by`, not `period`.
+- **Default models move to the GPT-6 family.** The Hub now ships on
+  `gpt-6.1-sol` at `xhigh` effort (was `gpt-5.6-terra` / `max`). Market data,
+  fundamentals, events/news, options, screener, portfolio, and research run
+  `gpt-6-luna` at `xhigh` (was `gpt-5.6-luna` / `medium`). Strategy, crypto, and
+  prediction markets run `gpt-6.1-sol`, still at `medium`, and the guardrail
+  runs `gpt-6-luna`. `gpt-6-sol`, `gpt-5.6-sol` and `gpt-5.6-terra` remain
+  selectable hub models. An existing `~/.obai/settings.json` or
+  `ORCHESTRATOR_*` env pin still wins over the new hub default. `gpt-6.1-sol`
+  rejects the `none` effort tier, so a `none` override on the Hub, strategy,
+  crypto, or prediction markets now fails at request time.
+- Hub compaction falls back to a documented input window for `gpt-6.1-sol` and
+  `gpt-6-sol`, which the installed Agents SDK does not know yet, instead of
+  disabling compaction.
+- **The options-backtest server and `options_strategy_analysis` are opt-in.**
+  A default install, start, upgrade or `obai status` no longer pulls, builds,
+  starts or checks `options-backtest-server`, and the Hub has no
+  options-strategy route: `ENABLE_OPTIONS_STRATEGY` now defaults to `false`.
+  Opt in with `--with-options-backtest` on `install.sh`, `setup.sh`,
+  `obai start` or `obai restart`; `setup.sh` saves the choice to
+  `~/.obai/.env`, later runs and `obai upgrade` keep it, and
+  `--without-options-backtest` turns it off and removes the container.
+  `teardown.sh`, `obai stop` and `obai teardown` remove the server in both
+  states. Without the opt-in, the E2E gate records the four `CORE-OPTSTRAT-*`
+  cases `skipped_not_applicable` instead of running them. A machine already
+  running the server has its container removed by the next `obai start`,
+  `obai restart` or `obai upgrade` unless it opts in. `obai start` with either
+  flag restarts running services so the Web UI's Hub applies the change; a
+  flag passed straight to `setup.sh` or `install.sh`, or a run that removes a
+  leftover container, leaves an already-running Web UI on its old setting
+  until `obai restart`, and the setup summary says so. The CLI and the gate
+  read the opt-in from `~/.obai/.env` even when `OBAI_HOME` points `setup.sh`
+  elsewhere, so a later `obai start` without that `OBAI_HOME` finds no opt-in
+  and removes the container.
+
+### Fixed
+
+- **The installed `obai` CLI ran untested dependency majors.** `uv tool install`
+  ignores `uv.lock`, so `setup.sh` installed the newest fastmcp (4.x) and mcp
+  (2.x) instead of the locked 3.2.0 and 1.30.0. The install is now constrained
+  to versions exported from the frozen lock. The MCP client also reads a tool's
+  schema as `input_schema` (SDK v2) or `inputSchema` (v1) and fails loudly when
+  neither is present, instead of silently presenting the tool as argument-free.
+- **AutoTrader could size an option contract as one share.** Its risk checker
+  sizes share orders, and nothing stopped an option symbol, so a contract's
+  100-share exposure would have been understated a hundredfold. `lib/risk.py`
+  now rejects OCC option-contract symbols (bare or `O:`-prefixed) before
+  contacting the broker, returning the usual `not_submitted` rejection. The
+  skill docs now state the scope (long US stocks and ETFs, never options, crypto
+  or prediction markets), define a deployed strategy, describe options data as
+  research input with its quality flags, and list OBaI's current capabilities;
+  the stale "89 indicators" claim now reads "over 100".
+- **The backtest-server image no longer builds polars-talib 0.1.5 from source.**
+  crates.io yanked `zip 0.6.x`, so the Rust build stopped resolving and the image
+  failed to build. The source build also force-reinstalled 0.1.5 over the 0.1.6
+  the service requires, so containers computed indicators on a version no test
+  ran. The image now installs the locked 0.1.6 wheel (x86_64 and aarch64) with
+  `uv sync --locked`.
+- **Options-backtest fills could exceed the campaign risk cap.** Sizing priced
+  risk at decision naturals, but the order's limit adds `price_allowance_usd`
+  and the fill rechecked only funding, so a fill inside the limit could carry up
+  to the full allowance of extra risk while the run reported valid. Sizing now
+  prices risk at the order's limit (ADR 0002 §6), so no accepted fill exceeds
+  `max_campaign_risk_fraction`.
+- **Direct-MCP skills proxied options strategies with a share backtest.**
+  `obai-strategy` still required backtesting the closest equity approximation,
+  which the internal strategy prompt forbids for options structures, and the
+  direct-MCP hub had no options-backtesting route. A new `obai-options-backtest`
+  skill covers the optional server (port 8012): capabilities, validation, and
+  the unavailable historical backtest quoted with its `code` and
+  `missing_capability`. `obai-strategy` carries the options exception, and
+  `obai-hub` routes to it and registers the server in `mcp-config.json`.
+
+- **The live signal helper rejected every real strategy.** It gated indicator
+  parameters on `period`, while the backtest indicator catalog — and therefore
+  every frozen strategy JSON — names the lookback `length`. Indicator types are
+  now also matched case-insensitively, as the engine does.
+- **Protective stops no longer double-count exposure.** A resting sell against a
+  held long is already inside `long_market_value`, so reserving its full
+  notional again made the 90% exposure gate unreachable past roughly 45% true
+  exposure — the exact configuration `context.md` requires. Pending orders are
+  now netted against the position they reduce, and an order that adds no
+  exposure needs no price, so a pending market exit no longer halts entries on
+  every other symbol.
+- **A parameter error could masquerade as an uncertain submission.** The order
+  request is validated against the SDK before the durable marker is written, so
+  only a failure that could have reached the broker reports `unknown`.
+- **A failed reconciliation lookup reported `not_submitted`** while an intent was
+  unresolved on disk, which is the opposite of the true state.
+- `AUTOTRADER_STATE_DIR` must now be absolute: a relative value silently gave
+  each working directory its own lock, voiding mutual exclusion between jobs.
+  The default state directory is also gitignored, so routine git commands can no
+  longer destroy intents the skill forbids deleting.
+- A pending-order price of zero no longer discards a usable limit or stop price.
+- Opik's ClickHouse container, which kept crashing, gets more memory (6 GB,
+  with swap held to the same cap) and at most four CPU cores. Its 18
+  self-monitoring log tables are no longer created, so they stop adding
+  inserts and disk use forever, and crash reports stay pinned off. The config
+  reaches ClickHouse through a Docker volume, so run `obai upgrade` (or
+  `./infra/opik/setup-volumes.sh` before recreating the container) to apply
+  it.
+- **Sector snapshot works again** (`market_data_get_market_snapshot_tool`). FMP
+  now requires a `date` and answered every call with 400. The tool walks back
+  from today, at most 7 days, to the latest session whose rows carry that date.
+  A weekend date returns nothing, and a date FMP has no snapshot for yet returns
+  stale rows from earlier sessions, so rows dated another day are never
+  returned as that day's snapshot.
+- **Short volume comes from FINRA** (`market_data_get_short_volume_tool`). FMP
+  has no short-volume endpoint (every call was a 404). The tool now makes one
+  request to FINRA's public Reg SHO daily dataset, which needs no API key. That
+  request covers the last year, and each day sums to FINRA's consolidated daily
+  file. The response states its scope: off-exchange trades reported to FINRA
+  only, not the stock's full volume and not short interest. `limit` is capped
+  at 60 trading days.
+- **Index options carry Greeks and IV** (`options_get_chain_snapshot_tool`,
+  `options_get_contract_snapshot_tool`). Massive returns Greeks, IV and the
+  underlying value for SPX, XSP and other index options only under its `I:`
+  form, so the bare root came back with quotes alone. The server now converts
+  index roots itself; the contract list keeps the bare root, which is the only
+  form it answers to.
+- **Single-contract snapshots work again.** The server stripped the `O:` prefix
+  from the contract symbol, so every lookup returned "Options contract not
+  found", for stocks as well as indexes.
+- **Index options report the underlying price.** Massive sends an index's level
+  as `underlying_asset.value`, not `price`, so `underlying_price` was null on
+  every SPX/XSP contract. Snapshots now also carry `underlying_timeframe`,
+  which shows when the underlying is delayed while option quotes are current.
+- **Latest quote and latest trade return data.** Massive's `/v2/last/*`
+  endpoints use one-letter keys (`p`, `P`, `s`, `t` …) and the filters read only
+  full names, so `options_get_latest_quote_tool` and
+  `options_get_latest_trade_tool` returned every field as null. A zero bid is
+  also kept as zero instead of becoming null.
+- **Option quotes carry data-quality flags.** Chain snapshots, contract
+  snapshots and the latest quote flag crossed, locked, zero-ask, no-bid,
+  negative and missing quotes, stale or untimed quotes, a missing or delayed
+  underlying, a midpoint below intrinsic value and missing Greeks. Chains add a
+  `data_quality` summary over every fetched contract. Values are never altered;
+  the options skill says which flags forbid pricing a leg. Quote vocabulary and
+  the 120 s stale bound (`MAX_QUOTE_AGE_SECONDS`) match the options-backtest
+  engine.
+- **Chains can be narrowed by strike.** `strike_min`/`strike_max` on the chain
+  snapshot keep a long chain from being trimmed before the strikes near spot.
+
+### Security
+
+- All open Dependabot alerts are cleared by raising the dependency floors in
+  every service: `pyjwt>=2.15.0`, `anyio>=4.14.2`, `urllib3>=2.8.0`,
+  `virtualenv>=21.7.13` (root) and `litellm` 1.88.6 (`src/obai`).
+
 ## [1.6.1] - 2026-09-07
 
 Patch: quantitative corrections to the backtest engine and its new indicator

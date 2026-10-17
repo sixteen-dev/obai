@@ -8,7 +8,12 @@
 const state = {
     sessions: [],
     activeSessionId: null,
-    processingSessionId: null,
+    // Sessions with a query in flight. The server runs them one at a time,
+    // but a user can submit in several conversations before the first ends.
+    processingSessions: new Set(),
+    // Session whose history fetch is in flight; sending waits for it so the
+    // late history render cannot wipe the new query's bubble and activity.
+    loadingSessionId: null,
     ws: null,
     isReady: false,
     reconnectAttempts: 0,
@@ -45,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
     checkHubStatus();
     connectWebSocket();
     loadSessions();
+    showModelNotice();
 });
 
 function connectWebSocket() {
@@ -73,6 +79,10 @@ function connectWebSocket() {
     };
 
     state.ws.onclose = () => {
+        // The server cancels a run whose socket closed, so end it here too.
+        for (const sessionId of [...state.processingSessions]) {
+            handleError({ session_id: sessionId, message: "Connection lost — the query was cancelled." });
+        }
         const delay = Math.min(1000 * Math.pow(2, state.reconnectAttempts), 10000);
         state.reconnectAttempts += 1;
         setTimeout(connectWebSocket, delay);
@@ -303,9 +313,8 @@ function ensureThinkingTrail(messageDiv) {
 
 function handleComplete(msg) {
     const completedSession = msg.session_id || state.activeSessionId;
-    if (state.processingSessionId === completedSession) {
-        state.processingSessionId = null;
-    }
+    state.processingSessions.delete(completedSession);
+    renderSessionList();
     updateSendButton();
 
     const isActiveSession = completedSession === state.activeSessionId;
@@ -338,10 +347,17 @@ function handleComplete(msg) {
         }
     }
 
-    if (streamingBubble && streamingText) {
+    // The server's response_text is the whole answer; streamingText misses
+    // whatever arrived while the user was viewing another conversation.
+    const finalText = msg.response_text || streamingText;
+    if (finalText && !streamingBubble) {
+        streamingBubble = appendSegmentBubble(ensureStreamingMessage());
+    }
+    if (streamingBubble && finalText) {
         streamingBubble.classList.remove("streaming");
+        streamingBubble.textContent = finalText;
         if (typeof marked !== "undefined") {
-            renderMarkdownInto(streamingBubble, streamingText);
+            renderMarkdownInto(streamingBubble, finalText);
         }
 
         if (msg.duration_ms && streamingMessage) {
@@ -367,9 +383,8 @@ function handleComplete(msg) {
 
 function handleError(msg) {
     const errorSession = msg.session_id || state.activeSessionId;
-    if (state.processingSessionId === errorSession) {
-        state.processingSessionId = null;
-    }
+    state.processingSessions.delete(errorSession);
+    renderSessionList();
     updateSendButton();
 
     const isActiveSession = errorSession === state.activeSessionId;
@@ -604,7 +619,7 @@ function renderSessionList() {
         const item = document.createElement("div");
         let className = "session-item";
         if (session.id === state.activeSessionId) className += " active";
-        if (session.id === state.processingSessionId) className += " processing";
+        if (state.processingSessions.has(session.id)) className += " processing";
         item.className = className;
         item.dataset.id = session.id;
 
@@ -634,7 +649,7 @@ async function createSession() {
         const session = await res.json();
         state.sessions.unshift(session);
         renderSessionList();
-        switchSession(session.id);
+        await switchSession(session.id);
         // The sidebar names the hub that will answer this chat. It is only
         // re-read on page load, on WS reconnect, and after Save, so a tab left
         // open across a model change would otherwise start a new chat still
@@ -652,6 +667,7 @@ async function switchSession(sessionId) {
     }
 
     state.activeSessionId = sessionId;
+    state.loadingSessionId = sessionId;
     renderSessionList();
 
     messagesDiv.textContent = "";
@@ -672,6 +688,14 @@ async function switchSession(sessionId) {
         console.error("Failed to load messages:", error);
     }
 
+    // The user moved on while this fetch was in flight; a newer
+    // switchSession owns the view now.
+    if (state.activeSessionId !== sessionId) {
+        return;
+    }
+    state.loadingSessionId = null;
+    updateSendButton();
+
     // Hand messages to the tool tree so it can rebuild from persisted
     // tool_data when the in-memory cache misses (e.g. after page reload).
     toolTree.switchSession(sessionId, messages);
@@ -690,7 +714,7 @@ async function switchSession(sessionId) {
     // streaming bubble + thinking trail so incoming text_deltas attach to a
     // labeled trail instead of a fresh "Thinking" stub. The next agent_switch
     // will overwrite the label.
-    if (state.processingSessionId === sessionId) {
+    if (state.processingSessions.has(sessionId)) {
         ensureStreamingMessage();
         const trail = ensureThinkingTrail(streamingMessage);
         const label = state.lastAgentBySession[sessionId] || "Working...";
@@ -762,8 +786,7 @@ function renderStoredMessage(msg) {
 
 async function sendQuery() {
     const text = queryInput.value.trim();
-    const activeBlocked = state.processingSessionId === state.activeSessionId;
-    if (!text || activeBlocked || !state.ws || !state.isReady) {
+    if (!text || isActiveSessionBusy() || !state.ws || !state.isReady) {
         return;
     }
 
@@ -774,7 +797,8 @@ async function sendQuery() {
         }
     }
 
-    state.processingSessionId = state.activeSessionId;
+    state.processingSessions.add(state.activeSessionId);
+    renderSessionList();
     updateSendButton();
 
     welcomeScreen.classList.add("hidden");
@@ -898,8 +922,12 @@ function scrollChatToBottom() {
 
 function updateSendButton() {
     const hasText = queryInput.value.trim().length > 0;
-    const activeBlocked = state.processingSessionId === state.activeSessionId;
-    sendBtn.disabled = !hasText || activeBlocked || !state.isReady;
+    sendBtn.disabled = !hasText || isActiveSessionBusy() || !state.isReady;
+}
+
+function isActiveSessionBusy() {
+    const sessionId = state.activeSessionId;
+    return state.processingSessions.has(sessionId) || state.loadingSessionId === sessionId;
 }
 
 const thinkingVerbsList = [
@@ -946,6 +974,61 @@ function compactModelName(name) {
         return preferred;
     }
     return preferred.slice(0, 27) + "...";
+}
+
+// Dismissal is keyed to the default it announced, so the next default change
+// is announced once more without any new code.
+const MODEL_NOTICE_KEY = "obai.modelNotice.dismissed";
+
+function readNoticeDismissal() {
+    try {
+        return localStorage.getItem(MODEL_NOTICE_KEY);
+    } catch (error) {
+        console.warn("Model notice dismissal unavailable:", error);
+        return null;
+    }
+}
+
+async function showModelNotice() {
+    // Offer a newer shipped default to anyone whose saved model predates it.
+    // It never switches the model: an older choice may well be deliberate.
+    const notice = document.getElementById("model-notice");
+    if (!notice) {
+        return;
+    }
+    try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) {
+            return;
+        }
+        const data = await res.json();
+        const latest = data.default_hub_model;
+        const pinnedByEnv = isEnvOverride((data.env_overrides || {}).hub_model);
+        if (!latest || pinnedByEnv || data.saved.hub_model === latest) {
+            return;
+        }
+        if (readNoticeDismissal() === latest) {
+            return;
+        }
+        notice.dataset.model = latest;
+        document.getElementById("model-notice-name").textContent = latest;
+        notice.classList.remove("hidden");
+    } catch (error) {
+        console.error("Failed to check for a newer default model:", error);
+    }
+}
+
+function dismissModelNotice() {
+    const notice = document.getElementById("model-notice");
+    if (!notice) {
+        return;
+    }
+    notice.classList.add("hidden");
+    try {
+        localStorage.setItem(MODEL_NOTICE_KEY, notice.dataset.model || "");
+    } catch (error) {
+        console.warn("Could not remember model notice dismissal:", error);
+    }
 }
 
 async function renderPendingHubHint() {
@@ -1070,6 +1153,11 @@ function setupEventListeners() {
     });
 
     document.getElementById("settings-btn")?.addEventListener("click", openSettings);
+    document.getElementById("model-notice-open")?.addEventListener("click", () => {
+        dismissModelNotice();
+        openSettings();
+    });
+    document.getElementById("model-notice-close")?.addEventListener("click", dismissModelNotice);
     document.getElementById("settings-close-btn")?.addEventListener("click", closeSettings);
     document.getElementById("settings-overlay")?.addEventListener("click", (e) => {
         if (e.target.id === "settings-overlay") {

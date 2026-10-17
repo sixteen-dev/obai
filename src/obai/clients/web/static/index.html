@@ -129,6 +129,12 @@
         </div>
 
         <div id="composer-shell">
+            <div id="model-notice" class="model-notice hidden" role="status">
+                <span class="model-notice-dot" aria-hidden="true"></span>
+                <span class="model-notice-text"><strong id="model-notice-name"></strong> is now the default hub model</span>
+                <button id="model-notice-open" class="model-notice-action" type="button">Switch in settings</button>
+                <button id="model-notice-close" class="model-notice-close" type="button" aria-label="Dismiss">&times;</button>
+            </div>
             <div id="input-area" class="glass">
                 <textarea id="query-input" placeholder="Ask anything about markets..." rows="1"></textarea>
                 <button id="send-btn" disabled aria-label="Send message">

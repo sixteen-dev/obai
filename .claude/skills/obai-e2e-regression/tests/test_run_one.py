@@ -436,6 +436,21 @@ def _offline_input_fingerprint() -> str:
     )
 
 
+def test_optional_capability_opt_in_is_bound_into_the_runtime_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shell export of the opt-in cannot change routing without changing the manifest."""
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-key")
+    assert {"ENABLE_OPTIONS_STRATEGY", "OPTIONS_STRATEGY_MAX_TURNS"} <= run_one._RUNTIME_ENV_EXACT
+
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "false")
+    disabled = _offline_input_fingerprint()
+    assert run_one.runtime_environment_binding()["public"]["ENABLE_OPTIONS_STRATEGY"] == "false"
+    monkeypatch.setenv("ENABLE_OPTIONS_STRATEGY", "true")
+
+    assert _offline_input_fingerprint() != disabled
+
+
 def test_input_fingerprint_changes_when_the_hub_settings_file_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

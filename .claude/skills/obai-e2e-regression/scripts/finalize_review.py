@@ -86,7 +86,7 @@ def _load_bound_packets(
     run_id = preliminary.get("run_id")
     packets: dict[str, tuple[dict[str, Any], str]] = {}
     for result in raw_results:
-        if not isinstance(result, dict) or result.get("verdict") == "skipped_dependency":
+        if not isinstance(result, dict) or result.get("verdict") in run_suite.SKIP_VERDICTS:
             continue
         case_id = result.get("case_id")
         if not isinstance(case_id, str) or not case_id:
@@ -123,6 +123,41 @@ def _load_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReviewError(f"{path} root must be an object")
     return value
+
+
+def _manifest_not_applicable(manifest: dict[str, Any], planned_ids: set[str]) -> dict[str, str]:
+    """Read the cases the run recorded as not applicable, in plan order.
+
+    A manifest written before optional capabilities existed has no entry and
+    none such cases; any not-applicable judgment then fails authentication.
+
+    Args:
+        manifest: The authenticated execute manifest.
+        planned_ids: Ids of the manifest's planned cases.
+
+    Returns:
+        Case id to the recorded not-applicable reason.
+
+    Raises:
+        ReviewError: The entry list is malformed or names an unplanned case.
+    """
+    entries = manifest.get("not_applicable", [])
+    if not isinstance(entries, list):
+        raise ReviewError("run manifest not_applicable must be a list")
+    not_applicable: dict[str, str] = {}
+    for entry in entries:
+        case_id = entry.get("id") if isinstance(entry, dict) else None
+        reason = entry.get("reason") if isinstance(entry, dict) else None
+        if (
+            not isinstance(case_id, str)
+            or case_id not in planned_ids
+            or case_id in not_applicable
+            or not isinstance(reason, str)
+            or not reason
+        ):
+            raise ReviewError(f"run manifest has an invalid not_applicable entry {entry!r}")
+        not_applicable[case_id] = reason
+    return not_applicable
 
 
 def _authenticated_manifest_plan(run_dir: Path, run_id: str) -> run_suite.SuitePlan:
@@ -188,8 +223,11 @@ def _authenticated_manifest_plan(run_dir: Path, run_id: str) -> run_suite.SuiteP
     selected_tiers = manifest.get("selected_tiers")
     estimated = manifest.get("estimated_api_calls")
     max_api_calls = manifest.get("between_case_model_request_limit")
+    not_applicable = _manifest_not_applicable(manifest, seen_ids)
     expected_tiers = sorted({run_suite._tier(case) for case in cases})
-    expected_estimate = sum(run_suite._case_api_calls(case) for case in cases)
+    expected_estimate = sum(
+        run_suite._case_api_calls(case) for case in cases if case["id"] not in not_applicable
+    )
     if selected_tiers != expected_tiers:
         raise ReviewError("run manifest selected tiers do not match its cases")
     if (
@@ -210,6 +248,7 @@ def _authenticated_manifest_plan(run_dir: Path, run_id: str) -> run_suite.SuiteP
         selected_tiers=tuple(selected_tiers),
         estimated_api_calls=estimated,
         max_api_calls=max_api_calls,
+        not_applicable=not_applicable,
     )
 
 
